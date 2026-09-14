@@ -3,7 +3,13 @@ name = "k8s-hub-backend"
 version = "0.1.0"
 description = "K8s Hub - AI-assisted Kubernetes operations platform (backend)"
 readme = "README.md"
-requires-python = ">=3.12"
+# Máy phát triển đang chạy 3.14.
+#
+# Sàn là 3.11 vì một lý do cụ thể: từ 3.11 trở lên LangChain mới tự chuyền
+# RunnableConfig qua contextvars trong hàm async. Trên 3.10, nút nào quên
+# truyền config xuống sẽ MẤT STREAMING mà không báo lỗi gì — khung chat chỉ
+# hiện công cụ chạy, không hiện chữ nào. Xem app/modules/nl_command/agent.py.
+requires-python = ">=3.11"
 
 dependencies = [
     # --- Web framework ---
@@ -24,10 +30,13 @@ dependencies = [
     "redis>=5.2.0",
 
     # --- LLM / agent ---
-    "anthropic>=0.40.0",
+    # Không khai `anthropic` ở đây: langchain-anthropic đã kéo nó theo.
     "langgraph>=0.2.50",
     "langgraph-checkpoint-postgres>=2.0.0",
     "langchain-core>=0.3.20",
+    # Nhà cung cấp LLM — chỉ cần cài cái nào đang dùng (xem config/llm.yaml)
+    "langchain-groq>=0.2.3",
+    "langchain-google-genai>=2.0.8",
     "langchain-anthropic>=0.3.0",
     "mcp>=1.1.0",
 
@@ -67,7 +76,7 @@ packages = ["app"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "ASYNC"]
@@ -77,6 +86,6 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.11"
 plugins = ["pydantic.mypy"]
 ignore_missing_imports = true

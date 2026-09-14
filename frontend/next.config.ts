@@ -1,15 +1,10 @@
 import type { NextConfig } from "next";
 
+// Không dùng `rewrites` để chuyển tiếp về backend nữa — nó gom cả phản hồi rồi
+// mới trả về, làm hỏng luồng SSE của khung chat. Việc chuyển tiếp nay do
+// src/app/api/backend/[...path]/route.ts đảm nhiệm.
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  async rewrites() {
-    return [
-      {
-        source: "/api/backend/:path*",
-        destination: `${process.env.BACKEND_URL ?? "http://localhost:8000"}/api/v1/:path*`,
-      },
-    ];
-  },
 };
 
 export default nextConfig;

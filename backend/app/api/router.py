@@ -9,6 +9,7 @@ from app.api.v1 import (
     health,
     observability,
     rca,
+    settings,
     skills,
 )
 
@@ -21,3 +22,4 @@ api_router.include_router(approvals.router, prefix="/approvals", tags=["approval
 api_router.include_router(rca.router, prefix="/rca", tags=["rca"])
 api_router.include_router(skills.router, prefix="/skills", tags=["skills"])
 api_router.include_router(observability.router, prefix="/observability", tags=["observability"])
+api_router.include_router(settings.router, prefix="/settings", tags=["settings"])
