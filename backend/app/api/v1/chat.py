@@ -72,6 +72,13 @@ router = APIRouter()
 # sse-starlette gửi dạng dòng chú thích, client tự bỏ qua, không lẫn vào dữ liệu.
 PING_SECONDS = 15
 
+# Các tác vụ ghi kết quả đang chạy ở nền.
+#
+# asyncio chỉ giữ tham chiếu YẾU tới task, nên không cất vào đây thì trình dọn
+# rác có thể thu một task đang ghi dở và bản ghi kẹt lại vĩnh viễn ở trạng thái
+# "streaming".
+_dang_ghi: set[asyncio.Task[None]] = set()
+
 
 # --------------------------------------------------------------------------
 # Hội thoại
@@ -91,9 +98,16 @@ async def _thread_or_404(db: Any, user: Any, thread_id: uuid.UUID) -> ChatThread
 
 @router.post("/threads", response_model=ThreadOut, status_code=status.HTTP_201_CREATED)
 async def create_thread(payload: ThreadCreate, db: DbSession, user: CurrentUser) -> Any:
-    return await svc.create_thread(
+    thread = await svc.create_thread(
         db, user, title=payload.title, cluster=payload.cluster
     )
+    # Chốt NGAY, đừng đợi `get_session` chốt hộ lúc dọn dẹp.
+    #
+    # Từ FastAPI 0.106, phần sau `yield` của dependency chạy SAU khi response đã
+    # gửi đi. Nghĩa là client nhận 201 rồi mà giao dịch vẫn chưa chốt — giao diện
+    # lập tức gọi tiếp lên hội thoại vừa tạo thì gặp 404. Đã tái hiện được.
+    await db.commit()
+    return thread
 
 
 @router.get("/threads", response_model=list[ThreadOut])
@@ -124,9 +138,11 @@ async def update_thread(
     thread_id: uuid.UUID, payload: ThreadUpdate, db: DbSession, user: CurrentUser
 ) -> Any:
     thread = await _thread_or_404(db, user, thread_id)
-    return await svc.update_thread(
+    thread = await svc.update_thread(
         db, thread, title=payload.title, archived=payload.archived
     )
+    await db.commit()  # xem chú thích ở create_thread
+    return thread
 
 
 @router.delete("/threads/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -135,6 +151,7 @@ async def delete_thread(
 ) -> Response:
     thread = await _thread_or_404(db, user, thread_id)
     await svc.delete_thread(db, thread)
+    await db.commit()  # xem chú thích ở create_thread
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -321,13 +338,32 @@ async def stream_reply(
 
         finally:
             # Chạy cả khi bị huỷ: phần trợ lý đã nói vẫn phải được lưu.
-            await _ghi_ket_qua(
-                assistant_id,
-                collector,
-                latency_ms=int((time.perf_counter() - bat_dau) * 1000),
-                error=collector.error
-                or ("Người dùng dừng giữa chừng" if bi_huy else None),
+            #
+            # Việc ghi phải nằm trong một task RIÊNG và được `shield` che lại.
+            # Lý do: khi người dùng đóng tab, sse-starlette huỷ chính task đang
+            # chạy hàm này. Cứ `await` thẳng thì lệnh ghi bị huỷ ngay ở điểm
+            # chờ đầu tiên — kết nối CSDL bị cắt giữa chừng và bản ghi nằm mãi
+            # ở trạng thái "streaming", trái đúng điều ghi ở đầu file này.
+            # Task riêng không nằm trong phạm vi huỷ của sse-starlette nên nó
+            # chạy tiếp tới khi ghi xong.
+            ghi = asyncio.create_task(
+                _ghi_ket_qua(
+                    assistant_id,
+                    collector,
+                    latency_ms=int((time.perf_counter() - bat_dau) * 1000),
+                    error=collector.error
+                    or ("Người dùng dừng giữa chừng" if bi_huy else None),
+                )
             )
+            _dang_ghi.add(ghi)
+            ghi.add_done_callback(_dang_ghi.discard)
+
+            # Luồng chạy trọn vẹn thì vẫn chờ ghi xong TRƯỚC khi phát `done`:
+            # client nạp lại hội thoại ngay khi nhận `done`, chờ ở đây mới bảo
+            # đảm nó đọc được bản đã chốt chứ không phải bản dở dang.
+            # Bị huỷ thì `shield` để việc ghi chạy nốt ở nền, còn lệnh huỷ vẫn
+            # lan ra bình thường.
+            await asyncio.shield(ghi)
 
         yield stream.emit(DoneEvent(message_id=str(assistant_id), trace_id=trace_id))
 

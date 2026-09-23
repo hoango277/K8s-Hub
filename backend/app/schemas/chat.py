@@ -84,6 +84,13 @@ class MessageOut(BaseModel):
     provider: str | None = None
     model: str | None = None
     latency_ms: int | None = None
+
+    # Số token đã tốn. Bảng `messages` lưu sẵn từ đầu, nhưng trước đây không
+    # khai ở đây nên API im lặng bỏ qua — nhìn từ ngoài cứ như hệ thống không
+    # đếm được token. Đây là nguồn số liệu cho phần chi phí ở trang giám sát.
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+
     tool_calls: list[ToolCallOut] = Field(default_factory=list)
 
 

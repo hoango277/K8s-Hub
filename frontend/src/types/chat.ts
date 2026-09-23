@@ -49,6 +49,11 @@ export interface Message {
   provider: string | null;
   model: string | null;
   latency_ms: number | null;
+
+  /** Số token đã tốn. null với tin nhắn của người dùng. */
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+
   tool_calls: ToolCall[];
 }
 
