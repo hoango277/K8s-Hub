@@ -1,41 +1,41 @@
 /**
- * Sự kiện streaming nhận từ backend qua SSE.
+ * Streaming events received from the backend over SSE.
  *
  * ===========================================================================
- *  HỢP ĐỒNG GIỮA BACKEND VÀ FRONTEND
- *  File này phải khớp 1-1 với `backend/app/schemas/events.py`.
- *  Sửa ở đây thì BẮT BUỘC sửa bên kia và báo cả nhóm.
+ *  CONTRACT BETWEEN BACKEND AND FRONTEND
+ *  This file must match `backend/app/schemas/events.py` one-to-one.
+ *  Changing it here REQUIRES changing the other side and telling the team.
  * ===========================================================================
  *
- * Dùng chung cho hai luồng: hội thoại ra lệnh và tiến trình chẩn đoán.
+ * Shared by two streams: command conversations and diagnosis progress.
  */
 
 export type ToolStatus = "ok" | "error";
 export type StepStatus = "running" | "done" | "error";
 export type DangerLevel = "safe" | "caution" | "dangerous";
 
-/** Phần chung của mọi event. */
+/** Fields common to every event. */
 export interface BaseEvent {
   /**
-   * Số thứ tự tăng dần trong một luồng, bắt đầu từ 1.
-   * Dùng để phát hiện mất event và resume sau khi mất kết nối
-   * (gửi lại qua header Last-Event-ID).
+   * Increasing sequence number within a stream, starting at 1.
+   * Used to detect lost events and resume after a disconnect
+   * (sent back via the Last-Event-ID header).
    */
   seq: number;
 }
 
-/** Một mẩu văn bản của câu trả lời. Nối các mẩu lại theo thứ tự. */
+/** A chunk of the answer text. Concatenate chunks in order. */
 export interface TokenEvent extends BaseEvent {
   type: "token";
   content: string;
 }
 
 /**
- * Một mẩu SUY LUẬN của mô hình — phần nó tự nghĩ trước khi trả lời.
+ * A chunk of the model's REASONING — what it thinks before answering.
  *
- * Phải hiển thị tách hẳn khỏi câu trả lời và nhìn ra ngay là suy luận: trong
- * đó có cả phỏng đoán và những kết luận sai mà mô hình tự bác bỏ sau đó.
- * Không phải nhà cung cấp nào cũng gửi loại event này.
+ * Must be displayed fully separate from the answer and be obviously
+ * reasoning: it contains guesses and wrong conclusions the model later
+ * rejects itself. Not every provider sends this event type.
  */
 export interface ThinkingEvent extends BaseEvent {
   type: "thinking";
@@ -43,48 +43,48 @@ export interface ThinkingEvent extends BaseEvent {
 }
 
 /**
- * Báo tiến trình một bước xử lý.
- * Nếu `key` trùng với step đã nhận trước đó thì CẬP NHẬT dòng cũ,
- * không thêm dòng mới — nhờ vậy mới đổi được running → done.
+ * Progress report for a processing step.
+ * If `key` matches a step received earlier, UPDATE the existing line rather
+ * than adding a new one — that's how running → done can change in place.
  */
 export interface StepEvent extends BaseEvent {
   type: "step";
-  /** Mã bước, ổn định trong một luồng. VD: "collect_logs" */
+  /** Step code, stable within a stream. E.g. "collect_logs" */
   key: string;
-  /** Chữ hiển thị cho người dùng */
+  /** Text shown to the user */
   label: string;
   status: StepStatus;
 }
 
-/** Trợ lý bắt đầu gọi một công cụ. */
+/** The assistant starts calling a tool. */
 export interface ToolCallStartEvent extends BaseEvent {
   type: "tool_call_start";
-  /** Mã lần gọi, dùng để ghép với tool_call_end */
+  /** Call id, used to pair with tool_call_end */
   id: string;
-  /** Tên công cụ, VD: "list_resources" */
+  /** Tool name, e.g. "list_resources" */
   name: string;
   args: Record<string, unknown>;
 }
 
-/** Công cụ chạy xong. `id` trùng với tool_call_start tương ứng. */
+/** The tool finished. `id` matches the corresponding tool_call_start. */
 export interface ToolCallEndEvent extends BaseEvent {
   type: "tool_call_end";
   id: string;
   status: ToolStatus;
   duration_ms: number;
-  /** Kết quả ĐÃ RÚT GỌN để hiển thị. Bản đầy đủ xem trong Langfuse. */
+  /** TRUNCATED result for display. See Langfuse for the full version. */
   result?: string;
-  /** Chỉ có khi status === "error" */
+  /** Only present when status === "error" */
   error?: string;
 }
 
-/** Một bước trong kế hoạch trợ lý đề xuất. */
+/** One step in the plan the assistant proposes. */
 export interface PlanStep {
   order: number;
   description: string;
 }
 
-/** Kế hoạch trợ lý dự định làm, gửi TRƯỚC khi xin duyệt. */
+/** The plan the assistant intends to carry out, sent BEFORE asking for approval. */
 export interface PlanEvent extends BaseEvent {
   type: "plan";
   steps: PlanStep[];
@@ -92,61 +92,61 @@ export interface PlanEvent extends BaseEvent {
 }
 
 /**
- * Luồng dừng lại chờ người duyệt.
- * Sau event này luồng SSE KHÔNG kết thúc mà treo chờ.
- * Client gọi POST /approvals/{approval_id}/approve|reject qua request riêng.
+ * The stream pauses waiting for a human to approve.
+ * After this event the SSE stream does NOT end; it hangs waiting.
+ * The client calls POST /approvals/{approval_id}/approve|reject in a separate request.
  */
 export interface ApprovalRequiredEvent extends BaseEvent {
   type: "approval_required";
   approval_id: string;
-  /** VD: "Tăng số bản chạy của api từ 1 lên 3" */
+  /** E.g. "Scale api from 1 to 3 replicas" */
   summary: string;
-  /** So sánh trước/sau, dạng unified diff YAML */
+  /** Before/after comparison, as a unified YAML diff */
   diff: string;
   danger_level: DangerLevel;
-  /** Kết quả chạy thử không ăn thật */
+  /** Output of a dry run that doesn't take effect */
   dry_run_output?: string;
 }
 
-/** Người dùng đã quyết định. Gửi ngay trước khi luồng chạy tiếp. */
+/** The user has decided. Sent right before the stream continues. */
 export interface ApprovalResolvedEvent extends BaseEvent {
   type: "approval_resolved";
   approval_id: string;
   approved: boolean;
   decided_by?: string;
-  /** Lý do khi từ chối */
+  /** Reason, when rejected */
   reason?: string;
 }
 
-/** Kết quả kiểm tra lại sau khi đã thực hiện thao tác lên cụm. */
+/** Result of re-checking after an action was applied to the cluster. */
 export interface VerifyResultEvent extends BaseEvent {
   type: "verify_result";
   ok: boolean;
-  /** VD: "Đã lên đủ 3/3 bản chạy sau 12 giây" */
+  /** E.g. "3/3 replicas ready after 12 seconds" */
   message: string;
 }
 
-/** Có lỗi. Nếu retryable === false thì sau event này luồng sẽ kết thúc. */
+/** An error occurred. If retryable === false the stream ends after this event. */
 export interface ErrorEvent extends BaseEvent {
   type: "error";
-  /** VD: "llm_timeout", "guardrail_blocked", "k8s_forbidden" */
+  /** E.g. "llm_timeout", "guardrail_blocked", "k8s_forbidden" */
   code: string;
   message: string;
   retryable: boolean;
 }
 
-/** Luồng kết thúc bình thường. Luôn là event cuối cùng. */
+/** The stream ended normally. Always the last event. */
 export interface DoneEvent extends BaseEvent {
   type: "done";
-  /** Id bản ghi trong cơ sở dữ liệu */
+  /** Record id in the database */
   message_id?: string;
-  /** Id trace Langfuse, để mở link xem chi tiết */
+  /** Langfuse trace id, for linking to the details */
   trace_id?: string;
 }
 
 /**
- * Nhịp giữ kết nối, gửi mỗi ~15 giây khi không có gì để gửi.
- * Không có nó thì proxy sẽ cắt kết nối đang rảnh. Client bỏ qua event này.
+ * Keep-alive heartbeat, sent every ~15 seconds when there's nothing else to send.
+ * Without it, proxies cut idle connections. The client ignores this event.
  */
 export interface HeartbeatEvent extends BaseEvent {
   type: "heartbeat";
@@ -168,10 +168,10 @@ export type AgentEvent =
 
 export type AgentEventType = AgentEvent["type"];
 
-/** Lấy đúng kiểu event theo `type`. VD: `EventOf<"token">` */
+/** Get the exact event type by `type`. E.g. `EventOf<"token">` */
 export type EventOf<K extends AgentEventType> = Extract<AgentEvent, { type: K }>;
 
-/** Danh sách mọi loại event — dùng để đăng ký listener cho từng loại. */
+/** Every event type — used to register a listener per type. */
 export const AGENT_EVENT_TYPES = [
   "token",
   "thinking",
@@ -188,10 +188,11 @@ export const AGENT_EVENT_TYPES = [
 ] as const satisfies readonly AgentEventType[];
 
 /**
- * Thu hẹp kiểu khi xử lý event.
+ * Narrow the type when handling an event.
  *
- * Khung chat dùng `switch` nên không cần, nhưng màn hình chẩn đoán sắp tới chỉ
- * quan tâm vài loại event — ở đó lọc bằng hàm này gọn hơn.
+ * The chat panel uses `switch` so it doesn't need this, but the upcoming
+ * diagnosis screen only cares about a few event types — filtering with this
+ * function is neater there.
  */
 export function isEvent<K extends AgentEventType>(
   event: AgentEvent,
@@ -200,7 +201,7 @@ export function isEvent<K extends AgentEventType>(
   return event.type === type;
 }
 
-/** Parse `data` của một SSE message. Trả về null nếu không đúng định dạng. */
+/** Parse the `data` of an SSE message. Returns null if malformed. */
 export function parseAgentEvent(raw: string): AgentEvent | null {
   try {
     const parsed: unknown = JSON.parse(raw);

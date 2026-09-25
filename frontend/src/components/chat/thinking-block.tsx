@@ -5,62 +5,63 @@ import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 interface Props {
-  /** Phần suy luận đã nhận được cho tới lúc này. */
+  /** Reasoning received so far. */
   content: string;
-  /** Còn đang nghĩ hay đã xong. */
-  dangNghi: boolean;
-  /** Số giây đã nghĩ, chỉ có khi đã xong. */
-  giay?: number | null;
+  /** Still thinking, or done. */
+  isThinking: boolean;
+  /** Seconds spent thinking, only once finished. */
+  seconds?: number | null;
 }
 
 /**
- * Khối hiển thị phần mô hình tự nghĩ trước khi trả lời.
+ * Block showing what the model reasoned through before answering.
  *
- * Ba quy tắc, theo đúng thứ tự quan trọng:
+ * Three rules, in order of importance:
  *
- *   1. KHÔNG BAO GIỜ trông giống câu trả lời. Chữ xám, in nghiêng, thụt vào,
- *      có nhãn rõ ràng. Suy luận chứa phỏng đoán và cả những kết luận sai mà
- *      mô hình tự bác bỏ ngay sau đó — người đọc nhầm nó là kết luận thì còn
- *      tệ hơn là không cho xem.
- *   2. Đang nghĩ thì mở, nghĩ xong thì tự thu lại. Lúc chờ, người dùng cần
- *      thấy có gì đó đang diễn ra; lúc đã có câu trả lời, suy luận chỉ làm
- *      rối mắt. Ai muốn xem lại thì bấm mở.
- *   3. Người dùng tự mở/đóng thì tôn trọng lựa chọn đó, không tự động thu nữa.
+ *   1. It must NEVER look like the answer. Grey, italic, indented, clearly
+ *      labelled. Reasoning contains guesses and even wrong conclusions the
+ *      model rejects a moment later — a reader mistaking it for the conclusion
+ *      is worse than not showing it at all.
+ *   2. Open while thinking, collapse automatically when done. While waiting,
+ *      the user needs to see that something is happening; once the answer is
+ *      there, the reasoning is just clutter. Anyone who wants it can expand it.
+ *   3. If the user opens/closes it themselves, respect that and stop
+ *      auto-collapsing.
  */
-export function ThinkingBlock({ content, dangNghi, giay = null }: Props) {
-  const [mo, setMo] = useState(dangNghi);
-  const nguoiDungDaBam = useRef(false);
-  const oCuon = useRef<HTMLDivElement>(null);
+export function ThinkingBlock({ content, isThinking, seconds = null }: Props) {
+  const [open, setOpen] = useState(isThinking);
+  const userToggled = useRef(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Nghĩ xong thì tự thu lại — trừ khi người dùng đã tự bấm.
+  // Collapse once thinking is done — unless the user has toggled it.
   useEffect(() => {
-    if (!nguoiDungDaBam.current) setMo(dangNghi);
-  }, [dangNghi]);
+    if (!userToggled.current) setOpen(isThinking);
+  }, [isThinking]);
 
-  // Đang nghĩ thì bám đáy để luôn thấy dòng mới nhất.
+  // While thinking, stick to the bottom so the newest line is always visible.
   useEffect(() => {
-    if (!dangNghi || !mo) return;
-    const el = oCuon.current;
+    if (!isThinking || !open) return;
+    const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [content, dangNghi, mo]);
+  }, [content, isThinking, open]);
 
-  if (!content && !dangNghi) return null;
+  if (!content && !isThinking) return null;
 
-  const nhan = dangNghi
-    ? "Đang suy nghĩ"
-    : giay != null
-      ? `Đã suy nghĩ trong ${giay.toFixed(1)} giây`
-      : "Suy luận của trợ lý";
+  const label = isThinking
+    ? "Thinking"
+    : seconds != null
+      ? `Thought for ${seconds.toFixed(1)} seconds`
+      : "Assistant's reasoning";
 
   return (
-    <div className="k8s-hien-len rounded-lg border border-dashed bg-[var(--muted)]/40">
+    <div className="k8s-fade-in rounded-lg border border-dashed bg-[var(--muted)]/40">
       <button
         type="button"
         onClick={() => {
-          nguoiDungDaBam.current = true;
-          setMo((v) => !v);
+          userToggled.current = true;
+          setOpen((v) => !v);
         }}
-        aria-expanded={mo}
+        aria-expanded={open}
         className="flex w-full items-center gap-2 px-3 py-2 text-left"
       >
         <span aria-hidden className="text-xs text-[var(--muted-foreground)]">
@@ -70,18 +71,18 @@ export function ThinkingBlock({ content, dangNghi, giay = null }: Props) {
         <span
           className={cn(
             "text-xs font-medium",
-            dangNghi ? "k8s-loe-sang" : "text-[var(--muted-foreground)]",
+            isThinking ? "k8s-shimmer" : "text-[var(--muted-foreground)]",
           )}
         >
-          {nhan}
+          {label}
         </span>
 
-        {dangNghi && (
+        {isThinking && (
           <span aria-hidden className="flex gap-0.5">
             {[0, 1, 2].map((i) => (
               <span
                 key={i}
-                className="k8s-cham-nay size-1 rounded-full bg-[var(--muted-foreground)]"
+                className="k8s-dot-bounce size-1 rounded-full bg-[var(--muted-foreground)]"
                 style={{ animationDelay: `${i * 0.16}s` }}
               />
             ))}
@@ -90,15 +91,15 @@ export function ThinkingBlock({ content, dangNghi, giay = null }: Props) {
 
         {content && (
           <span className="ml-auto text-xs text-[var(--muted-foreground)]">
-            {mo ? "ẩn" : "xem"}
+            {open ? "hide" : "show"}
           </span>
         )}
       </button>
 
-      <div className="k8s-mo-ra" data-mo={mo && Boolean(content)}>
+      <div className="k8s-collapse" data-open={open && Boolean(content)}>
         <div>
           <div
-            ref={oCuon}
+            ref={scrollRef}
             className={cn(
               "max-h-56 overflow-y-auto whitespace-pre-wrap px-3 pb-3 pl-7",
               "text-xs italic leading-relaxed text-[var(--muted-foreground)]",

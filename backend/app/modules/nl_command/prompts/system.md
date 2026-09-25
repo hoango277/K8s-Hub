@@ -1,1 +1,1 @@
-<!-- System prompt cho NL command agent. TODO -->
+<!-- System prompt for the NL command agent. TODO -->

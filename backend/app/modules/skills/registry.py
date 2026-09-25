@@ -1,1 +1,1 @@
-"""Skill registry: register, lookup, export sang LLM tool definitions. TODO."""
+"""Skill registry: register, lookup, export as LLM tool definitions. TODO."""

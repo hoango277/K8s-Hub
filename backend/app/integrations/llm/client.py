@@ -1,23 +1,24 @@
-"""Điểm vào duy nhất để lấy model AI.
+"""The single entry point for getting an AI model.
 
-Mọi chỗ trong hệ thống gọi `get_llm()` — KHÔNG import trực tiếp ChatGroq,
-ChatGoogleGenerativeAI hay ChatAnthropic. Nhờ vậy đổi nhà cung cấp chỉ cần
-sửa LLM_PROVIDER trong .env, không đụng vào code.
+Everything in the system calls `get_llm()` — do NOT import ChatGroq or
+ChatGoogleGenerativeAI directly. The provider and model are chosen per chat
+turn; if left empty, the first provider that has an API key is used.
 
     from app.integrations.llm.client import get_llm
 
-    llm = get_llm()                    # model chính, theo cấu hình
-    llm = get_llm(profile="fast")      # model rẻ cho việc nhẹ
-    llm = get_llm(provider="google")   # ép Gemini cho riêng chỗ này
+    llm = get_llm()                    # main model, per configuration
+    llm = get_llm(profile="fast")      # cheap model for light work
+    llm = get_llm(provider="google")   # force Gemini just for this spot
 
-Trả về `BaseChatModel` của LangChain nên dùng được ngay với LangGraph:
+It returns a LangChain `BaseChatModel`, so it works with LangGraph right away:
 
     llm.bind_tools(tools)
     llm.with_structured_output(ActionSpec)
     graph.astream_events(...)
 
-Bộ nhớ đệm model tự xoá mỗi khi cấu hình nạp lại (xem `on_reload` bên dưới),
-nên sửa .env rồi là lần gọi sau đã dùng cấu hình mới.
+The model cache clears itself whenever the configuration reloads (see
+`on_reload` below), so after editing .env the next call already uses the new
+configuration.
 """
 
 from __future__ import annotations
@@ -32,10 +33,11 @@ if TYPE_CHECKING:
     from langchain_core.language_models.chat_models import BaseChatModel
 
 
-# Nhớ sẵn model đã dựng — tránh tạo lại client HTTP mỗi request.
-# Dùng dict thay vì lru_cache để truyền được cả object Settings xuống
-# `create_chat_model`; nếu không, provider.py sẽ tự đọc lại cấu hình toàn cục
-# và giá trị có thể lệch với cái vừa dùng để tính khoá đệm.
+# Keep built models around — avoids recreating the HTTP client on every request.
+# A dict is used instead of lru_cache so the Settings object itself can be
+# passed down to `create_chat_model`; otherwise provider.py would re-read the
+# global configuration and its values could drift from the ones just used to
+# compute the cache key.
 _ModelKey = tuple[str, str, str | None, float | None, int | None, int]
 _model_cache: dict[_ModelKey, BaseChatModel] = {}
 _cache_lock = threading.Lock()
@@ -43,13 +45,13 @@ _cache_lock = threading.Lock()
 
 @on_reload
 def _clear_model_cache() -> None:
-    """Cấu hình đổi thì model đang nhớ sẵn cũng phải bỏ đi."""
+    """When the configuration changes, cached models must be dropped too."""
     with _cache_lock:
         _model_cache.clear()
 
 
 def cache_size() -> int:
-    """Số model đang nhớ sẵn. Dùng cho test và endpoint chẩn đoán."""
+    """Number of cached models. Used by tests and the diagnostics endpoint."""
     with _cache_lock:
         return len(_model_cache)
 
@@ -63,19 +65,20 @@ def get_llm(
     max_tokens: int | None = None,
     **overrides: Any,
 ) -> BaseChatModel:
-    """Lấy model AI đang được cấu hình.
+    """Get the currently configured AI model.
 
     Args:
-        provider: Ép một nhà cung cấp cụ thể. Bỏ trống thì lấy LLM_PROVIDER.
-        profile:  'default' hoặc 'fast'. Dùng 'fast' cho việc nhẹ như phân loại
-                  ý định để đỡ tốn tiền.
-        model:    Ép một tên model cụ thể, bỏ qua hồ sơ.
-        overrides: Tham số truyền thẳng vào constructor (không được nhớ sẵn).
+        provider: Force a specific provider. If empty, the first provider that
+                  has an API key is used (`Settings.llm_default_provider`).
+        profile:  'default' or 'fast'. Use 'fast' for light work such as intent
+                  classification to save money.
+        model:    Force a specific model name, ignoring the profile.
+        overrides: Parameters passed straight to the constructor (not cached).
     """
     config = get_settings()
 
     if overrides:
-        # Có tham số riêng thì bỏ qua bộ nhớ đệm.
+        # Custom parameters bypass the cache.
         return create_chat_model(
             provider,
             config=config,
@@ -86,7 +89,7 @@ def get_llm(
             **overrides,
         )
 
-    name = provider or config.LLM_PROVIDER
+    name = provider or config.llm_default_provider()
     key: _ModelKey = (name, profile, model, temperature, max_tokens, settings_version())
 
     with _cache_lock:
@@ -94,7 +97,7 @@ def get_llm(
     if cached is not None:
         return cached
 
-    # Dựng ngoài khoá để không giữ khoá suốt lúc khởi tạo client HTTP.
+    # Build outside the lock so it isn't held while the HTTP client initializes.
     built = create_chat_model(
         name,
         config=config,
@@ -109,39 +112,40 @@ def get_llm(
 
 
 def require_tool_calling(provider: str | None = None) -> None:
-    """Chặn sớm nếu nhà cung cấp không hỗ trợ gọi công cụ.
+    """Fail early if the provider doesn't support tool calling.
 
-    CHƯA ĐƯỢC GỌI. Dự định gọi lúc khởi động để lỗi hiện ra ngay, thay vì đến
-    khi người dùng chat mới vỡ.
+    NOT CALLED YET. Intended to be called at startup so the error shows up
+    immediately, instead of breaking only when a user starts chatting.
     """
     config = get_settings()
-    name = provider or config.LLM_PROVIDER
+    name = provider or config.llm_default_provider()
     spec = config.llm_provider(name)
     if not spec.supports_tool_calling:
         raise LLMConfigError(
-            f"Nhà cung cấp {name!r} (model {spec.model}) không hỗ trợ gọi công cụ — "
-            f"trợ lý sẽ không tra cứu được gì. Đổi LLM_PROVIDER hoặc đổi sang model có hỗ trợ."
+            f"Provider {name!r} (model {spec.model}) does not support tool calling — "
+            f"the assistant won't be able to look anything up. Pick another provider or model."
         )
 
 
 def describe_config(
     *, provider: str | None = None, model: str | None = None
 ) -> dict[str, Any]:
-    """Tóm tắt cấu hình LLM — dùng cho log khởi động và cho công cụ tự khai báo.
+    """Summarize the LLM configuration — for the startup log and the self-describing tool.
 
     Args:
-        provider: Nhà cung cấp thật sự đang chạy cho lượt này. Bỏ trống thì lấy
-            cấu hình chung.
-        model: Model thật sự đang chạy cho lượt này.
+        provider: The provider actually running for this turn. If empty, the
+            global configuration is used.
+        model: The model actually running for this turn.
 
-    Hai tham số trên tồn tại vì người dùng chọn được nhà cung cấp và model cho
-    RIÊNG một lượt chat. Không truyền vào thì hàm này mô tả cấu hình chung, và
-    trợ lý sẽ tự khai sai về chính nó ngay sau khi người dùng đổi model.
+    These two parameters exist because users can pick the provider and model
+    for a SINGLE chat turn. Without them this function describes the global
+    configuration, and the assistant would misreport itself right after the
+    user switched models.
 
-    KHÔNG chứa khoá API.
+    Does NOT contain API keys.
     """
     config = get_settings()
-    name = provider or config.LLM_PROVIDER
+    name = provider or config.llm_default_provider()
     spec = config.llm_provider(name)
     return {
         "provider": name,

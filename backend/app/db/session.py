@@ -1,18 +1,18 @@
-"""Kết nối cơ sở dữ liệu.
+"""Database connection.
 
-Tạo engine bất đồng bộ và cung cấp phiên làm việc cho tầng API.
+Creates the async engine and provides sessions to the API layer.
 
-Lưu ý khi dùng Supabase (hoặc bất kỳ Postgres có pgbouncer đứng trước):
+Things to know when using Supabase (or any Postgres fronted by pgbouncer):
 
-  - Cổng 5432 trên `db.<ref>.supabase.co` là kết nối TRỰC TIẾP, chỉ có IPv6.
-    Mạng chỉ có IPv4 sẽ không nối được — khi đó dùng bộ gộp kết nối
+  - Port 5432 on `db.<ref>.supabase.co` is a DIRECT connection, IPv6 only.
+    IPv4-only networks cannot reach it — use the connection pooler instead
     (`aws-<region>.pooler.supabase.com`).
-  - Bộ gộp ở chế độ transaction KHÔNG hỗ trợ prepared statement, mà asyncpg
-    thì mặc định dùng. Phải tắt bằng `statement_cache_size=0`, nếu không sẽ
-    gặp lỗi `DuplicatePreparedStatementError` lúc chạy tải cao.
-  - Supabase bắt buộc SSL.
+  - The pooler in transaction mode does NOT support prepared statements, which
+    asyncpg uses by default. They must be disabled with `statement_cache_size=0`,
+    otherwise you get `DuplicatePreparedStatementError` under load.
+  - Supabase requires SSL.
 
-Những chỗ này được xử lý tự động trong `connect_args_for()`.
+All of this is handled automatically in `connect_args_for()`.
 """
 
 from __future__ import annotations
@@ -38,12 +38,12 @@ _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
 
 def _is_pooled(url: str) -> bool:
-    """Kết nối có đi qua bộ gộp (pgbouncer) hay không."""
+    """Whether the connection goes through a pooler (pgbouncer)."""
     return "pooler.supabase.com" in url or ":6543" in url
 
 
 def _needs_ssl(url: str) -> bool:
-    """Máy chủ ngoài internet thì bắt buộc SSL; chạy local thì không."""
+    """Servers on the internet require SSL; local ones do not."""
     return not any(host in url for host in ("localhost", "127.0.0.1", "@db:", "@postgres:"))
 
 
@@ -54,7 +54,7 @@ def connect_args_for(url: str) -> dict[str, Any]:
         args["ssl"] = "require"
 
     if _is_pooled(url):
-        # pgbouncer chế độ transaction không dùng được prepared statement.
+        # pgbouncer in transaction mode cannot use prepared statements.
         args["statement_cache_size"] = 0
         args["prepared_statement_cache_size"] = 0
 
@@ -62,32 +62,32 @@ def connect_args_for(url: str) -> dict[str, Any]:
 
 
 def create_engine() -> AsyncEngine:
-    """Dựng engine theo cấu hình hiện tại."""
+    """Build the engine from the current configuration."""
     config = get_settings()
     url = config.DATABASE_URL
 
     if url.startswith("postgresql://"):
         raise ValueError(
-            "DATABASE_URL phải dùng driver bất đồng bộ. "
-            "Đổi 'postgresql://' thành 'postgresql+asyncpg://' trong .env."
+            "DATABASE_URL must use an async driver. "
+            "Change 'postgresql://' to 'postgresql+asyncpg://' in .env."
         )
 
     pooled = _is_pooled(url)
     return create_async_engine(
         url,
         echo=config.DEBUG and config.APP_ENV == "local",
-        # pool_pre_ping gửi một câu "SELECT 1" trước MỖI lần lấy kết nối ra
-        # dùng. Với CSDL đặt cùng khu vực thì không đáng kể, nhưng ở đây mỗi
-        # lượt đi-về mất 0,6-1 giây nên nó gần như nhân đôi thời gian của các
-        # endpoint nhẹ. Thay bằng cách thải kết nối theo tuổi: `pool_recycle`
-        # ngắn hơn nhiều so với thời gian pgbouncer tự ngắt kết nối rảnh.
+        # pool_pre_ping sends a "SELECT 1" before EVERY connection checkout.
+        # With a database in the same region that is negligible, but here each
+        # round trip costs 0.6-1 seconds, so it nearly doubles the time of the
+        # light endpoints. Instead, retire connections by age: `pool_recycle` is
+        # much shorter than the time after which pgbouncer drops idle connections.
         pool_pre_ping=not pooled,
         pool_recycle=300 if pooled else 1800,
-        # Đi qua bộ gộp thì giữ pool NHỎ ở phía ứng dụng, nhưng đừng để chỉ
-        # một kết nối: một trang chat mở ra là đã gọi song song vài API, mà mỗi
-        # truy vấn tới Supabase mất vài trăm mili giây. Với pool bằng 1, các
-        # truy vấn xếp hàng chờ nhau và trang mất 3-6 giây mới hiện — người
-        # dùng tưởng bấm không ăn.
+        # Behind a pooler, keep the app-side pool SMALL, but not a single
+        # connection: opening one chat page already fires several API calls in
+        # parallel, and each query to Supabase takes a few hundred milliseconds.
+        # With a pool of 1 the queries queue behind each other and the page
+        # takes 3-6 seconds to appear — users think their click did nothing.
         pool_size=5,
         max_overflow=10 if not pooled else 5,
         connect_args=connect_args_for(url),
@@ -114,7 +114,7 @@ def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
-    """Dependency của FastAPI. Tự commit khi xong, tự rollback khi lỗi.
+    """FastAPI dependency. Commits when done, rolls back on error.
 
         @router.get("/threads")
         async def list_threads(db: AsyncSession = Depends(get_session)): ...
@@ -129,7 +129,7 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 
 
 async def check_connection() -> dict[str, Any]:
-    """Thử nối tới CSDL. Dùng cho lúc khởi động và endpoint kiểm tra sức khoẻ."""
+    """Try connecting to the database. Used at startup and by the health endpoint."""
     try:
         async with get_engine().connect() as conn:
             version = (await conn.execute(text("SHOW server_version"))).scalar_one()
@@ -140,7 +140,7 @@ async def check_connection() -> dict[str, Any]:
 
 
 async def dispose_engine() -> None:
-    """Đóng mọi kết nối. Gọi lúc tắt ứng dụng."""
+    """Close every connection. Called on application shutdown."""
     global _engine, _sessionmaker
     if _engine is not None:
         await _engine.dispose()
@@ -150,14 +150,15 @@ async def dispose_engine() -> None:
 
 @on_reload
 def _reset_on_config_change() -> None:
-    """Cấu hình đổi thì engine cũ có thể đang trỏ sai chỗ.
+    """When configuration changes, the old engine may point to the wrong place.
 
-    Chỉ bỏ tham chiếu — không đóng được ở đây vì hàm này chạy đồng bộ.
-    Kết nối cũ sẽ được trình dọn rác đóng lại.
+    Only drop the reference — we cannot close it here because this function
+    runs synchronously. The old connections will be closed by the garbage
+    collector.
     """
     global _engine, _sessionmaker
     if _engine is not None:
-        logger.info("Cấu hình đổi, sẽ dựng lại kết nối CSDL ở lần dùng tới")
+        logger.info("Configuration changed; the database connection will be rebuilt on next use")
     _engine = None
     _sessionmaker = None
 

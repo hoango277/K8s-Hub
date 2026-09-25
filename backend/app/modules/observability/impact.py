@@ -1,10 +1,10 @@
-"""Join Langfuse trace <-> audit log: LLM da TAC DONG gi len cluster.
+"""Join Langfuse trace <-> audit log: what the LLM actually DID to the cluster.
 
-Langfuse chi biet LLM dinh lam gi. File nay tra loi:
-  - action nao that su duoc thuc thi (khong bi reject/chan)
-  - resource / namespace nao bi cham vao  (blast radius)
-  - ai duyet, duyet luc nao
-  - co phai rollback sau do khong
+Langfuse only knows what the LLM intended to do. This file answers:
+  - which actions were actually executed (not rejected/blocked)
+  - which resources / namespaces were touched  (blast radius)
+  - who approved, and when
+  - whether a rollback was needed afterwards
 
 TODO: impact_of_trace(trace_id), blast_radius(thread_id),
       timeline_of_changes(namespace, since).

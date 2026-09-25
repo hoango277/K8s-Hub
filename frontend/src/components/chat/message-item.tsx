@@ -10,19 +10,19 @@ interface Props {
   role: "user" | "assistant" | "system";
   content: string;
   toolCalls?: ToolCallView[];
-  /** Phần mô hình tự nghĩ trước khi trả lời. */
+  /** What the model reasoned through before answering. */
   thinking?: string;
-  /** Còn đang nghĩ — hiện hiệu ứng chờ. */
-  dangNghi?: boolean;
-  /** Số giây đã nghĩ, khi đã xong. */
-  giayNghi?: number | null;
-  /** Đang nhận chữ — hiện con trỏ nhấp nháy ở cuối. */
+  /** Still thinking — show the waiting animation. */
+  isThinking?: boolean;
+  /** Seconds spent thinking, once finished. */
+  thinkingSeconds?: number | null;
+  /** Receiving text — show a blinking caret at the end. */
   streaming?: boolean;
   error?: string | null;
   meta?: string | null;
 }
 
-/** Đổi bản ghi trong CSDL thành dạng thẻ công cụ hiển thị. */
+/** Converts a database record into the tool card view shape. */
 export function toolCallsOf(message: Message): ToolCallView[] {
   return message.tool_calls.map((tc) => ({
     name: tc.name,
@@ -39,15 +39,15 @@ export function MessageItem({
   content,
   toolCalls = [],
   thinking = "",
-  dangNghi = false,
-  giayNghi = null,
+  isThinking = false,
+  thinkingSeconds = null,
   streaming = false,
   error = null,
   meta = null,
 }: Props) {
   if (role === "user") {
     return (
-      <div className="k8s-hien-len flex justify-end">
+      <div className="k8s-fade-in flex justify-end">
         <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm bg-[var(--primary)] px-4 py-2.5 text-sm text-[var(--primary-foreground)]">
           {content}
         </div>
@@ -55,13 +55,14 @@ export function MessageItem({
     );
   }
 
-  // Trợ lý đã nhận việc nhưng chưa có gì để hiện: đừng để màn hình đứng im.
-  const choTin = streaming && !thinking && !content && toolCalls.length === 0;
+  // The assistant has picked up the request but has nothing to show yet: don't
+  // let the screen sit still.
+  const isWaiting = streaming && !thinking && !content && toolCalls.length === 0;
 
   return (
     <div className="space-y-2">
-      {(thinking || dangNghi) && (
-        <ThinkingBlock content={thinking} dangNghi={dangNghi} giay={giayNghi} />
+      {(thinking || isThinking) && (
+        <ThinkingBlock content={thinking} isThinking={isThinking} seconds={thinkingSeconds} />
       )}
 
       {toolCalls.length > 0 && (
@@ -72,14 +73,14 @@ export function MessageItem({
         </div>
       )}
 
-      {choTin && (
+      {isWaiting && (
         <div className="flex items-center gap-2 text-xs">
-          <span className="k8s-loe-sang font-medium">Đang kết nối tới trợ lý</span>
+          <span className="k8s-shimmer font-medium">Connecting to the assistant</span>
           <span aria-hidden className="flex gap-0.5">
             {[0, 1, 2].map((i) => (
               <span
                 key={i}
-                className="k8s-cham-nay size-1 rounded-full bg-[var(--muted-foreground)]"
+                className="k8s-dot-bounce size-1 rounded-full bg-[var(--muted-foreground)]"
                 style={{ animationDelay: `${i * 0.16}s` }}
               />
             ))}
@@ -88,7 +89,7 @@ export function MessageItem({
       )}
 
       {content && (
-        <Markdown className={cn("break-words", streaming && "k8s-dang-go")}>
+        <Markdown className={cn("break-words", streaming && "k8s-typing")}>
           {content}
         </Markdown>
       )}
@@ -96,7 +97,7 @@ export function MessageItem({
       {error && (
         <p
           className={cn(
-            "k8s-hien-len rounded-md bg-[var(--destructive)]/10 px-3 py-2 text-sm",
+            "k8s-fade-in rounded-md bg-[var(--destructive)]/10 px-3 py-2 text-sm",
             "text-[var(--destructive)]",
           )}
         >

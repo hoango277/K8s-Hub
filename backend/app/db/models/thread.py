@@ -1,9 +1,9 @@
-"""Một cuộc hội thoại.
+"""A single conversation.
 
-Mỗi lần người dùng mở khung chat mới là một `ChatThread`. Lịch sử tin nhắn
-nằm ở bảng `messages`, và chính lịch sử đó được nạp lại làm ngữ cảnh cho
-lượt hỏi kế tiếp — hệ thống không dựa vào bộ nhớ tạm của tiến trình, nên
-khởi động lại máy chủ vẫn không mất mạch hội thoại.
+Every time a user opens a new chat, that is one `ChatThread`. The message
+history lives in the `messages` table, and that very history is reloaded as
+context for the next turn — the system does not rely on in-process memory, so
+restarting the server does not lose the thread of the conversation.
 """
 
 from __future__ import annotations
@@ -22,14 +22,15 @@ if TYPE_CHECKING:
     from app.db.models.message import Message
     from app.db.models.user import User
 
-# Tiêu đề tự đặt từ câu hỏi đầu tiên, cắt bớt cho vừa thanh bên.
+# The title is set automatically from the first question, trimmed to fit the sidebar.
 TITLE_MAX = 120
 
 
 class ChatThread(Base, TimestampMixin):
     __tablename__ = "chat_threads"
     __table_args__ = (
-        # Thanh bên luôn hỏi "hội thoại của tôi, mới nhất trước".
+        # The sidebar always asks for "my conversations, newest first".
+        # (Index name kept as-is: it already exists in the migrations.)
         Index("ix_chat_threads_user_moi_nhat", "user_id", "last_message_at"),
     )
 
@@ -42,15 +43,18 @@ class ChatThread(Base, TimestampMixin):
         nullable=False,
         index=True,
     )
-    title: Mapped[str] = mapped_column(String(TITLE_MAX), nullable=False, default="Hội thoại mới")
+    title: Mapped[str] = mapped_column(
+        String(TITLE_MAX), nullable=False, default="New conversation"
+    )
 
-    # Cụm đang thao tác. Để dạng chữ, chưa khoá ngoại sang bảng cluster vì
-    # bảng đó chưa có; khi có thì đổi sang khoá ngoại trong một migration riêng.
+    # The cluster being operated on. Stored as text, with no foreign key to a
+    # cluster table yet because that table does not exist; once it does, switch
+    # to a foreign key in a dedicated migration.
     cluster: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
     archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
-    # Tách khỏi updated_at: sửa tiêu đề không được làm hội thoại nhảy lên đầu.
+    # Separate from updated_at: renaming a conversation must not bump it to the top.
     last_message_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

@@ -1,1 +1,1 @@
-"""LangGraph state cho RCA agent. TODO."""
+"""LangGraph state for the RCA agent. TODO."""

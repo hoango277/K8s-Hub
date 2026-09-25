@@ -4,31 +4,31 @@ import { useCallback, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
-import { useLuuTru } from "@/hooks/use-luu-tru";
+import { useLocalStorage } from "@/hooks/use-local-storage";
 import { qk } from "@/lib/query-keys";
 import type { ModelCatalog, ProvidersView } from "@/types/chat";
 
-const KHOA_LUU = "k8shub.llm";
+const STORAGE_KEY = "k8shub.llm";
 
-/** Lựa chọn nhà cung cấp và model của người dùng cho khung chat. */
-export interface LuaChon {
+/** The user's provider and model choice for the chat panel. */
+export interface ModelChoice {
   provider: string | null;
   model: string | null;
 }
 
-const CHUA_CHON: LuaChon = { provider: null, model: null };
+const NO_CHOICE: ModelChoice = { provider: null, model: null };
 
-function phanTich(tho: string | null): LuaChon {
-  if (!tho) return CHUA_CHON;
+function parseChoice(raw: string | null): ModelChoice {
+  if (!raw) return NO_CHOICE;
   try {
-    const d = JSON.parse(tho) as Partial<LuaChon>;
+    const d = JSON.parse(raw) as Partial<ModelChoice>;
     return {
       provider: typeof d.provider === "string" ? d.provider : null,
       model: typeof d.model === "string" ? d.model : null,
     };
   } catch {
-    // Dữ liệu cũ hỏng định dạng — coi như chưa chọn, đừng làm vỡ cả trang.
-    return CHUA_CHON;
+    // Old data in a broken format — treat as no choice, don't break the page.
+    return NO_CHOICE;
   }
 }
 
@@ -45,109 +45,108 @@ export function useModels(provider: string | null) {
     queryKey: qk.chat.models(provider ?? ""),
     queryFn: () => api.get<ModelCatalog>(`/chat/models?provider=${provider}`),
     enabled: Boolean(provider),
-    // Backend đã nhớ đệm 10 phút và không bao giờ trả lỗi, nên đừng hỏi lại
-    // mỗi lần quay về tab.
+    // The backend already caches for 10 minutes and never returns an error, so
+    // don't ask again every time the tab regains focus.
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
   });
 }
 
 /**
- * Quản lý lựa chọn nhà cung cấp + model cho khung chat.
+ * Manages the provider + model choice for the chat panel.
  *
- * Lựa chọn được nhớ trong trình duyệt. Chưa chọn gì thì dùng cấu hình hệ
- * thống — nghĩa là người dùng không phải đụng vào hai ô này vẫn chat được.
+ * The choice is remembered in the browser. With nothing chosen, the system
+ * configuration applies — so users can chat without ever touching these two
+ * pickers.
  */
-export function useLuaChonModel() {
+export function useModelSelection() {
   const qc = useQueryClient();
   const providers = useProviders();
 
-  // Lựa chọn đã lưu trong trình duyệt. Ghi vào đây cũng cập nhật luôn state,
-  // nên người dùng vừa đổi là thấy đổi ngay.
-  const [tho, luuTho] = useLuuTru(KHOA_LUU);
-  const luaChon = useMemo(() => phanTich(tho), [tho]);
+  // The choice stored in the browser. Writing here also updates state, so the
+  // user sees the change immediately.
+  const [raw, saveRaw] = useLocalStorage(STORAGE_KEY);
+  const choice = useMemo(() => parseChoice(raw), [raw]);
 
-  // Chỉ hiện nhà cung cấp đã điền khoá API. Cho chọn một nhà cung cấp chắc
-  // chắn không chạy được là bẫy người dùng: lỗi chỉ lộ ra sau khi họ đã gõ
-  // xong câu hỏi và bấm gửi.
-  const coSan = useMemo(
+  // Only show providers that have an API key. Offering a provider that is sure
+  // to fail is a trap: the error only surfaces after the user has typed their
+  // question and pressed send.
+  const available = useMemo(
     () => (providers.data?.providers ?? []).filter((p) => p.api_key_set),
     [providers.data],
   );
 
-  const macDinh = providers.data?.current.provider ?? null;
+  const systemDefault = providers.data?.current.provider ?? null;
 
-  // Nhà cung cấp đang chọn phải nằm trong số dùng được. Cấu hình hệ thống trỏ
-  // vào một nhà cung cấp chưa có khoá thì rơi về cái đầu tiên dùng được.
+  // The selected provider must be one of the usable ones. If the system config
+  // points at a provider without a key, fall back to the first usable one.
   const provider =
-    [luaChon.provider, macDinh].find((t) => t && coSan.some((p) => p.name === t)) ??
-    coSan[0]?.name ??
+    [choice.provider, systemDefault].find((t) => t && available.some((p) => p.name === t)) ??
+    available[0]?.name ??
     null;
 
-  const models = useModels(provider);
+  const modelsQuery = useModels(provider);
 
-  // Model đang chọn phải thuộc về nhà cung cấp đang chọn. Sau khi đổi nhà cung
-  // cấp, model cũ không còn hợp lệ nên phải bỏ đi.
-  const danhSach = models.data?.models ?? [];
-  const modelHopLe =
-    luaChon.model && danhSach.some((m) => m.id === luaChon.model)
-      ? luaChon.model
-      : null;
+  // The selected model must belong to the selected provider. After switching
+  // providers, the old model is no longer valid and must be dropped.
+  const models = modelsQuery.data?.models ?? [];
+  const validChosenModel =
+    choice.model && models.some((m) => m.id === choice.model) ? choice.model : null;
 
-  const thongTinProvider = coSan.find((p) => p.name === provider) ?? null;
+  const providerInfo = available.find((p) => p.name === provider) ?? null;
 
-  /** Chỉ nhận model nếu nó thật sự có trong danh sách đang hiện.
+  /** Only accept a model if it's actually in the list being shown.
    *
-   * Ô chọn nhận một giá trị không khớp mục nào sẽ hiện trống trơn, mà người
-   * dùng vẫn bấm gửi được — rồi nhận lỗi từ nhà cung cấp. */
-  const coTrongDanhSach = (ma: string | null | undefined) =>
-    ma && danhSach.some((m) => m.id === ma) ? ma : null;
+   * A picker given a value that matches no item shows up blank, yet the user
+   * can still press send — and then gets an error from the provider. */
+  const ifListed = (id: string | null | undefined) =>
+    id && models.some((m) => m.id === id) ? id : null;
 
   const model =
-    modelHopLe ??
-    // Đúng nhà cung cấp hệ thống đang đặt thì theo model hệ thống đang đặt.
-    (provider === macDinh ? coTrongDanhSach(providers.data?.current.model) : null) ??
-    // Nhà cung cấp khác: lấy model mặc định CỦA NÓ.
+    validChosenModel ??
+    // Same provider the system is set to: follow the system's model.
+    (provider === systemDefault ? ifListed(providers.data?.current.model) : null) ??
+    // A different provider: use ITS default model.
     //
-    // Không có bước này thì rơi xuống phần tử đầu danh sách đã sắp theo bảng
-    // chữ cái — với Google là "antigravity-preview", một model nghiên cứu
-    // chậm và đắt. Chọn mặc định phải là model dùng hàng ngày.
-    coTrongDanhSach(thongTinProvider?.default_model) ??
-    danhSach[0]?.id ??
+    // Without this step we'd fall through to the first item of the
+    // alphabetically sorted list — for Google that's "antigravity-preview", a
+    // slow and expensive research model. The default must be an everyday model.
+    ifListed(providerInfo?.default_model) ??
+    models[0]?.id ??
     null;
 
-  const luu = useCallback(
-    (moi: LuaChon) => luuTho(JSON.stringify(moi)),
-    [luuTho],
+  const save = useCallback(
+    (next: ModelChoice) => saveRaw(JSON.stringify(next)),
+    [saveRaw],
   );
 
-  const doiProvider = useCallback(
-    (ten: string) => {
-      // Bỏ model cũ: nó thuộc nhà cung cấp khác.
-      luu({ provider: ten, model: null });
+  const setProvider = useCallback(
+    (name: string) => {
+      // Drop the old model: it belongs to a different provider.
+      save({ provider: name, model: null });
       void qc.prefetchQuery({
-        queryKey: qk.chat.models(ten),
-        queryFn: () => api.get<ModelCatalog>(`/chat/models?provider=${ten}`),
+        queryKey: qk.chat.models(name),
+        queryFn: () => api.get<ModelCatalog>(`/chat/models?provider=${name}`),
       });
     },
-    [luu, qc],
+    [save, qc],
   );
 
-  const doiModel = useCallback(
-    (ma: string) => luu({ provider, model: ma }),
-    [luu, provider],
+  const setModel = useCallback(
+    (id: string) => save({ provider, model: id }),
+    [save, provider],
   );
 
   return {
     provider,
     model,
-    providers: coSan,
-    thongTinProvider,
-    danhSachModel: danhSach,
-    nguonModel: models.data?.source ?? null,
-    loiModel: models.data?.error ?? null,
-    dangTai: providers.isLoading || models.isLoading,
-    doiProvider,
-    doiModel,
+    providers: available,
+    providerInfo,
+    models,
+    modelSource: modelsQuery.data?.source ?? null,
+    modelError: modelsQuery.data?.error ?? null,
+    isLoading: providers.isLoading || modelsQuery.isLoading,
+    setProvider,
+    setModel,
   };
 }

@@ -1,7 +1,7 @@
-"""Loki HTTP API client - DOC log cua cum K8s dich.
+"""Loki HTTP API client - READS logs from the target K8s cluster.
 
-Vai tro: nguon evidence cho RCA (app/modules/rca/collectors/logs.py).
-KHONG phai noi app nay ghi log cua chinh no - viec do o app/core/telemetry.py.
+Role: evidence source for RCA (app/modules/rca/collectors/logs.py).
+NOT where this app writes its own logs - that lives in app/core/telemetry.py.
 
-TODO: query_range() voi LogQL, tail, label discovery.
+TODO: query_range() with LogQL, tail, label discovery.
 """

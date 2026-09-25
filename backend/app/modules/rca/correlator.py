@@ -1,1 +1,1 @@
-"""Ghep evidence theo timeline, doi chieu deploy/rollout gan nhat. TODO."""
+"""Align evidence on a timeline, cross-check against the latest deploy/rollout. TODO."""

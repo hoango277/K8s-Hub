@@ -1,17 +1,17 @@
 "use client";
 
+import { inputClass } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import type { SettingField } from "@/types/settings";
 
-const INPUT =
-  "w-full rounded-md border bg-[var(--background)] px-3 py-1.5 text-sm " +
-  "outline-none transition focus:ring-2 focus:ring-[var(--ring)] disabled:opacity-50";
+const INPUT = inputClass;
 
 interface Props {
   field: SettingField;
   value: unknown;
   onChange: (value: unknown) => void;
-  /** Lỗi do máy chủ trả về cho riêng trường này. */
+  /** Error returned by the server for this specific field. */
   error?: string;
 }
 
@@ -29,7 +29,8 @@ export function FieldInput({ field, value, onChange, error }: Props) {
           aria-label={field.name}
           onClick={() => onChange(!value)}
           className={cn(
-            "relative h-6 w-11 shrink-0 rounded-full transition",
+            "relative h-6 w-11 shrink-0 rounded-full outline-none transition",
+            "focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]",
             value ? "bg-[var(--primary)]" : "bg-[var(--muted)]",
           )}
         >
@@ -44,18 +45,22 @@ export function FieldInput({ field, value, onChange, error }: Props) {
 
     case "enum":
       return (
-        <select
-          aria-label={field.name}
-          className={cls}
-          value={String(value ?? "")}
-          onChange={(e) => onChange(e.target.value)}
-        >
-          {field.options?.map((opt) => (
-            <option key={opt} value={opt}>
-              {opt}
-            </option>
-          ))}
-        </select>
+        <Select value={String(value ?? "")} onValueChange={(v) => onChange(v)}>
+          <SelectTrigger
+            aria-label={field.name}
+            aria-invalid={invalid}
+            className="h-9 w-full justify-between text-sm font-normal"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {field.options?.map((opt) => (
+              <SelectItem key={opt} value={opt}>
+                {opt}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       );
 
     case "integer":
@@ -84,7 +89,7 @@ export function FieldInput({ field, value, onChange, error }: Props) {
           type="password"
           aria-label={field.name}
           className={cls}
-          placeholder={field.is_set ? "•••••••• (đã đặt, nhập để thay)" : "chưa đặt"}
+          placeholder={field.is_set ? "•••••••• (set — type to replace)" : "Not set"}
           value={typeof value === "string" ? value : ""}
           onChange={(e) => onChange(e.target.value)}
           autoComplete="off"
@@ -96,7 +101,7 @@ export function FieldInput({ field, value, onChange, error }: Props) {
         <input
           aria-label={field.name}
           className={cls}
-          placeholder="ngăn cách bằng dấu phẩy, để trống là tất cả"
+          placeholder="Comma-separated; leave blank for all"
           value={Array.isArray(value) ? value.join(", ") : ""}
           onChange={(e) =>
             onChange(

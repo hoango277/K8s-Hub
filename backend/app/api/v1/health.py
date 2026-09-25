@@ -1,4 +1,4 @@
-"""Kiểm tra ứng dụng còn sống và các phụ thuộc có sẵn sàng không."""
+"""Check that the app is alive and that its dependencies are ready."""
 
 from __future__ import annotations
 
@@ -13,15 +13,15 @@ router = APIRouter()
 
 @router.get("/health")
 async def health() -> dict[str, str]:
-    """Ứng dụng có đang chạy không. Nhẹ, không chạm vào phụ thuộc nào."""
+    """Is the app running? Cheap — touches no dependency."""
     return {"status": "ok"}
 
 
 @router.get("/health/ready")
 async def readiness(response: Response) -> dict[str, Any]:
-    """Đã sẵn sàng nhận việc chưa — có chạm cơ sở dữ liệu.
+    """Is the app ready to take work — this one does touch the database.
 
-    Trả 503 nếu có phụ thuộc hỏng, để Kubernetes ngừng gửi lưu lượng vào.
+    Returns 503 if a dependency is broken, so Kubernetes stops sending traffic.
     """
     db = await check_connection()
     if not db["ok"]:

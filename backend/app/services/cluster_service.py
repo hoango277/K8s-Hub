@@ -1,1 +1,1 @@
-"""Quan ly ket noi nhieu cluster. TODO."""
+"""Manage connections to multiple clusters. TODO."""

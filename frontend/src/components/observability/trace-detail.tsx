@@ -1,4 +1,4 @@
-// Cay span cua 1 trace. TODO
+// Span tree of one trace. TODO
 export function TraceDetail() {
   return null;
 }

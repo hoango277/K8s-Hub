@@ -1,4 +1,4 @@
-// Form sinh tu input JSON schema cua skill. TODO
+// Form generated from the skill's input JSON schema. TODO
 export function SkillRunForm() {
   return null;
 }

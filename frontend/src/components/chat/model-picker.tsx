@@ -15,64 +15,64 @@ import type { ModelInfo, ProviderInfo } from "@/types/chat";
 interface Props {
   provider: string | null;
   model: string | null;
-  /** Chỉ gồm nhà cung cấp đã có khoá API — xem `useLuaChonModel`. */
+  /** Only providers that have an API key — see `useModelSelection`. */
   providers: ProviderInfo[];
-  thongTinProvider: ProviderInfo | null;
-  danhSachModel: ModelInfo[];
-  nguonModel: "api" | "config" | null;
-  loiModel: string | null;
+  providerInfo: ProviderInfo | null;
+  models: ModelInfo[];
+  modelSource: "api" | "config" | null;
+  modelError: string | null;
   disabled?: boolean;
-  onDoiProvider: (ten: string) => void;
-  onDoiModel: (ma: string) => void;
+  onProviderChange: (name: string) => void;
+  onModelChange: (id: string) => void;
 }
 
-/** "131K" — dễ đọc hơn 131072 rất nhiều khi liếc qua. */
-function coNguCanh(m: ModelInfo): string | null {
+/** "131K" — much easier to read at a glance than 131072. */
+function contextSize(m: ModelInfo): string | null {
   if (!m.context_window) return null;
   const k = Math.round(m.context_window / 1000);
-  return k >= 1000 ? `${Math.round(k / 1000)}M ngữ cảnh` : `${k}K ngữ cảnh`;
+  return k >= 1000 ? `${Math.round(k / 1000)}M context` : `${k}K context`;
 }
 
-function moTaModel(m: ModelInfo): string {
-  return [m.owned_by, coNguCanh(m)].filter(Boolean).join(" · ");
+function describeModel(m: ModelInfo): string {
+  return [m.owned_by, contextSize(m)].filter(Boolean).join(" · ");
 }
 
 export function ModelPicker({
   provider,
   model,
   providers,
-  thongTinProvider,
-  danhSachModel,
-  nguonModel,
-  loiModel,
+  providerInfo,
+  models,
+  modelSource,
+  modelError,
   disabled = false,
-  onDoiProvider,
-  onDoiModel,
+  onProviderChange,
+  onModelChange,
 }: Props) {
   if (providers.length === 0) {
     return (
       <p className="flex items-center gap-1.5 px-1 text-xs text-[var(--muted-foreground)]">
         <TriangleAlert aria-hidden className="size-3.5 shrink-0" />
-        Chưa có nhà cung cấp nào được điền khoá API. Vào trang Cấu hình để thêm.
+        No provider has an API key yet. Add one on the Settings page.
       </p>
     );
   }
 
-  const canhBao =
-    nguonModel === "config" && loiModel
-      ? `Danh sách rút gọn — ${loiModel}`
-      : thongTinProvider && !thongTinProvider.supports_tool_calling
-        ? "Nhà cung cấp này không gọi được công cụ"
+  const warning =
+    modelSource === "config" && modelError
+      ? `Short list — ${modelError}`
+      : providerInfo && !providerInfo.supports_tool_calling
+        ? "This provider can't call tools"
         : null;
 
   return (
     <div className="flex min-w-0 flex-1 items-center gap-1.5">
       <Select
         value={provider ?? ""}
-        onValueChange={onDoiProvider}
+        onValueChange={onProviderChange}
         disabled={disabled}
       >
-        <SelectTrigger aria-label="Nhà cung cấp" className="shrink-0">
+        <SelectTrigger aria-label="Provider" className="shrink-0">
           <SelectValue />
         </SelectTrigger>
 
@@ -81,7 +81,7 @@ export function ModelPicker({
             <SelectItem
               key={p.name}
               value={p.name}
-              mota={p.supports_tool_calling ? undefined : "không gọi được công cụ"}
+              description={p.supports_tool_calling ? undefined : "can't call tools"}
             >
               {p.name}
             </SelectItem>
@@ -91,37 +91,37 @@ export function ModelPicker({
 
       <Select
         value={model ?? ""}
-        onValueChange={onDoiModel}
-        disabled={disabled || danhSachModel.length === 0}
+        onValueChange={onModelChange}
+        disabled={disabled || models.length === 0}
       >
         <SelectTrigger
           aria-label="Model"
-          // Tên model có thể rất dài; cho co lại và cắt bớt thay vì đẩy nút gửi
-          // ra khỏi khung.
+          // Model names can be very long; let it shrink and truncate instead of
+          // pushing the send button out of the frame.
           className="min-w-0 max-w-[16rem] flex-1 [&>span]:truncate"
         >
-          <SelectValue placeholder="Chọn model" />
+          <SelectValue placeholder="Choose a model" />
         </SelectTrigger>
 
         <SelectContent className="max-w-[22rem]">
-          {danhSachModel.map((m) => (
-            <SelectItem key={m.id} value={m.id} mota={moTaModel(m) || undefined}>
+          {models.map((m) => (
+            <SelectItem key={m.id} value={m.id} description={describeModel(m) || undefined}>
               {m.label}
             </SelectItem>
           ))}
         </SelectContent>
       </Select>
 
-      {canhBao && (
+      {warning && (
         <span
-          title={canhBao}
+          title={warning}
           className={cn(
             "hidden items-center gap-1 text-xs sm:flex",
             "text-amber-600 dark:text-amber-400",
           )}
         >
           <TriangleAlert aria-hidden className="size-3.5 shrink-0" />
-          <span className="max-w-[12rem] truncate">{canhBao}</span>
+          <span className="max-w-[12rem] truncate">{warning}</span>
         </span>
       )}
     </div>

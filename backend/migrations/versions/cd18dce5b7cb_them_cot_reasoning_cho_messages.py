@@ -1,4 +1,4 @@
-"""them cot reasoning cho messages
+"""add reasoning column to messages
 
 Revision ID: cd18dce5b7cb
 Revises: 677716bba16d

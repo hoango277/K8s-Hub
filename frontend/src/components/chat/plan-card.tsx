@@ -1,4 +1,4 @@
-// Hien thi ke hoach nhieu buoc truoc khi thuc thi. TODO
+// Shows a multi-step plan before it is executed. TODO
 export function PlanCard() {
   return null;
 }

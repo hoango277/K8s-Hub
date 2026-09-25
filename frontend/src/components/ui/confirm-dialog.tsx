@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -10,42 +11,41 @@ interface Props {
   description?: string;
   confirmLabel?: string;
   cancelLabel?: string;
-  /** Hành động không lấy lại được thì để `true` — nút xác nhận sẽ đỏ. */
-  nguyHiem?: boolean;
+  /** Set `true` for actions that can't be undone — the confirm button turns red. */
+  destructive?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
 /**
- * Hộp thoại xác nhận.
+ * Confirmation dialog.
  *
- * Dựng trên thẻ `<dialog>` của trình duyệt chứ không phải một `div` có
- * `position: fixed`. Gọi `showModal()` là được sẵn bốn thứ mà tự làm lại rất
- * dễ thiếu:
+ * Built on the browser's `<dialog>` element rather than a `div` with
+ * `position: fixed`. Calling `showModal()` gives us four things for free that
+ * are easy to miss when rebuilding by hand:
  *
- *   - Tiêu điểm bị giữ trong hộp, phím Tab không chạy ra ngoài.
- *   - Esc để đóng.
- *   - Phần còn lại của trang bị ẩn khỏi trình đọc màn hình.
- *   - Lớp nền mờ vẽ ở tầng trên cùng, không phải đấu z-index với ai.
+ *   - Focus is trapped inside the dialog; Tab doesn't escape.
+ *   - Esc closes it.
+ *   - The rest of the page is hidden from screen readers.
+ *   - The backdrop is drawn on the top layer, no z-index fights.
  *
- * Đây là thứ thay cho `window.confirm()`. Hộp thoại của trình duyệt chặn đứng
- * mọi thứ khác trong tab cho tới khi người dùng bấm, và không theo được giao
- * diện của ứng dụng.
+ * This replaces `window.confirm()`. The browser's dialog blocks everything
+ * else in the tab until the user clicks, and can't follow the app's styling.
  */
 export function ConfirmDialog({
   open,
   title,
   description,
-  confirmLabel = "Xác nhận",
-  cancelLabel = "Huỷ",
-  nguyHiem = false,
+  confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
+  destructive = false,
   onConfirm,
   onCancel,
 }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
 
-  // Đồng bộ trạng thái React với thẻ dialog — đây là việc "nói chuyện với một
-  // hệ thống bên ngoài", đúng chỗ để dùng effect.
+  // Sync React state with the dialog element — this is "talking to an
+  // external system", exactly what effects are for.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -57,14 +57,14 @@ export function ConfirmDialog({
   return (
     <dialog
       ref={ref}
-      // Người dùng bấm Esc: trình duyệt tự đóng, phải báo ngược lại cho React
-      // biết, nếu không lần mở sau sẽ không ăn.
+      // The user pressed Esc: the browser closes it on its own, so we must
+      // tell React, otherwise the next open won't take effect.
       onCancel={(e) => {
         e.preventDefault();
         onCancel();
       }}
-      // Bấm ra ngoài hộp thì đóng. Phần nền chính là thẻ dialog, nên nhận được
-      // click ở đây nghĩa là click rơi ngoài phần nội dung.
+      // Clicking outside the box closes it. The backdrop IS the dialog
+      // element, so a click landing here means it fell outside the content.
       onClick={(e) => {
         if (e.target === ref.current) onCancel();
       }}
@@ -83,28 +83,19 @@ export function ConfirmDialog({
       </div>
 
       <div className="flex justify-end gap-2 border-t px-4 py-3">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-md border px-3 py-1.5 text-sm transition hover:bg-[var(--accent)]"
-        >
+        <Button variant="outline" size="sm" onClick={onCancel}>
           {cancelLabel}
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant={destructive ? "destructive" : "primary"}
+          size="sm"
           onClick={onConfirm}
-          // Tiêu điểm vào nút này khi mở, nhưng KHÔNG phải nút mặc định của
-          // Enter với thao tác nguy hiểm — người dùng phải bấm có chủ đích.
-          autoFocus={!nguyHiem}
-          className={cn(
-            "rounded-md px-3 py-1.5 text-sm font-medium transition hover:opacity-90",
-            nguyHiem
-              ? "bg-[var(--destructive)] text-[var(--destructive-foreground)]"
-              : "bg-[var(--primary)] text-[var(--primary-foreground)]",
-          )}
+          // Focus this button on open, but NOT as the Enter default for
+          // destructive actions — the user must click deliberately.
+          autoFocus={!destructive}
         >
           {confirmLabel}
-        </button>
+        </Button>
       </div>
     </dialog>
   );

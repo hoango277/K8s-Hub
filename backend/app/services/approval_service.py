@@ -1,1 +1,1 @@
-"""Tao approval, resume LangGraph interrupt sau khi duyet. TODO."""
+"""Create approvals and resume the LangGraph interrupt once approved. TODO."""

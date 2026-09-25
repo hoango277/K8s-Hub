@@ -21,8 +21,8 @@ export function useThread(id: string | null) {
     queryKey: qk.threads.detail(id ?? ""),
     queryFn: () => api.get<ThreadDetail>(`/chat/threads/${id}`),
     enabled: Boolean(id),
-    // Lịch sử chỉ đổi khi chính người này gửi tin nhắn, nên không cần hỏi lại
-    // mỗi lần quay về tab.
+    // History only changes when this same user sends a message, so there's no
+    // need to refetch every time the tab regains focus.
     refetchOnWindowFocus: false,
   });
 }
@@ -32,14 +32,14 @@ export function useCreateThread() {
   return useMutation({
     mutationFn: () => api.post<Thread>("/chat/threads", {}),
     onSuccess: (thread) => {
-      // Hội thoại vừa tạo thì chắc chắn chưa có tin nhắn nào — điền thẳng vào
-      // cache để khỏi phải gọi thêm một request chỉ để nhận về danh sách rỗng.
-      // Mỗi lượt đi-về tới CSDL mất gần một giây, và đó đúng là khoảnh khắc
-      // người dùng đang chờ màn hình phản hồi.
+      // A freshly created thread certainly has no messages — seed the cache
+      // directly to avoid an extra request just to receive an empty list.
+      // Each round-trip to the DB takes nearly a second, and that is exactly
+      // the moment the user is waiting for the screen to respond.
       qc.setQueryData(qk.threads.detail(thread.id), { ...thread, messages: [] });
 
-      // Chỉ làm mới DANH SÁCH. Nếu dùng khoá gốc `threads` thì bản vừa điền ở
-      // trên cũng bị làm mới theo, coi như công cốc.
+      // Only refresh the LISTS. Using the root `threads` key would also
+      // refresh the entry seeded above, undoing the work.
       void qc.invalidateQueries({ queryKey: qk.threads.lists });
     },
   });
@@ -53,7 +53,7 @@ export function useDeleteThread() {
   });
 }
 
-/** CHƯA CÓ GIAO DIỆN đổi tên hội thoại — endpoint và hook đã sẵn sàng. */
+/** NO UI for renaming threads YET — the endpoint and hook are ready. */
 export function useRenameThread() {
   const qc = useQueryClient();
   return useMutation({
@@ -63,7 +63,7 @@ export function useRenameThread() {
   });
 }
 
-/** Công cụ trợ lý đang có — để hiện cho người dùng biết nó tra cứu được gì. */
+/** The assistant's available tools — shown so users know what it can look up. */
 export function useChatTools() {
   return useQuery({
     queryKey: qk.chat.tools,

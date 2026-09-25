@@ -1,14 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MessageSquarePlus, Trash2 } from "lucide-react";
+import { MessageSquarePlus, MessagesSquare, Trash2 } from "lucide-react";
 
 import { Composer } from "@/components/chat/composer";
 import { MessageList } from "@/components/chat/message-list";
 import { ModelPicker } from "@/components/chat/model-picker";
+import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Spinner } from "@/components/ui/spinner";
 import { useChatStream } from "@/hooks/use-chat-stream";
-import { useLuaChonModel } from "@/hooks/use-models";
+import { useModelSelection } from "@/hooks/use-models";
 import {
   useChatTools,
   useCreateThread,
@@ -16,110 +19,117 @@ import {
   useThread,
   useThreads,
 } from "@/hooks/use-threads";
-import { useLuuTru } from "@/hooks/use-luu-tru";
+import { useLocalStorage } from "@/hooks/use-local-storage";
 import { cn } from "@/lib/utils";
 
-/** Khoá lưu hội thoại đang mở, để tải lại trang không mất chỗ đang xem. */
-const KHOA_THREAD = "k8shub.thread";
+/** Storage key for the open thread, so reloading the page keeps your place. */
+const THREAD_KEY = "k8shub.thread";
 
 export function ChatPanel() {
-  // Hội thoại người dùng vừa bấm chọn trong phiên này.
-  const [daBam, setDaBam] = useState<string | null>(null);
+  // Thread the user just clicked in this session.
+  const [clickedId, setClickedId] = useState<string | null>(null);
 
-  // Hội thoại của lần truy cập trước.
-  const [daLuu, luuThread] = useLuuTru(KHOA_THREAD);
+  // Thread from the previous visit.
+  const [storedId, storeThread] = useLocalStorage(THREAD_KEY);
 
-  // Hội thoại đang chờ xác nhận xoá.
-  const [choXoa, setChoXoa] = useState<string | null>(null);
+  // Thread waiting for delete confirmation.
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
-  const danhSach = useThreads();
+  const threads = useThreads();
 
-  // Hội thoại đang mở được TÍNH RA chứ không lưu thành state riêng.
+  // The open thread is DERIVED, not stored as its own state.
   //
-  // Thứ tự ưu tiên, và `daBam` phải thắng NGAY LẬP TỨC không kèm điều kiện gì:
-  // id đó chỉ được đặt khi vừa bấm vào một hội thoại có sẵn, hoặc vừa tạo xong
-  // một hội thoại mới — cả hai trường hợp đều chắc chắn tồn tại. Nếu bắt nó
-  // phải có mặt trong `danhSach` trước, thì suốt lúc danh sách đang tải lại
-  // màn hình sẽ vẫn nằm ở hội thoại cũ — bấm "Hội thoại mới" trông y như
-  // không ăn.
-  const danhSachData = danhSach.data;
+  // Priority order, and `clickedId` must win IMMEDIATELY with no conditions:
+  // it is only set right after clicking an existing thread or creating a new
+  // one — both cases are guaranteed to exist. If it first had to appear in
+  // `threads`, then while the list is refetching the screen would stay on the
+  // old thread — clicking "New chat" would look like it did nothing.
+  const threadList = threads.data;
   const threadId =
-    daBam ??
-    (danhSachData
-      ? daLuu && danhSachData.some((t) => t.id === daLuu)
-        ? daLuu
-        : (danhSachData[0]?.id ?? null)
-      : daLuu);
+    clickedId ??
+    (threadList
+      ? storedId && threadList.some((t) => t.id === storedId)
+        ? storedId
+        : (threadList[0]?.id ?? null)
+      : storedId);
 
-  const chiTiet = useThread(threadId);
-  const congCu = useChatTools();
-  const taoMoi = useCreateThread();
-  const xoa = useDeleteThread();
+  const detail = useThread(threadId);
+  const tools = useChatTools();
+  const create = useCreateThread();
+  const remove = useDeleteThread();
 
-  const llm = useLuaChonModel();
-  const { live, dangChay, send, stop } = useChatStream(threadId, {
+  const llm = useModelSelection();
+  const { live, isStreaming, send, stop } = useChatStream(threadId, {
     provider: llm.provider,
     model: llm.model,
   });
 
   useEffect(() => {
-    if (threadId && threadId !== daLuu) luuThread(threadId);
-  }, [threadId, daLuu, luuThread]);
+    if (threadId && threadId !== storedId) storeThread(threadId);
+  }, [threadId, storedId, storeThread]);
 
-  async function themHoiThoai() {
-    const t = await taoMoi.mutateAsync();
-    setDaBam(t.id);
+  async function newThread() {
+    const t = await create.mutateAsync();
+    setClickedId(t.id);
   }
 
-  async function xacNhanXoa() {
-    const id = choXoa;
-    setChoXoa(null);
+  async function confirmDelete() {
+    const id = pendingDeleteId;
+    setPendingDeleteId(null);
     if (!id) return;
-    await xoa.mutateAsync(id);
-    if (id === daBam) setDaBam(null);
+    await remove.mutateAsync(id);
+    if (id === clickedId) setClickedId(null);
   }
 
-  const tenCongCu = congCu.data?.tools.map((t) => t.name) ?? [];
-  const tenChoXoa = danhSachData?.find((t) => t.id === choXoa)?.title ?? "";
+  const toolNames = tools.data?.tools.map((t) => t.name) ?? [];
+  const pendingDeleteTitle = threadList?.find((t) => t.id === pendingDeleteId)?.title ?? "";
 
   return (
     <div className="flex h-full">
       <aside className="flex w-64 shrink-0 flex-col border-r">
         <div className="p-2">
-          <button
-            type="button"
-            onClick={() => void themHoiThoai()}
-            disabled={taoMoi.isPending}
-            className={cn(
-              "flex h-9 w-full items-center gap-2 rounded-lg border px-3 text-sm",
-              "transition hover:bg-[var(--accent)] disabled:opacity-50",
-            )}
+          <Button
+            variant="outline"
+            className="w-full justify-start"
+            onClick={() => void newThread()}
+            disabled={create.isPending}
           >
-            <MessageSquarePlus aria-hidden className="size-4 shrink-0" />
-            <span>Hội thoại mới</span>
-          </button>
+            <MessageSquarePlus aria-hidden />
+            {create.isPending ? "Creating…" : "New chat"}
+          </Button>
         </div>
 
         <div className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
-            {danhSach.isLoading && (
-              <p className="px-2 py-1 text-xs text-[var(--muted-foreground)]">
-                Đang tải…
+            {threads.isLoading &&
+              [72, 56, 64, 48].map((w) => (
+                <div key={w} aria-hidden className="px-2.5 py-2.5">
+                  <div
+                    className="h-3.5 animate-pulse rounded bg-[var(--muted)] motion-reduce:animate-none"
+                    style={{ width: `${w}%` }}
+                  />
+                </div>
+              ))}
+
+            {threads.error && (
+              <div role="alert" className="mx-1 rounded-md bg-[var(--destructive)]/10 px-2.5 py-2 text-xs text-[var(--destructive)]">
+                Couldn&apos;t load your chats.{" "}
+                <button
+                  type="button"
+                  onClick={() => void threads.refetch()}
+                  className="font-medium underline underline-offset-2"
+                >
+                  Try again
+                </button>
+              </div>
+            )}
+
+            {threadList?.length === 0 && (
+              <p className="px-2.5 py-2 text-xs leading-relaxed text-[var(--muted-foreground)]">
+                No chats yet. Click “New chat” to start.
               </p>
             )}
 
-            {danhSach.error && (
-              <p className="px-2 py-1 text-xs text-[var(--destructive)]">
-                Không tải được danh sách. Backend đã chạy chưa?
-              </p>
-            )}
-
-            {danhSachData?.length === 0 && (
-              <p className="px-2 py-1 text-xs text-[var(--muted-foreground)]">
-                Chưa có hội thoại nào.
-              </p>
-            )}
-
-            {danhSachData?.map((t) => (
+            {threadList?.map((t) => (
               <div
                 key={t.id}
                 className={cn(
@@ -131,7 +141,7 @@ export function ChatPanel() {
               >
                 <button
                   type="button"
-                  onClick={() => setDaBam(t.id)}
+                  onClick={() => setClickedId(t.id)}
                   className="min-w-0 flex-1 px-2.5 py-2 text-left text-sm"
                   title={t.title}
                 >
@@ -140,9 +150,9 @@ export function ChatPanel() {
 
                 <button
                   type="button"
-                  onClick={() => setChoXoa(t.id)}
-                  aria-label={`Xoá ${t.title}`}
-                  title="Xoá hội thoại"
+                  onClick={() => setPendingDeleteId(t.id)}
+                  aria-label={`Delete ${t.title}`}
+                  title="Delete chat"
                   className={cn(
                     "mr-1.5 rounded p-1 opacity-0 transition",
                     "hover:text-[var(--destructive)] focus-visible:opacity-100",
@@ -156,20 +166,21 @@ export function ChatPanel() {
         </div>
       </aside>
 
-      {/* Khung trò chuyện */}
+      {/* Chat area */}
       <div className="flex min-w-0 flex-1 flex-col">
         {threadId ? (
           <>
             <div className="flex-1 overflow-y-auto">
-              {chiTiet.isLoading ? (
-                <p className="p-6 text-sm text-[var(--muted-foreground)]">
-                  Đang tải hội thoại…
-                </p>
+              {detail.isLoading ? (
+                <div className="flex h-full items-center justify-center gap-2 text-sm text-[var(--muted-foreground)]">
+                  <Spinner /> Loading chat…
+                </div>
               ) : (
                 <MessageList
-                  messages={chiTiet.data?.messages ?? []}
+                  messages={detail.data?.messages ?? []}
                   live={live}
-                  tenCongCu={tenCongCu}
+                  toolNames={toolNames}
+                  onSuggestion={isStreaming ? undefined : (q) => void send(q)}
                 />
               )}
             </div>
@@ -177,48 +188,52 @@ export function ChatPanel() {
             <Composer
               onSend={(c) => void send(c)}
               onStop={stop}
-              dangChay={dangChay}
+              isStreaming={isStreaming}
               toolbar={
                 <ModelPicker
                   provider={llm.provider}
                   model={llm.model}
                   providers={llm.providers}
-                  thongTinProvider={llm.thongTinProvider}
-                  danhSachModel={llm.danhSachModel}
-                  nguonModel={llm.nguonModel}
-                  loiModel={llm.loiModel}
-                  disabled={dangChay}
-                  onDoiProvider={llm.doiProvider}
-                  onDoiModel={llm.doiModel}
+                  providerInfo={llm.providerInfo}
+                  models={llm.models}
+                  modelSource={llm.modelSource}
+                  modelError={llm.modelError}
+                  disabled={isStreaming}
+                  onProviderChange={llm.setProvider}
+                  onModelChange={llm.setModel}
                 />
               }
             />
           </>
         ) : (
-          <div className="flex h-full items-center justify-center">
-            <button
-              type="button"
-              onClick={() => void themHoiThoai()}
-              className="rounded-lg bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)]"
+          <div className="flex h-full items-center justify-center px-6">
+            <EmptyState
+              icon={MessagesSquare}
+              title="No chat open"
+              description="Start a new chat to ask about your cluster, or pick an earlier one from the left."
+              className="w-full max-w-lg"
             >
-              Bắt đầu hội thoại
-            </button>
+              <Button onClick={() => void newThread()} disabled={create.isPending}>
+                <MessageSquarePlus aria-hidden />
+                {create.isPending ? "Creating…" : "Start a chat"}
+              </Button>
+            </EmptyState>
           </div>
         )}
       </div>
 
       <ConfirmDialog
-        open={choXoa !== null}
-        nguyHiem
-        title="Xoá hội thoại này?"
+        open={pendingDeleteId !== null}
+        destructive
+        title="Delete this chat?"
         description={
-          tenChoXoa
-            ? `“${tenChoXoa}” cùng toàn bộ tin nhắn và lịch sử tra cứu sẽ bị xoá hẳn. Không khôi phục lại được.`
-            : "Toàn bộ tin nhắn và lịch sử tra cứu sẽ bị xoá hẳn. Không khôi phục lại được."
+          pendingDeleteTitle
+            ? `“${pendingDeleteTitle}” and all of its messages and lookup history will be permanently deleted. This can't be undone.`
+            : "All messages and lookup history will be permanently deleted. This can't be undone."
         }
-        confirmLabel="Xoá"
-        onConfirm={() => void xacNhanXoa()}
-        onCancel={() => setChoXoa(null)}
+        confirmLabel="Delete"
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setPendingDeleteId(null)}
       />
     </div>
   );

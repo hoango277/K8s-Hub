@@ -1,20 +1,24 @@
-"""Công cụ trợ lý được phép gọi trong khung chat.
+"""Tools the assistant is allowed to call from the chat panel.
 
-ĐÂY LÀ ĐIỂM GẮN DUY NHẤT. Muốn trợ lý làm được việc gì mới thì thêm công cụ
-vào `get_tools()`, không sửa đồ thị và không sửa tầng streaming.
+THIS IS THE ONLY ATTACHMENT POINT. To let the assistant do something new, add
+a tool to `get_tools()` — don't modify the graph and don't modify the
+streaming layer.
 
-Ranh giới an toàn — đọc kỹ trước khi thêm:
+Safety boundaries — read carefully before adding one:
 
-  1. Công cụ trong file này CHỈ ĐƯỢC ĐỌC. Không có công cụ nào tạo/sửa/xoá tài
-     nguyên trên cụm. Thao tác thay đổi đi theo đường riêng: trợ lý đề xuất một
-     bản mô tả có cấu trúc, hệ thống chạy thử, người duyệt, rồi mới thực hiện.
-  2. Không nhận chuỗi lệnh thô. Không có công cụ nào kiểu `run_kubectl(cmd)` —
-     tham số phải là trường rời rạc để kiểm tra được trước khi chạy.
-  3. Mô tả công cụ là thứ mô hình đọc để quyết định gọi hay không. Viết mô tả
-     mơ hồ thì mô hình sẽ gọi sai lúc, và lỗi đó rất khó lần ra.
+  1. Tools in this file are READ-ONLY. No tool creates/edits/deletes resources
+     on the cluster. Mutations go through a separate path: the assistant
+     proposes a structured description, the system dry-runs it, a human
+     approves, and only then is it executed.
+  2. No raw command strings. There is no tool like `run_kubectl(cmd)` —
+     parameters must be discrete fields so they can be checked before running.
+  3. The tool description is what the model reads to decide whether to call
+     it. Write a vague description and the model will call it at the wrong
+     time, and that bug is very hard to track down.
 
-Chưa có công cụ tra cứu cụm vì tầng kết nối Kubernetes chưa làm xong
-(app/integrations/k8s/client.py). Khi xong, thêm vào `get_tools()`.
+There are no cluster lookup tools yet because the Kubernetes connection layer
+isn't finished (app/integrations/k8s/client.py). When it is, add them to
+`get_tools()`.
 """
 
 from __future__ import annotations
@@ -30,61 +34,63 @@ from app.integrations.llm.client import describe_config
 
 @tool
 def system_info(config: RunnableConfig) -> str:
-    """Cho biết hệ thống K8s Hub đang được cấu hình thế nào.
+    """Report how the K8s Hub system is currently configured.
 
-    Dùng khi người dùng hỏi hệ thống đang chạy mô hình AI nào, đang ở chế độ
-    thực thi nào, hay đang được phép thao tác trên namespace nào.
+    Use when the user asks which AI model the system is running, which
+    execution mode it is in, or which namespaces it is allowed to act on.
     """
-    # `config` do LangChain tự tiêm vào, KHÔNG nằm trong schema mà mô hình nhìn
-    # thấy — nên mô hình không thể (và không cần) truyền gì cho tham số này.
+    # `config` is injected by LangChain and is NOT in the schema the model sees
+    # — so the model cannot (and need not) pass anything for this parameter.
     #
-    # Lấy nhà cung cấp và model từ đây chứ không từ cấu hình chung: người dùng
-    # chọn được model cho RIÊNG một lượt chat. Đọc cấu hình chung thì trợ lý sẽ
-    # khai sai về chính nó ngay sau khi người dùng đổi model trên giao diện.
+    # The provider and model are taken from here rather than from the global
+    # configuration: users can pick a model for a SINGLE chat turn. Reading the
+    # global configuration would make the assistant misreport itself right
+    # after the user switched models in the UI.
     meta = (config or {}).get("metadata") or {}
     llm = describe_config(
         provider=meta.get("llm_provider"), model=meta.get("llm_model")
     )
 
-    cau_hinh = get_settings()
+    settings = get_settings()
 
-    che_do = {
-        "read_only": "chỉ đọc, không thực hiện thay đổi nào",
-        "require_approval": "thay đổi phải được người duyệt trước khi chạy",
-        "auto": "tự động thực hiện thay đổi, KHÔNG cần người duyệt",
-    }.get(cau_hinh.K8S_EXECUTION_MODE, cau_hinh.K8S_EXECUTION_MODE)
+    mode_description = {
+        "read_only": "read-only, no changes are made",
+        "require_approval": "changes must be approved by a human before running",
+        "auto": "changes are applied automatically, WITHOUT human approval",
+    }.get(settings.K8S_EXECUTION_MODE, settings.K8S_EXECUTION_MODE)
 
-    namespaces = cau_hinh.K8S_ALLOWED_NAMESPACES or ["(tất cả)"]
+    namespaces = settings.K8S_ALLOWED_NAMESPACES or ["(all)"]
 
     return (
-        f"Mô hình AI: {llm['provider']} / {llm['model']}\n"
-        f"Gọi được công cụ: {'có' if llm['tool_calling'] else 'không'}\n"
-        f"Chế độ thực thi: {cau_hinh.K8S_EXECUTION_MODE} — {che_do}\n"
-        f"Namespace được phép: {', '.join(namespaces)}\n"
-        f"Nguồn số liệu: Prometheus {cau_hinh.PROMETHEUS_URL}, Loki {cau_hinh.LOKI_URL}\n"
-        f"Môi trường: {cau_hinh.APP_ENV}"
+        f"AI model: {llm['provider']} / {llm['model']}\n"
+        f"Tool calling: {'yes' if llm['tool_calling'] else 'no'}\n"
+        f"Execution mode: {settings.K8S_EXECUTION_MODE} — {mode_description}\n"
+        f"Allowed namespaces: {', '.join(namespaces)}\n"
+        f"Data sources: Prometheus {settings.PROMETHEUS_URL}, Loki {settings.LOKI_URL}\n"
+        f"Environment: {settings.APP_ENV}"
     )
 
 
 @tool
 def current_time() -> str:
-    """Thời điểm hiện tại theo giờ UTC.
+    """The current time in UTC.
 
-    Dùng khi cần tính khoảng cách thời gian, ví dụ pod khởi động lại cách đây
-    bao lâu, hay khoảng thời gian nào cần lấy log.
+    Use when you need to compute time spans, e.g. how long ago a pod restarted,
+    or which time range to fetch logs for.
     """
-    bay_gio = datetime.now(UTC)
-    return f"{bay_gio.isoformat(timespec='seconds')} (UTC)"
+    now = datetime.now(UTC)
+    return f"{now.isoformat(timespec='seconds')} (UTC)"
 
 
-# Thứ tự trong danh sách cũng là thứ tự mô hình nhìn thấy.
+# The order in this list is also the order the model sees.
 CHAT_TOOLS: list[BaseTool] = [system_info, current_time]
 
 
 def get_tools() -> list[BaseTool]:
-    """Danh sách công cụ cho một lượt trò chuyện.
+    """The tool list for one chat turn.
 
-    Trả về bản sao để nơi gọi có thêm/bớt cũng không ảnh hưởng danh sách gốc.
+    Returns a copy so callers can add/remove tools without affecting the
+    original list.
     """
     return list(CHAT_TOOLS)
 

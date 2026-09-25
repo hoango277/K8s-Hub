@@ -1,48 +1,47 @@
 # K8s Hub — Backend
 
-FastAPI backend cho nền tảng vận hành Kubernetes có AI hỗ trợ.
+FastAPI backend for the AI-assisted Kubernetes operations platform.
 
-## Chạy local
+## Run locally
 
 ```bash
-uv venv --python 3.12
-source .venv/Scripts/activate     # Windows Git Bash
-uv pip install -e ".[dev]"
+python -m venv .venv
+.venv/Scripts/python.exe -m pip install -r requirements-dev.txt   # Windows
 
 cp .env.example .env
-uvicorn app.main:app --reload
+PYTHONUTF8=1 .venv/Scripts/python.exe -m uvicorn app.main:app --reload
 ```
 
 Docs: http://localhost:8000/docs · Health: http://localhost:8000/api/v1/health
 
-## Cấu trúc
+## Layout
 
 ```
 app/
-├── main.py              # entrypoint, chỉ wiring
-├── api/v1/              # HTTP layer, mỗi use case 1 file router
+├── main.py              # entrypoint, wiring only
+├── api/v1/              # HTTP layer, one router file per use case
 ├── core/                # config, logging, security, permissions
-│   └── telemetry.py     # self-monitoring: /metrics + structured logs của CHÍNH app này
+│   └── telemetry.py     # self-monitoring: /metrics + structured logs of THIS app
 ├── db/                  # engine, session, SQLAlchemy models
-├── schemas/             # Pydantic DTO (bao gồm SSE event schema)
-├── modules/             # ── 4 use case chính ──
+├── schemas/             # Pydantic DTOs (including the SSE event schema)
+├── modules/             # ── the 4 main use cases ──
 │   ├── nl_command/      # NL → K8s command (plan → dry-run → approve → execute)
 │   ├── rca/             # Root cause analysis (collect → correlate → hypothesize)
 │   ├── skills/          # Skill registry + MCP + runbook engine
-│   └── observability/   # Giám sát LLM: Langfuse trace + audit + impact + eval
-├── integrations/        # Client tới hệ thống ngoài: k8s, prometheus, loki, llm
-├── services/            # Orchestration giữa api ↔ modules ↔ db
-└── workers/             # Background job (runbook dài, RCA theo lịch)
+│   └── observability/   # LLM monitoring: Langfuse traces + audit + impact + eval
+├── integrations/        # Clients for external systems: k8s, prometheus, loki, llm
+├── services/            # Orchestration between api ↔ modules ↔ db
+└── workers/             # Background jobs (long runbooks, scheduled RCA)
 ```
 
-Mỗi module có `README.md` riêng mô tả pipeline và trách nhiệm từng file.
+Each module has its own `README.md` describing its pipeline and what each file is responsible for.
 
-## Ba lớp observability — đừng nhầm
+## Three observability layers — don't mix them up
 
-| Lớp | Giám sát gì | Ở đâu | Công cụ |
+| Layer | What it watches | Where | Tools |
 |---|---|---|---|
-| **A** | LLM/agent: prompt, token, cost, tool call, tác động | `modules/observability/` | Langfuse + audit log |
-| **B** | Cụm K8s **đích** (evidence cho RCA) | `integrations/prometheus`, `integrations/loki` | Prometheus, Loki (chỉ đọc) |
-| **C** | Chính app K8s-Hub có sống/nhanh không | `core/telemetry.py` | Prometheus scrape `/metrics`, logs → Loki |
+| **A** | LLM/agent: prompts, tokens, cost, tool calls, impact | `modules/observability/` | Langfuse + audit log |
+| **B** | The **target** K8s cluster (evidence for RCA) | `integrations/prometheus`, `integrations/loki` | Prometheus, Loki (read-only) |
+| **C** | Whether the K8s-Hub app itself is alive and fast | `core/telemetry.py` | Prometheus scrapes `/metrics`, logs → Loki |
 
-B và C dùng chung công cụ nhưng ngược chiều: B **đọc** cụm của người khác, C **ghi** số liệu của mình.
+B and C share tools but point in opposite directions: B **reads** someone else's cluster, C **writes** our own numbers.

@@ -6,17 +6,18 @@ import { Check, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
- * Ô chọn tự dựng, thay cho `<select>` mặc định của trình duyệt.
+ * Custom select, replacing the browser's default `<select>`.
  *
- * `<select>` không tạo kiểu được phần danh sách xổ ra — trình duyệt và hệ điều
- * hành tự vẽ, nên nó luôn trông lạc lõng với phần còn lại của giao diện, và
- * không hiện được nhiều dòng thông tin cho mỗi mục.
+ * `<select>` can't style its dropdown list — the browser and OS draw it, so it
+ * always looks out of place next to the rest of the UI, and it can't show
+ * multiple lines of info per item.
  *
- * Dựng trên Radix thay vì tự viết từ đầu. Một dropdown "tự viết" nhìn thì
- * giống, nhưng thiếu rất nhiều thứ chỉ lộ ra khi dùng thật: điều hướng bằng
- * phím mũi tên, gõ chữ để nhảy tới mục, Esc để đóng, bẫy tiêu điểm, thông báo
- * cho trình đọc màn hình, và tự lật lên trên khi gần đáy màn hình. Ở đây ô
- * chọn nằm sát đáy khung chat nên chuyện lật hướng xảy ra thường xuyên.
+ * Built on Radix instead of from scratch. A "hand-rolled" dropdown looks the
+ * same but lacks many things that only show up in real use: arrow-key
+ * navigation, type-ahead to jump to an item, Esc to close, focus trapping,
+ * screen reader announcements, and flipping upward near the bottom of the
+ * screen. Here the picker sits right at the bottom of the chat panel, so
+ * flipping happens often.
  */
 
 export const Select = RadixSelect.Root;
@@ -51,13 +52,24 @@ export function SelectTrigger({
 export function SelectContent({
   className,
   children,
+  container,
   ...props
-}: React.ComponentProps<typeof RadixSelect.Content>) {
+}: React.ComponentProps<typeof RadixSelect.Content> & {
+  /**
+   * Where to render the list. Defaults to `document.body`. If the select is
+   * inside a `<dialog>` opened with `showModal()`, you MUST pass that dialog
+   * element here: a modal dialog sits on the "top layer" and makes everything
+   * outside it inert, so a list rendered in body appears BEHIND the dialog
+   * and can't be clicked.
+   */
+  container?: HTMLElement | null;
+}) {
   return (
-    <RadixSelect.Portal>
+    <RadixSelect.Portal container={container ?? undefined}>
       <RadixSelect.Content
-        // "popper" để danh sách bám theo nút và tự lật khi hết chỗ. Kiểu mặc
-        // định phủ chồng lên nút, ở sát đáy màn hình sẽ bị che.
+        // "popper" so the list follows the trigger and flips when out of room.
+        // The default mode overlays the trigger and gets clipped near the
+        // bottom of the screen.
         position="popper"
         sideOffset={6}
         collisionPadding={12}
@@ -65,7 +77,7 @@ export function SelectContent({
           "z-50 max-h-[min(24rem,var(--radix-select-content-available-height))]",
           "min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-xl border",
           "bg-[var(--popover)] text-[var(--popover-foreground)] shadow-lg",
-          "k8s-xo-xuong",
+          "k8s-dropdown",
           className,
         )}
         {...props}
@@ -85,18 +97,18 @@ export function SelectContent({
 }
 
 interface ItemProps extends React.ComponentProps<typeof RadixSelect.Item> {
-  /** Dòng phụ nhỏ bên dưới, ví dụ nhà sản xuất và cỡ ngữ cảnh. */
-  mota?: React.ReactNode;
+  /** A small secondary line below, e.g. the vendor and context size. */
+  description?: React.ReactNode;
 }
 
-export function SelectItem({ className, children, mota, ...props }: ItemProps) {
+export function SelectItem({ className, children, description, ...props }: ItemProps) {
   return (
     <RadixSelect.Item
       className={cn(
         "relative flex cursor-pointer select-none items-start gap-2 rounded-lg",
         "py-1.5 pl-2 pr-2 text-sm outline-none",
-        // Radix đánh dấu mục đang trỏ tới bằng data-highlighted — dùng chung
-        // cho cả chuột lẫn phím mũi tên, nên không cần xử lý hover riêng.
+        // Radix marks the pointed-at item with data-highlighted — shared by
+        // mouse and arrow keys, so no separate hover handling is needed.
         "data-[highlighted]:bg-[var(--accent)] data-[highlighted]:text-[var(--accent-foreground)]",
         "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         className,
@@ -111,9 +123,9 @@ export function SelectItem({ className, children, mota, ...props }: ItemProps) {
 
       <span className="min-w-0 flex-1">
         <RadixSelect.ItemText>{children}</RadixSelect.ItemText>
-        {mota && (
+        {description && (
           <span className="mt-0.5 block text-[11px] text-[var(--muted-foreground)]">
-            {mota}
+            {description}
           </span>
         )}
       </span>
@@ -121,8 +133,8 @@ export function SelectItem({ className, children, mota, ...props }: ItemProps) {
   );
 }
 
-/** Tiêu đề nhóm trong danh sách. CHƯA DÙNG — để sẵn cho khi gộp model của
-    nhiều nhà cung cấp vào chung một danh sách. */
+/** Group heading in the list. NOT USED YET — ready for when models from
+    several providers are merged into a single list. */
 export function SelectLabel({
   className,
   ...props

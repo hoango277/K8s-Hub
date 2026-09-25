@@ -1,1 +1,1 @@
-"""Sinh plan (manifest / kubectl args) tu NL. TODO."""
+"""Generate a plan (manifest / kubectl args) from natural language. TODO."""

@@ -1,1 +1,1 @@
-"""Detector: Pending / khong schedule duoc (taint, resource, affinity). TODO."""
+"""Detector: Pending / unschedulable (taint, resources, affinity). TODO."""

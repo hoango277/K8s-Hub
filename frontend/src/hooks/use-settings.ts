@@ -11,7 +11,7 @@ export function useSettings() {
   return useQuery({
     queryKey: KEY,
     queryFn: () => api.get<SettingsView>("/settings"),
-    // Cấu hình có thể bị người khác đổi, nên hỏi lại khi quay về tab.
+    // Someone else may change the settings, so refetch when the tab regains focus.
     refetchOnWindowFocus: true,
     staleTime: 10_000,
   });
@@ -21,7 +21,7 @@ function useSettingsMutation<TVars>(fn: (vars: TVars) => Promise<SettingsView>) 
   const qc = useQueryClient();
   return useMutation({
     mutationFn: fn,
-    // Máy chủ trả về trạng thái mới, dùng luôn thay vì gọi lại.
+    // The server returns the new state; use it directly instead of refetching.
     onSuccess: (data) => qc.setQueryData(KEY, data),
   });
 }

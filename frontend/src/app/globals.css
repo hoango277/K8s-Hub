@@ -83,17 +83,18 @@
 }
 
 /* ==========================================================================
-   Hiệu ứng cho khung trò chuyện
+   Chat panel effects
 
-   Mọi hiệu ứng ở đây đều PHẢI tắt khi người dùng bật "giảm chuyển động" trong
-   hệ thống — xem khối @media ở cuối. Với người bị rối loạn tiền đình, chữ nhấp
-   nháy liên tục không chỉ khó chịu mà có thể gây chóng mặt thật sự.
+   Every effect here MUST turn off when the user enables "reduce motion" in
+   their system — see the @media blocks below. For people with vestibular
+   disorders, constantly flickering text isn't just annoying, it can cause
+   real dizziness.
    ========================================================================== */
 
-/* Vệt sáng chạy ngang chữ — dùng cho dòng "đang suy nghĩ".
-   Báo cho người dùng biết hệ thống vẫn đang làm việc, kể cả lúc mô hình nghĩ
-   lâu mà chưa nhả chữ nào. */
-@keyframes k8s-loe-sang {
+/* A highlight sweeping across the text — used for the "thinking" line.
+   Tells the user the system is still working, even when the model thinks for
+   a long time without emitting any text. */
+@keyframes k8s-shimmer {
   0% {
     background-position: 200% 0;
   }
@@ -102,7 +103,7 @@
   }
 }
 
-.k8s-loe-sang {
+.k8s-shimmer {
   background: linear-gradient(
     90deg,
     var(--muted-foreground) 0%,
@@ -115,11 +116,11 @@
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: k8s-loe-sang 2.4s linear infinite;
+  animation: k8s-shimmer 2.4s linear infinite;
 }
 
-/* Ba chấm nảy theo nhịp, lệch pha nhau. */
-@keyframes k8s-nay {
+/* Three dots bouncing in rhythm, out of phase with each other. */
+@keyframes k8s-bounce {
   0%,
   60%,
   100% {
@@ -132,13 +133,13 @@
   }
 }
 
-.k8s-cham-nay {
-  animation: k8s-nay 1.3s ease-in-out infinite;
+.k8s-dot-bounce {
+  animation: k8s-bounce 1.3s ease-in-out infinite;
 }
 
-/* Nội dung mới trượt lên một chút khi xuất hiện — mắt bám theo dễ hơn là
-   để nó bật ra đột ngột. */
-@keyframes k8s-hien-len {
+/* New content slides up slightly as it appears — easier for the eye to follow
+   than having it pop in abruptly. */
+@keyframes k8s-fade-in {
   from {
     opacity: 0;
     transform: translateY(4px);
@@ -149,64 +150,65 @@
   }
 }
 
-.k8s-hien-len {
-  animation: k8s-hien-len 0.28s ease-out both;
+.k8s-fade-in {
+  animation: k8s-fade-in 0.28s ease-out both;
 }
 
-/* Vòng quay cho công cụ đang chạy. */
-@keyframes k8s-quay {
+/* Spinner for a running tool. */
+@keyframes k8s-spin {
   to {
     transform: rotate(360deg);
   }
 }
 
-.k8s-quay {
-  animation: k8s-quay 0.7s linear infinite;
+.k8s-spin {
+  animation: k8s-spin 0.7s linear infinite;
 }
 
-/* Khối suy luận mở ra/thu lại. Dùng grid-template-rows thay vì max-height:
-   max-height phải đoán trước chiều cao, đoán thiếu thì nội dung bị cắt, đoán
-   thừa thì lúc thu lại bị khựng. */
-.k8s-mo-ra {
+/* Reasoning block expand/collapse. Uses grid-template-rows instead of
+   max-height: max-height requires guessing the height up front — guess too
+   low and content gets cut off, too high and collapsing stutters. */
+.k8s-collapse {
   display: grid;
   grid-template-rows: 0fr;
   transition: grid-template-rows 0.25s ease;
 }
 
-.k8s-mo-ra[data-mo="true"] {
+.k8s-collapse[data-open="true"] {
   grid-template-rows: 1fr;
 }
 
-.k8s-mo-ra > * {
+.k8s-collapse > * {
   overflow: hidden;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .k8s-loe-sang,
-  .k8s-cham-nay,
-  .k8s-hien-len,
-  .k8s-quay {
+  .k8s-shimmer,
+  .k8s-dot-bounce,
+  .k8s-fade-in,
+  .k8s-spin {
     animation: none;
   }
-  .k8s-loe-sang {
+  .k8s-shimmer {
     color: var(--muted-foreground);
     -webkit-text-fill-color: currentColor;
   }
-  .k8s-mo-ra {
+  .k8s-collapse {
     transition: none;
   }
 }
 
-/* Con trỏ nhấp nháy bám ngay sau chữ cuối cùng của câu trả lời đang chảy ra.
-   Dùng ::after trên khối cuối thay vì chèn một phần tử riêng: markdown sinh ra
-   đủ loại thẻ (p, li, pre), chèn thẻ vào giữa sẽ làm vỡ bố cục danh sách. */
-@keyframes k8s-nhap-nhay {
+/* A blinking caret right after the last character of the streaming answer.
+   Uses ::after on the last block instead of inserting a separate element:
+   markdown produces all kinds of tags (p, li, pre), and inserting an element
+   in between would break list layout. */
+@keyframes k8s-blink {
   50% {
     opacity: 0;
   }
 }
 
-.k8s-dang-go > :last-child::after {
+.k8s-typing > :last-child::after {
   content: "";
   display: inline-block;
   width: 2px;
@@ -214,17 +216,17 @@
   margin-left: 2px;
   vertical-align: text-bottom;
   background-color: var(--foreground);
-  animation: k8s-nhap-nhay 1s steps(2) infinite;
+  animation: k8s-blink 1s steps(2) infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .k8s-dang-go > :last-child::after {
+  .k8s-typing > :last-child::after {
     animation: none;
   }
 }
 
-/* Danh sách chọn xổ xuống. */
-@keyframes k8s-xo-xuong {
+/* Select dropdown list. */
+@keyframes k8s-dropdown {
   from {
     opacity: 0;
     transform: translateY(-4px);
@@ -235,22 +237,22 @@
   }
 }
 
-.k8s-xo-xuong {
-  animation: k8s-xo-xuong 0.14s ease-out;
+.k8s-dropdown {
+  animation: k8s-dropdown 0.14s ease-out;
 }
 
-/* Hộp thoại xác nhận: dùng thẻ <dialog> của trình duyệt nên có sẵn bẫy tiêu
-   điểm, phím Esc và lớp nền mờ. */
+/* Confirm dialog: uses the browser's <dialog> element, so focus trapping, the
+   Esc key and the backdrop come built in. */
 dialog::backdrop {
   background-color: rgb(0 0 0 / 45%);
   backdrop-filter: blur(2px);
 }
 
 dialog[open] {
-  animation: k8s-hien-hop 0.16s ease-out;
+  animation: k8s-dialog-in 0.16s ease-out;
 }
 
-@keyframes k8s-hien-hop {
+@keyframes k8s-dialog-in {
   from {
     opacity: 0;
     transform: translateY(-6px) scale(0.98);
@@ -262,7 +264,7 @@ dialog[open] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .k8s-xo-xuong,
+  .k8s-dropdown,
   dialog[open] {
     animation: none;
   }

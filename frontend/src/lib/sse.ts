@@ -1,42 +1,43 @@
 /**
- * Đọc luồng SSE bằng `fetch`.
+ * Reads an SSE stream with `fetch`.
  *
- * Vì sao không dùng `EventSource` có sẵn của trình duyệt: `EventSource` chỉ
- * gửi được GET, mà câu hỏi của người dùng phải nằm trong thân request (POST).
- * Nó cũng không gắn được header. Đổi lại, phải tự tách khung SSE — phần đó
- * nằm gọn trong file này.
+ * Why not the browser's built-in `EventSource`: `EventSource` can only send
+ * GET, but the user's question has to go in the request body (POST). It also
+ * can't set headers. The price is parsing SSE frames ourselves — that part
+ * lives entirely in this file.
  *
- * Định dạng SSE: mỗi khung là các dòng `field: value`, kết thúc bằng một dòng
- * trống. Dòng bắt đầu bằng ':' là chú thích — nhịp giữ kết nối của máy chủ đi
- * bằng đường này, và phải bỏ qua.
+ * SSE format: each frame is a set of `field: value` lines ending with a blank
+ * line. Lines starting with ':' are comments — the server's keep-alive
+ * heartbeat travels this way and must be ignored.
  */
 
+import { getValidAccessToken } from "@/lib/auth-tokens";
 import { parseAgentEvent, type AgentEvent } from "@/types/events";
 
 export interface SseOptions {
   signal?: AbortSignal;
-  /** Gọi khi máy chủ trả lỗi HTTP trước khi luồng kịp mở. */
+  /** Called when the server returns an HTTP error before the stream opens. */
   onHttpError?: (status: number, body: string) => void;
 }
 
-/** Một khung SSE đã tách xong. */
+/** A parsed SSE frame. */
 interface Frame {
   event: string;
   data: string;
   id: string;
 }
 
-function parseFrame(khoi: string): Frame | null {
+function parseFrame(block: string): Frame | null {
   const frame: Frame = { event: "message", data: "", id: "" };
   const data: string[] = [];
 
-  for (const line of khoi.split("\n")) {
-    if (!line || line.startsWith(":")) continue; // dòng trống hoặc chú thích
+  for (const line of block.split("\n")) {
+    if (!line || line.startsWith(":")) continue; // blank line or comment
 
-    const viTri = line.indexOf(":");
-    const field = viTri === -1 ? line : line.slice(0, viTri);
-    // Bỏ đúng MỘT dấu cách sau dấu hai chấm, theo đúng đặc tả.
-    let value = viTri === -1 ? "" : line.slice(viTri + 1);
+    const colon = line.indexOf(":");
+    const field = colon === -1 ? line : line.slice(0, colon);
+    // Strip exactly ONE space after the colon, per the spec.
+    let value = colon === -1 ? "" : line.slice(colon + 1);
     if (value.startsWith(" ")) value = value.slice(1);
 
     if (field === "event") frame.event = value;
@@ -50,19 +51,30 @@ function parseFrame(khoi: string): Frame | null {
 }
 
 /**
- * Gửi POST và sinh ra từng sự kiện của trợ lý theo thời gian thực.
+ * Send a POST and yield each assistant event in real time.
  *
- * Sự kiện không đúng định dạng bị bỏ qua thay vì làm hỏng cả luồng — một
- * khung lỗi không đáng để mất phần còn lại của câu trả lời.
+ * Malformed events are skipped rather than breaking the whole stream — one bad
+ * frame isn't worth losing the rest of the answer.
  */
 export async function* streamAgentEvents(
   url: string,
   body: unknown,
   options: SseOptions = {},
 ): AsyncGenerator<AgentEvent> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+  };
+
+  // Refresh before opening the stream, not after: once SSE is open there is no
+  // way to re-attach headers or retry mid-stream — unlike regular requests in
+  // lib/api.ts, which still get a chance to catch a 401 and retry.
+  const token = await getValidAccessToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    headers,
     body: JSON.stringify(body),
     signal: options.signal,
   });
@@ -70,29 +82,29 @@ export async function* streamAgentEvents(
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     options.onHttpError?.(res.status, text);
-    throw new Error(text || `Lỗi ${res.status}`);
+    throw new Error(text || `Error ${res.status}`);
   }
-  if (!res.body) throw new Error("Máy chủ không trả về luồng dữ liệu");
+  if (!res.body) throw new Error("The server did not return a data stream");
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  let dem = "";
+  let buffer = "";
 
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      // stream: true để ký tự nhiều byte bị cắt giữa hai gói vẫn ghép lại đúng.
-      dem += decoder.decode(value, { stream: true });
+      // stream: true so multi-byte characters split across chunks are rejoined correctly.
+      buffer += decoder.decode(value, { stream: true });
 
-      // Khung kết thúc bằng dòng trống. Chấp nhận cả \n\n lẫn \r\n\r\n.
-      let ranh: number;
-      while ((ranh = timRanhKhung(dem)) !== -1) {
-        const khoi = dem.slice(0, ranh);
-        dem = dem.slice(ranh).replace(/^(\r?\n){2}/, "");
+      // A frame ends with a blank line. Accept both \n\n and \r\n\r\n.
+      let boundary: number;
+      while ((boundary = findFrameBoundary(buffer)) !== -1) {
+        const block = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary).replace(/^(\r?\n){2}/, "");
 
-        const frame = parseFrame(khoi);
+        const frame = parseFrame(block);
         if (!frame) continue;
 
         const event = parseAgentEvent(frame.data);
@@ -100,12 +112,12 @@ export async function* streamAgentEvents(
       }
     }
   } finally {
-    // Dừng giữa chừng thì phải đóng, không thì kết nối treo lại.
+    // If we stop mid-stream we must close, otherwise the connection hangs.
     reader.cancel().catch(() => undefined);
   }
 }
 
-function timRanhKhung(text: string): number {
+function findFrameBoundary(text: string): number {
   const a = text.indexOf("\n\n");
   const b = text.indexOf("\r\n\r\n");
   if (a === -1) return b;

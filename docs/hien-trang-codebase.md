@@ -1,6 +1,6 @@
 # Hiện trạng codebase K8s Hub
 
-*Báo cáo đọc mã, cập nhật ngày 23/09/2026. Mô tả những gì ĐANG CÓ trong kho, không phải kế hoạch.*
+*Báo cáo đọc mã, cập nhật ngày 25/09/2026 (lần 7). Mô tả những gì ĐANG CÓ trong kho, không phải kế hoạch.*
 
 ---
 
@@ -19,17 +19,26 @@ bộ khung thư mục cho cả 4**, nhưng mới **một use case chạy thật*
 | Kết nối Kubernetes | Chưa có dòng mã nào |
 | RCA | Chỉ có khung file |
 | Skills / MCP / runbook | Chỉ có khung file |
-| Langfuse / audit log / đo lường | Chỉ có khung file |
-| Đăng nhập, phân quyền | Chưa có — mọi thao tác chạy dưới một tài khoản cục bộ |
+| Tracing: OTel + Langfuse | **Đã nối**, chờ máy chủ Langfuse v3 để chạy thật |
+| Audit log, đo lường chất lượng | Chỉ có khung file |
+| Đăng nhập, phân quyền (JWT, 3 vai trò) | **Chạy được đầu-cuối** (backend + frontend), đã kiểm qua HTTP thật |
+| Quản trị người dùng (trang `/users`) | **Chạy được**, đã kiểm bằng trình duyệt thật |
 
-Về khối lượng: backend có ~4.100 dòng Python, nhưng khoảng **65 file chỉ chứa một dòng docstring
-kèm `TODO`**. Frontend có ~30 component/hook/type ở dạng khung rỗng (`return null`). Nghĩa là cấu
+Về khối lượng: backend có ~5.300 dòng Python, nhưng **57 file chỉ chứa một dòng docstring
+kèm `TODO`** (không tính `__init__.py`). Frontend có 29 component/hook/type ở dạng khung rỗng — nhưng
+không còn **trang** nào trắng: trang chưa có tính năng hiện mô tả những gì nó sẽ làm. Nghĩa là cấu
 trúc dự án đã được nghĩ xong và đóng cọc sẵn; phần thịt mới đắp vào một nhánh.
 
 Điểm mạnh rõ rệt của kho mã này là **chất lượng phần đã làm**: gần như mọi file đã hoàn thiện đều
 có docstring giải thích *vì sao* làm như vậy, kể cả những cái bẫy đã vấp phải (streaming bị `rewrites`
 của Next.js gom lại, `useSyncExternalStore` với `subscribe` rỗng, pgbouncer không dùng được prepared
 statement). Đó là tài liệu có giá trị hơn hầu hết README.
+
+**Toàn bộ mã nguồn và giao diện nay bằng tiếng Anh** (từ lần cập nhật 7): chữ trên giao diện, thông
+báo lỗi của API và SSE, mô tả trường ở trang Cấu hình, lời nhắc hệ thống của trợ lý (trợ lý được dặn
+trả lời theo ngôn ngữ người hỏi — tiếng Việt hoặc tiếng Anh), log, comment, docstring, tên biến/hàm và tên test. Quy tắc ghi ở mục "Ngôn ngữ"
+của `CLAUDE.md`. Chỉ tài liệu viết cho người dùng (báo cáo này, `CLAUDE.md`) và tên ràng buộc CSDL đã
+nằm trong migration (`role_hop_le`, `status_hop_le`, `ix_chat_threads_user_moi_nhat`) còn tiếng Việt.
 
 ---
 
@@ -38,20 +47,21 @@ statement). Đó là tài liệu có giá trị hơn hầu hết README.
 ```
 K8s-Hub/
 ├── backend/          FastAPI + LangGraph + SQLAlchemy async
-│   ├── app/api/v1/   8 router: chat, settings, health (thật) + 5 router rỗng
-│   ├── app/core/     config.py (791 dòng, trung tâm hệ thống) + 4 file khung
-│   ├── app/db/       models users/chat_threads/messages/tool_calls + session
+│   ├── app/api/v1/   10 router: chat, auth, users, settings, health (thật) + 5 router rỗng
+│   ├── app/core/     config.py (trung tâm hệ thống), security.py (JWT, bcrypt) + 3 file khung
+│   ├── app/db/       models users/refresh_tokens/chat_threads/messages/tool_calls + session
 │   ├── app/integrations/  llm/ (xong) · k8s, prometheus, loki (khung)
-│   ├── app/modules/  nl_command (một phần) · rca, skills, observability (khung)
-│   ├── app/schemas/  events.py, chat.py (xong) + 5 file khung
-│   ├── app/services/ thread_service.py (xong) + 2 file khung
-│   ├── migrations/   2 revision Alembic
-│   └── tests/unit/   6 file test
+│   ├── app/modules/  nl_command (một phần) · observability (tracing xong) · rca, skills (khung)
+│   ├── app/schemas/  events.py, chat.py, auth.py (xong) + 5 file khung
+│   ├── app/services/ thread, auth, user service (xong) + 2 file khung
+│   ├── migrations/   3 revision Alembic
+│   └── tests/unit/   9 file test (132 test, đều xanh)
 ├── frontend/         Next.js 16 + React 19 + Tailwind v4 + TanStack Query
-│   └── src/          chat/ và settings/ làm thật; rca, skills, approvals, observability rỗng
-├── deploy/local/     docker-compose: Postgres(pgvector), Redis, Langfuse
-├── deploy/helm/      thư mục rỗng
-└── docs/             3 file kế hoạch .xlsx
+│   └── src/          đăng nhập, chat, người dùng, cấu hình làm thật; 4 trang còn lại là "sắp có"
+│       └── components/ui/  bộ component nền theo quy chuẩn UI/UX trong CLAUDE.md
+├── deploy/helm/      thư mục rỗng — chưa có manifest triển khai
+├── .claude/skills/   cap-nhat-hien-trang — quy trình cập nhật chính tài liệu này
+└── docs/             3 file kế hoạch .xlsx + báo cáo này
 ```
 
 ---
@@ -86,10 +96,12 @@ Những quyết định kỹ thuật đáng ghi nhận trong luồng này:
   nên lỗi phát hiện muộn sẽ thành "200 kèm một sự kiện lỗi" thay vì 404 rõ ràng.
 - **Phiên CSDL riêng cho phần chạy trong luồng.** Phiên của request giữ một kết nối trong bộ gộp
   cho tới khi response kết thúc — mà response ở đây kéo dài hàng phút.
-- **Đóng tab giữa chừng vẫn lưu được phần đã nói.** Khối `finally` trong `chat.py` và trong
-  `streaming.py` đều chạy khi bị huỷ.
-- **Tách riêng phần suy luận (thinking) khỏi câu trả lời.** `_reasoning_of()` xử lý ba dạng khác
-  nhau: `reasoning_content` của Groq, khối `thinking` của Anthropic, và cờ `thought=True` của Gemini.
+- **Đóng tab giữa chừng vẫn lưu được phần đã nói.** Không chỉ nhờ khối `finally`: `sse-starlette`
+  huỷ luôn task đang chạy generator, nên lệnh ghi phải nằm trong một `asyncio.Task` riêng bọc
+  `asyncio.shield` mới sống sót. Chạy trọn vẹn thì vẫn chờ ghi xong trước khi phát `done`, để client
+  nạp lại đọc được bản đã chốt.
+- **Tách riêng phần suy luận (thinking) khỏi câu trả lời.** `_reasoning_of()` xử lý hai dạng khác
+  nhau: `reasoning_content` của Groq và cờ `thought=True` của Gemini.
   Trộn hai thứ vào nhau là nguy hiểm vì suy luận chứa cả kết luận sai mà mô hình tự bác bỏ.
 - **Hợp đồng sự kiện SSE được kiểm bằng test.** `tests/unit/test_events_contract.py` đọc thẳng
   `frontend/src/types/events.ts` và so với `app/schemas/events.py`, nên sửa một bên mà quên bên kia
@@ -102,22 +114,37 @@ pipeline duyệt thao tác chưa làm.
 
 ### 3.2 Tầng cấu hình — phần được thiết kế kỹ nhất
 
-`backend/app/core/config.py` (791 dòng) là file quan trọng nhất trong kho. Nó làm bốn việc:
+`backend/app/core/config.py` là file quan trọng nhất trong kho. Nó làm bốn việc:
 
 1. **Hai tầng cấu hình chồng lên nhau**: `.env` (cứng, đọc một lần lúc khởi động) + phần người dùng
    đổi trên web (nóng). Kết quả là `settings` — một proxy luôn hỏi lại giá trị mới nhất, nên module
    nào `from app.core.config import settings` cũng không bị cầm object cũ.
-2. **Danh sách trắng những gì đổi được lúc chạy**: `RUNTIME_EDITABLE` (16 trường) và
-   `RUNTIME_EDITABLE_SECRETS` (5 khoá API — ghi vào được nhưng không bao giờ đọc ra). `DATABASE_URL`,
-   `JWT_SECRET` cố tình không nằm trong đó.
+2. **Danh sách trắng những gì đổi được lúc chạy**: tổng cộng 11 trường, trong đó
+   `RUNTIME_EDITABLE_SECRETS` giữ 2 khoá API của các nhà cung cấp LLM (ghi vào được nhưng không bao
+   giờ đọc ra). `DATABASE_URL`, `JWT_SECRET` và cả nhóm `LANGFUSE_*` cố tình không nằm trong đó —
+   xem mục 3.7 để biết vì sao Langfuse phải là cấu hình khởi động.
 3. **Kiểm tra trước khi áp**: sai một trường thì cả lô bị từ chối và cấu hình đang chạy giữ nguyên.
 4. **Cơ chế `on_reload()`**: module nào có bộ nhớ đệm dựng từ cấu hình thì đăng ký hàm dọn đệm.
    Hiện có 4 nơi dùng: bộ đệm model LLM, engine CSDL, danh mục model, tài khoản cục bộ.
 
-Đặc tả nhà cung cấp LLM (`ProviderConfig`) là chỗ hấp thụ mọi khác biệt giữa Groq / Google /
-Anthropic: `param_map` ánh xạ tên tham số chuẩn sang tên thật (Gemini gọi `max_tokens` là
-`max_output_tokens`, Anthropic gọi `timeout` là `default_request_timeout`). Thêm một nhà cung cấp
-mới chỉ cần thêm một mục JSON vào biến `LLM_PROVIDERS` trong `.env`, **không sửa code**.
+Hệ thống chỉ hỗ trợ **hai nhà cung cấp: Groq và Google (Gemini)**. Anthropic đã được gỡ hẳn — đặc tả,
+khoá API, bộ đọc danh sách model và gói `langchain-anthropic`.
+
+Đặc tả nhà cung cấp LLM (`ProviderConfig`) là chỗ hấp thụ khác biệt giữa Groq và Google: `param_map`
+ánh xạ tên tham số chuẩn sang tên thật (Gemini gọi `max_tokens` là `max_output_tokens` và `api_key`
+là `google_api_key`, Groq gọi `timeout` là `request_timeout`). Danh mục này là **mã**
+(`DEFAULT_LLM_PROVIDERS`), không còn ghi đè được qua `.env` — thêm nhà cung cấp mới thì thêm một mục
+ở đó.
+
+**Nhà cung cấp và model không còn là cấu hình.** Bốn biến `LLM_PROVIDER`, `LLM_MODEL`,
+`LLM_FAST_MODEL`, `LLM_PROVIDERS` đã bỏ khỏi `.env` và trang Cấu hình: người dùng chọn cho từng lượt
+chat ở ô chọn model, danh sách lấy thẳng từ API nhà cung cấp, nên giữ thêm một nơi đặt "model đang
+dùng" chỉ tạo ra hai câu trả lời khác nhau cho cùng một câu hỏi. Khi người dùng chưa chọn gì, nhà cung
+cấp mặc định là **cái đầu tiên đã điền khoá API** (`Settings.llm_default_provider()`, thứ tự groq →
+google) với model mặc định trong đặc tả — đúng quy tắc frontend (`use-models.ts`) đang
+dùng, nên hai phía luôn khớp. Trước đây `LLM_PROVIDER` có thể trỏ vào một nhà cung cấp chưa có khoá
+và hệ thống vỡ ngay câu chat đầu tiên; giờ trường hợp đó không xảy ra được nữa. Biến cũ còn sót trong
+`.env` bị bỏ qua, không gây lỗi.
 
 `catalog.py` đi thêm một bước: hỏi thẳng API của nhà cung cấp để lấy danh sách model, thay vì viết
 cứng một danh sách sẽ sai trong vài tháng. Phần lọc model không-phải-chat (`whisper`, `orpheus`,
@@ -129,7 +156,8 @@ Bốn bảng đã có model và migration:
 
 | Bảng | Vai trò |
 |---|---|
-| `users` | Chỗ gắn chủ sở hữu. Chưa có đăng nhập, nhưng có sẵn để sau này không phải vá dữ liệu cũ |
+| `users` | Chủ sở hữu hội thoại. Có `password_hash` (nullable — tài khoản OAuth-only sau này sẽ không có), `role`, `last_login_at` |
+| `refresh_tokens` | Phiên đăng nhập có thể thu hồi — xem mục 3.8 |
 | `chat_threads` | Một hội thoại. `last_message_at` tách khỏi `updated_at` để sửa tiêu đề không làm hội thoại nhảy lên đầu |
 | `messages` | Có `reasoning`, `trace_id`, `provider`, `model`, `prompt_tokens`, `completion_tokens`, `latency_ms` |
 | `tool_calls` | Bảng riêng chứ không nhét JSON vào `messages`, để thống kê "công cụ nào hay lỗi nhất" chỉ cần một câu truy vấn |
@@ -143,7 +171,18 @@ bắt buộc SSL với máy chủ ngoài, bỏ `pool_pre_ping` khi độ trễ c
 
 ### 3.4 Giao diện
 
-Chạy thật: **trang Trò chuyện** và **trang Cấu hình**.
+Chạy thật: **Đăng nhập/Đăng ký**, **Trò chuyện**, **Tài khoản** (đổi mật khẩu), **Người dùng**
+(chỉ admin) và **Cấu hình** (chỉ admin).
+
+Giao diện theo bộ quy chuẩn UI/UX ghi trong `CLAUDE.md` (mục "Quy chuẩn giao diện"): token màu dùng
+chung, đủ bốn trạng thái tải/lỗi/trống/có dữ liệu, thao tác phá huỷ qua hộp xác nhận, hỗ trợ bàn
+phím và "giảm chuyển động". Bộ component nền ở `src/components/ui/`: `button`, `badge`, `input`
+(kèm `PasswordInput`, `Field`), `page-header`, `empty-state`, `spinner`, `avatar`, `confirm-dialog`,
+`select`. Đã kiểm bằng cách chụp màn hình Chrome thật qua Playwright ở cả 1440px và 390px.
+
+Giao diện bằng tiếng Anh, `<html lang="en">`, ngày giờ theo locale mặc định en-US của `date-fns`
+(dạng `MMM d, yyyy`). Hook lưu localStorage nay là `hooks/use-local-storage.ts` (`useLocalStorage`);
+prop nguy hiểm của `ConfirmDialog` là `destructive`.
 
 - `chat-panel.tsx` — danh sách hội thoại, tạo/xoá, chọn model, khung chat streaming, nhớ hội thoại
   đang mở qua localStorage.
@@ -155,9 +194,24 @@ Chạy thật: **trang Trò chuyện** và **trang Cấu hình**.
 - `settings-form.tsx` + `field-input.tsx` — dựng form tự động từ mô tả trường do backend trả về
   (`GET /settings`), phân biệt trường bí mật, hiện giá trị gốc trong `.env` và trạng thái "đang bị
   ghi đè".
+- `login-form.tsx` / `register-form.tsx` + `auth-shell.tsx` — trang xác thực hai cột, bên trái giới
+  thiệu sản phẩm (ẩn trên màn hình hẹp). `auth-gate.tsx`, `role-gate.tsx`, `header.tsx` — xem mục 3.8.
+- `users/user-admin.tsx` + `create-user-dialog.tsx` + `edit-user-dialog.tsx` +
+  `reset-password-dialog.tsx` — trang quản trị người dùng: thẻ thống kê, tìm kiếm, lọc theo vai trò,
+  đổi vai trò tại chỗ, sửa tên hiển thị (kể cả tên của chính admin), khoá/mở khoá, tạo tài khoản,
+  đặt lại mật khẩu (có nút tạo mật khẩu ngẫu nhiên và sao chép). Đổi quyền và khoá đều phải qua hộp
+  xác nhận. **Không có xoá tài khoản — có chủ ý**: chỉ khoá, vì xoá sẽ kéo theo toàn bộ lịch sử
+  hội thoại (ON DELETE CASCADE) và không đảo ngược được.
+- `account/account-page.tsx` — trang Tài khoản (bấm tên trên header để mở): hồ sơ, **tự sửa tên hiển
+  thị** (mọi vai trò, qua `PATCH /auth/me` — schema chỉ nhận `display_name`, gửi kèm `role` bị 422)
+  và form đổi mật khẩu với ô nhập lại, kiểm trước độ dài và khớp nhau ngay dưới từng ô.
+- Khung chat khi trống hiện bốn câu hỏi gợi ý, bấm là gửi. Chỉ gợi ý những câu trợ lý trả lời được
+  với công cụ hiện có — không gợi ý "pod nào đang lỗi?" khi chưa có công cụ tra cụm.
 
-Thanh điều hướng đã có đủ 6 mục, nhưng 4 mục (Chẩn đoán, Kỹ năng, Chờ duyệt, Giám sát AI) dẫn tới
-trang `return null`.
+Thanh điều hướng chia hai nhóm "Vận hành" và "Quản trị"; nhóm Quản trị (Người dùng, Cấu hình) chỉ
+`admin` thấy. Gõ thẳng URL thì `RoleGate` hiện trang "không có quyền" thay vì form sẽ lỗi 403.
+Bốn trang Chẩn đoán, Kỹ năng, Chờ duyệt, Giám sát AI chưa có tính năng — hiện `ComingSoon` liệt kê
+những gì trang sẽ làm, không còn trang trắng.
 
 ### 3.5 Công cụ trợ lý đang có
 
@@ -171,25 +225,123 @@ lệnh thô (`run_kubectl(cmd)` bị cấm), và mô tả công cụ phải rõ 
 
 ### 3.6 Kiểm thử
 
-6 file test đơn vị, không cần mạng và không cần CSDL:
+9 file test đơn vị (138 test), không cần mạng và không cần CSDL:
 
 | File | Kiểm gì |
 |---|---|
 | `test_chat_streaming.py` | Lớp dịch sự kiện LangGraph → SSE (chỗ dễ vỡ nhất khi nâng phiên bản) |
 | `test_events_contract.py` | Backend và frontend khớp nhau |
-| `test_llm_provider.py` | Ánh xạ tham số giữa các nhà cung cấp + đổi nóng cấu hình |
+| `test_llm_provider.py` | Ánh xạ tham số giữa các nhà cung cấp, chọn nhà cung cấp mặc định theo khoá API, đổi nóng cấu hình |
 | `test_model_catalog.py` | Đọc danh sách model, dùng dữ liệu mẫu lấy từ phản hồi thật |
 | `test_chat_tools.py` | Gọi công cụ thật (viết ra sau khi có lỗi lọt lưới) |
 | `test_chat_history.py` | Đặt tiêu đề + nạp lịch sử làm ngữ cảnh |
+| `test_auth_security.py` | Băm mật khẩu (bcrypt), JWT access/refresh, từ chối token sai loại |
+| `test_user_guard.py` | Chặn admin tự hạ quyền/tự khoá, chặn mất admin cuối cùng, admin qua mọi kiểm tra vai trò |
+| `test_password_change.py` | Tự đổi mật khẩu, admin đặt lại mật khẩu, cả hai đều thu hồi phiên cũ |
 
 `tests/conftest.py` mới là một dòng `TODO`, `tests/integration/` rỗng — nghĩa là **chưa có test nào
 chạm cơ sở dữ liệu hay tầng HTTP thật**.
 
+### 3.7 Tracing: OpenTelemetry + Langfuse
+
+Điểm cần hiểu trước: **Langfuse từ bản 3 trở đi chính là OpenTelemetry**, không phải hệ thống song
+song. SDK nhận vào một `TracerProvider` có sẵn, gắn `SpanProcessor` của nó vào đó, và lấy `trace_id`
+từ chính span context của OTel.
+
+`observability/langfuse_client.py` dựng **một** `TracerProvider` dùng chung cho cả hệ thống và đặt
+làm provider toàn cục, rồi cắm Langfuse vào. Sau này thêm instrumentation cho FastAPI hay SQLAlchemy
+thì cắm vào cùng provider — mọi thứ nằm chung một trace mà không gây nhiễu, vì bộ lọc mặc định của
+Langfuse (`is_default_export_span`) chỉ đẩy lên nó những span có thuộc tính `gen_ai.*` hoặc đến từ
+thư viện LLM đã biết; span HTTP và CSDL bị bỏ qua.
+
+`observability/tracing.py` giải bài toán khớp id. Hệ thống ghi `trace_id` xuống bảng `messages`
+*trước* khi đồ thị chạy, nên nếu để Langfuse tự sinh id thì sẽ có hai id khác nhau cho cùng một lượt
+và `impact.py` sau này không join được. Cách làm: sinh id trước bằng `new_trace_id()` (đúng định dạng
+OTel — 128 bit, 32 ký tự hex), rồi ép Langfuse dùng đúng id đó qua
+`CallbackHandler(trace_context={"trace_id": ...})`.
+
+Đã kiểm chứng bằng `InMemorySpanExporter` thay cho exporter thật: một lượt chat sinh 4 span
+(`ChatGroq`, `tools_condition`, `assistant`, ...) và **cả 4 đều mang đúng trace_id đã lưu xuống CSDL**.
+
+Langfuse tắt thì mọi hàm trả `None` và đồ thị chạy y như cũ. Bật nhưng máy chủ không tới được thì chỉ
+ghi một cảnh báo lúc khởi động — đã thử: lượt chat vẫn xong trong 1 giây.
+
+**`LANGFUSE_*` là cấu hình chỉ đọc lúc khởi động, cố tình không cho sửa trên web.** Bên trong SDK,
+`LangfuseResourceManager` là singleton khoá theo public key: dựng lại client với cùng khoá nhưng host
+khác thì nó trả về đối tượng cũ và **lặng lẽ bỏ qua host mới**. Cho sửa trên giao diện là hứa một
+thứ không xảy ra, mà lại không có lỗi nào để lần ra. Đổi trong `.env` rồi khởi động lại backend.
+
+Chưa chạy được thật vì chưa có máy chủ Langfuse v3 (xem mục 5).
+
 ---
+
+### 3.8 Đăng nhập và phân quyền
+
+Ba vai trò: `admin` (chỉnh sửa cấu hình hệ thống, quản lý tài khoản), `engineer` (thêm/sửa/xoá
+skill và runbook — khi module đó được viết), `user` (chỉ hỏi đáp và chạy, không tạo/sửa/xoá). Vai
+trò cũ (`viewer/operator/admin`) đã được migration đổi tên dữ liệu sang bộ mới, không chỉ đổi tên
+biến trong code.
+
+**Cơ chế**: Bearer JWT trong header `Authorization`, KHÔNG dùng cookie (quyết định có cân nhắc —
+đơn giản hơn khi debug qua `/docs`, đổi lại token đọc được bằng JS phía client nếu sau này có lỗ XSS
+trong phần render Markdown của khung chat). Access token sống 60 phút. Nó có mang `role` nhưng
+**không dùng để phân quyền**: `get_current_user` tra lại User từ CSDL ở mỗi request và `require_role`
+so với giá trị đó — nên đổi vai trò hay khoá tài khoản có hiệu lực ngay ở request kế tiếp, không
+phải đợi token hết hạn. **Admin luôn qua mọi kiểm tra vai trò** (`has_role` trong `deps.py`, bản
+tương ứng `hasRole` ở `lib/roles.ts` cho sidebar và `RoleGate`): endpoint sau này ghi
+`require_role("engineer")` vẫn mở cho admin mà không cần nhớ liệt kê thêm "admin". Refresh token sống 30 ngày, **xoay vòng**: mỗi lần dùng thì bị thu hồi và cấp lại một cái mới;
+dùng lại một refresh token đã bị thu hồi — dấu hiệu bị đánh cắp — sẽ thu hồi LUÔN mọi phiên khác của
+người đó.
+
+**Tự đăng ký được**, nhưng `POST /auth/register` luôn ép `role='user'`, không đọc trường role từ
+request — tự phong mình làm admin qua endpoint công khai là lỗi kinh điển cần chặn ngay từ thiết kế.
+Nâng vai trò phải qua `PATCH /users/{id}` của một admin đang đăng nhập. Tài khoản admin đầu tiên do
+`lifespan.py` bootstrap từ `ADMIN_BOOTSTRAP_EMAIL`/`ADMIN_BOOTSTRAP_PASSWORD` trong `.env` — chỉ chạy
+khi CSDL CHƯA có admin nào.
+
+`password_hash` để nullable, dọn đường cho đăng nhập GitHub/Google sau này (chưa làm — chưa có
+client ID/secret nào để nối vào, xây `oauth_accounts` trước sẽ thành khung chết).
+
+**Một lỗi thật đã bắt được lúc viết, không phải giả định**: `passlib` (ngừng bảo trì từ 2020) ném
+`ValueError` ngay cả với mật khẩu hợp lệ khi chạy cùng `bcrypt>=4.1` — gói đó xoá mất thuộc tính mà
+passlib dùng để tự dò phiên bản lúc khởi tạo. Đã bỏ hẳn passlib, gọi thẳng `bcrypt`.
+
+**Một lỗi thật thứ hai**: khi phát hiện refresh token bị dùng lại, code gọi `revoke_all_sessions()`
+rồi `raise AuthError` — nhưng dependency `get_session` tự `rollback()` mọi exception bay ra khỏi
+endpoint, nên chính hành động thu hồi (việc quan trọng nhất của cả cơ chế chống đánh cắp) bị xoá
+theo. Bắt được bằng cách tái hiện đúng kịch bản qua HTTP: dùng lại token cũ, rồi thử token vừa xoay —
+lẽ ra phải bị từ chối nhưng vẫn dùng được. Sửa bằng cách `commit()` ngay tại chỗ phát hiện, trước khi
+ném lỗi.
+
+Đã kiểm qua HTTP thật (không chỉ unit test): đăng ký ép role, 403 đúng chỗ cho `user` gọi
+`PATCH /settings`/`GET /users`, xoay vòng refresh token, phát hiện dùng lại, đăng xuất, khoá tài
+khoản chặn được đăng nhập lại. `tests/unit/test_auth_security.py` (11 test, thuần hàm, không CSDL)
+giữ lại phần băm mật khẩu + JWT cho hồi quy sau này.
+
+**Đổi mật khẩu** có hai đường, cố tình tách riêng:
+
+- `POST /auth/change-password` — tự đổi, BẮT BUỘC nhập mật khẩu hiện tại (access token bị lộ không
+  đủ để chiếm hẳn tài khoản). Đổi xong thu hồi MỌI phiên — lý do phổ biến nhất để đổi mật khẩu là
+  nghi đã lộ, khi đó kẻ kia có thể đang giữ refresh token — rồi cấp cặp token mới cho thiết bị hiện
+  tại để người đổi không bị văng ra. Nhập sai mật khẩu cũ trả **400 chứ không phải 401**: 401 sẽ
+  khiến `lib/api.ts` phía frontend tưởng phiên đã hết và đăng xuất người dùng.
+- `POST /users/{id}/reset-password` — admin đặt lại cho người quên mật khẩu, không cần mật khẩu cũ.
+  Không dùng được lên chính mình (409) — nếu không, ai nhặt được access token của admin cũng đổi được
+  mật khẩu admin đó. Thu hồi mọi phiên của người bị đặt lại.
+
+Đã kiểm bằng trình duyệt thật: đổi mật khẩu xong F5 vẫn còn đăng nhập, mật khẩu cũ bị từ chối, mật
+khẩu mới đăng nhập được, admin đặt lại bằng mật khẩu ngẫu nhiên và người đó đăng nhập được ngay.
+
+**Chưa làm**: `app/core/permissions.py` vẫn là khung — nó dành cho một tầng phân quyền MỊN HƠN
+(verb + namespace + danger-op blocklist cho thao tác lên cụm), khác với `require_role()` ở
+`app/api/deps.py` mà tôi vừa dùng (chỉ so role thô). Hai thứ không thay thế nhau: `require_role`
+đủ cho "ai được gọi endpoint nào", nhưng "namespace nào được sửa, thao tác nào bị chặn tuyệt đối"
+vẫn cần `permissions.py` khi làm tới pipeline duyệt thao tác.
 
 ## 4. Những gì mới là khung
 
-Khoảng 65 file Python và 30 file TypeScript hiện chỉ có một dòng mô tả trách nhiệm kèm `TODO`.
+57 file Python (không tính `__init__.py`) và 29 file TypeScript (component, hook, type cho RCA,
+skills, approvals, observability) hiện chỉ có một dòng mô tả trách nhiệm kèm `TODO`.
 Chúng không vô dụng: mỗi file là một quyết định thiết kế đã chốt về việc "cái gì nằm ở đâu".
 
 **Kubernetes — chưa có gì.** `integrations/k8s/{client,resources,diff,rbac}.py` đều rỗng. Hệ quả dây
@@ -209,14 +361,17 @@ rồi chạy tiếp.
 **Skills / MCP.** 11 file rỗng: schema, registry, loader, executor, mcp_client, runbook và 5 skill
 dựng sẵn. Gói `mcp>=1.1.0` đã khai trong `pyproject.toml` nhưng chưa dùng.
 
-**Observability lớp A.** 7 file rỗng: `langfuse_client`, `tracing`, `prompts`, `audit`, `impact`,
-`evaluation`, `metrics`. `chat.py` đã sinh `trace_id` và lưu vào bảng `messages`, nhưng **không có gì
-gửi trace đó sang Langfuse** — biến `LANGFUSE_ENABLED` hiện chưa được đọc ở đâu cả.
+**Observability lớp A — còn 5 file rỗng.** `langfuse_client.py` và `tracing.py` đã viết xong
+(xem mục 3.7). Còn rỗng: `prompts` (prompt có version), `audit` (audit log append-only),
+`impact` (join trace ↔ audit), `evaluation` (dataset + LLM-as-judge), `metrics` (approval rate,
+dry-run fail rate). Trong đó `audit.py` là thứ đáng làm sớm nhất — Langfuse chỉ biết LLM *định*
+làm gì, còn *cluster thực sự đổi gì* thì không ai ghi lại cả.
 
 **Observability lớp C.** `core/telemetry.py` mới là docstring: chưa có `/metrics`, chưa có structlog.
 
-**Hạ tầng chung.** `core/security.py` (JWT), `core/permissions.py` (RBAC), `core/logging.py`,
-`core/exceptions.py`, `workers/{queue,tasks}.py`, `services/{approval,cluster}_service.py` — rỗng.
+**Hạ tầng chung.** `core/security.py` đã xong (mục 3.8). Còn rỗng: `core/permissions.py`
+(RBAC mịn theo namespace/verb — khác `require_role`, xem mục 3.8), `core/logging.py`,
+`core/exceptions.py`, `workers/{queue,tasks}.py`, `services/{approval,cluster}_service.py`.
 
 **5 router API rỗng**: `clusters`, `approvals`, `rca`, `skills`, `observability`. Chúng đã được mount
 vào `api_router` nên hiện ra trong `/docs` nhưng không có endpoint nào.
@@ -225,15 +380,48 @@ vào `api_router` nên hiện ra trong `/docs` nhưng không có endpoint nào.
 
 ## 5. Vận hành và triển khai
 
-`deploy/local/docker-compose.yml` dựng 4 service: Postgres (ảnh `pgvector/pgvector:pg16`), Redis,
-Postgres riêng cho Langfuse, và Langfuse 2 (cổng 3001).
+**Hạ tầng nằm trên cụm Kubernetes `lab1`, không dựng bằng Docker ở máy phát triển.**
+`deploy/local/docker-compose.yml` đã được xoá: nó dựng Postgres, Redis và Langfuse 2 ở localhost,
+trong khi thực tế các thành phần đó đã chạy sẵn trên cụm. Giữ lại chỉ gây hiểu nhầm, nhất là khi
+ảnh Langfuse trong đó (`langfuse/langfuse:2`) không tương thích với SDK 4.x đang dùng.
 
-`frontend/Dockerfile` có; **backend chưa có Dockerfile**. `deploy/helm/` là thư mục rỗng — chưa có
-manifest nào để tự triển khai lên Kubernetes.
+Máy phát triển chỉ chạy backend và frontend, trỏ tới cụm qua `backend/.env`. Máy chỉ có Python 3.14
+và **không có `uv`** dù README từng nhắc — đã bổ sung `requirements.txt` và `requirements-dev.txt`
+để cài bằng `pip`.
+
+Những gì cụm `lab1` đang có, và chỗ nào còn hụt:
+
+| Thành phần | Trên cụm | Gọi được từ máy dev? |
+|---|---|---|
+| PostgreSQL (CloudNativePG) | `database/pg-nodeport` | **Có** — `lab1:30432`, đã chạy thật, PG 18.4 |
+| Prometheus (kube-prometheus-stack) | `monitoring/.../prometheus` | **Có** — `http://lab1:30090`, đã thử trả 200 |
+| Grafana | `monitoring/kps-grafana` | Có — `http://lab1:30300` |
+| Loki | `loki/loki`, `loki/loki-gateway` | **Không** — chỉ ClusterIP, chưa expose ra ngoài |
+| Langfuse | *chưa triển khai* | — |
+| Redis | *chưa có* (cái đang chạy là của Argo CD) | — |
+
+Hai chỗ hụt đều chưa chặn việc gì, vì `integrations/loki/client.py` và cả module observability lớp A
+đều còn là khung. Nhưng khi làm tới thì phải xử lý: Loki cần thêm NodePort/Ingress cho
+`loki-gateway` (hoặc `kubectl port-forward` lúc phát triển), còn Langfuse thì phải dựng mới — và
+phải là bản 3 trở lên.
+
+Cụm còn sẵn Argo CD (`30080`), Jenkins (`30081`), Alertmanager (`30093`) và Alloy (`31245`) — Alloy
+là thứ đang gom log đẩy vào Loki, nên khi cần nguồn log cho RCA thì đường ống đã có sẵn.
+
+Langfuse cần **bản 3 trở lên**: SDK 4.x dựng trên OpenTelemetry và gửi vào `/api/public/otel/v1/traces`,
+endpoint bản 2 không có. Trỏ sai bản thì xác thực thất bại lúc khởi động, ứng dụng vẫn chạy nhưng
+không có trace nào.
+
+`frontend/Dockerfile` có; **backend chưa có Dockerfile**. `deploy/helm/` vẫn là thư mục rỗng — chưa
+có manifest nào để tự triển khai K8s-Hub lên cụm, dù hạ tầng quanh nó thì đã ở đó rồi.
 
 Ba phụ thuộc đã khai trong `pyproject.toml` nhưng chưa dùng dòng nào: `redis`, `pgvector`,
 `langgraph-checkpoint-postgres`. Chúng là chỗ đặt trước cho background job, tìm kiếm ngữ nghĩa và
 checkpointer của bước duyệt.
+
+Lưu ý về phiên bản: `pyproject.toml` khai sàn rất thấp (`langgraph>=0.2.50`, `langchain-core>=0.3.20`,
+`langfuse>=3.0.0`) nhưng thực tế pip kéo về `langgraph 1.2`, `langchain-core 1.6`, `langfuse 4.15`.
+Chưa có file khoá phiên bản, nên hai máy cài cách nhau vài tháng có thể ra hai bộ thư viện khác hẳn.
 
 ---
 
@@ -241,23 +429,62 @@ checkpointer của bước duyệt.
 
 Sắp theo mức độ nên xử lý sớm.
 
-**1. Endpoint cấu hình không có xác thực.** `PATCH /api/v1/settings` ghi được cả khoá API
-(`GROQ_API_KEY`, `GOOGLE_API_KEY`, `ANTHROPIC_API_KEY`, khoá Langfuse) mà không kiểm tra quyền —
-chính file đó đã ghi `TODO` về việc này. Chạy local thì không sao; đưa lên bất kỳ máy nào người khác
-chạm được là mất khoá. Cần chặn trước khi deploy ra ngoài localhost.
+### Đã xử lý trong lần cập nhật này
 
-**2. Chưa có đăng nhập.** `api/deps.py` luôn trả về một tài khoản cục bộ
-(`local@k8s-hub.dev`, vai trò `admin`). Hàm `require_role()` đã viết sẵn nhưng chưa dùng ở đâu. Mọi
-hội thoại thuộc về cùng một người.
+- **Ghi kết quả bị mất khi client ngắt kết nối.** `sse-starlette` huỷ chính task đang chạy generator,
+  nên lệnh ghi trong `finally` bị huỷ ở điểm chờ đầu tiên và tin nhắn kẹt vĩnh viễn ở
+  `status='streaming'`. Đã sửa: việc ghi chạy trong `asyncio.Task` riêng, bọc `asyncio.shield`.
+- **API không trả số token.** `MessageOut` thiếu `prompt_tokens`/`completion_tokens` nên Pydantic bỏ
+  qua, nhìn từ ngoài tưởng hệ thống không đếm được. Dữ liệu vẫn luôn đúng trong CSDL. Đã khai thêm
+  hai trường ở cả `schemas/chat.py` và `types/chat.ts`.
+- **Race giữa tạo hội thoại và gọi stream.** Từ FastAPI 0.106, phần sau `yield` của dependency chạy
+  *sau khi* response đã gửi, nên client nhận 201 trước lúc commit và request kế tiếp gặp 404. Đã
+  `commit()` tường minh trong ba endpoint ghi của `chat.py`.
+- **Langfuse chưa được nối.** Nay đã nối (mục 3.7). Rủi ro còn lại chuyển thành vấn đề phiên bản
+  máy chủ, ghi ở mục 5.
+- **Endpoint cấu hình không có xác thực.** `PATCH /api/v1/settings` từng ghi được cả khoá API mà
+  không kiểm tra quyền. Đã khoá bằng `require_role("admin")` (mục 3.8); GET vẫn mở cho mọi vai trò
+  đã đăng nhập.
+- **Chưa có đăng nhập.** `api/deps.py` từng luôn trả về một tài khoản cục bộ cố định. Đã thay bằng
+  JWT thật, 3 vai trò, tự đăng ký, admin quản lý tài khoản (mục 3.8). `require_role()` giờ đã dùng ở
+  `settings.py` và `users.py`.
+- **Frontend chưa gọi được backend có JWT.** Đã nối xong: trang đăng nhập/đăng ký, lưu token, tự làm
+  mới, `AuthGate` chặn `(app)/`, thanh điều hướng lọc theo vai trò (mục 3.8/3.4).
+- **Tải lại (F5) bất kỳ trang nào cũng bị đá về /login.** Lúc hydrate, `useSyncExternalStore` trả
+  snapshot phía máy chủ ("chưa có phiên") và effect điều hướng trong `AuthGate` chạy ngay ở lần commit
+  đó. Chỉ bắt được khi chụp màn hình bằng trình duyệt thật. Sửa: effect đọc thẳng localStorage.
+- **Backend tắt cũng bị đá về /login.** Nay chỉ chuyển hướng khi thật sự nhận 401; lỗi mạng hiện
+  "không kết nối được máy chủ" kèm nút thử lại, vì phiên vẫn còn.
+- **Admin tự khoá mình / hệ thống mất admin cuối cùng.** `PATCH /users/{id}` từng cho phép cả hai —
+  sau đó không ai gỡ được từ giao diện, và bootstrap cũng không cứu vì admin bị khoá vẫn tính là "có".
+  Nay trả 409 kèm lời giải thích; có 6 test ở `test_user_guard.py`.
+- **Không có cách đổi mật khẩu.** Nay có tự đổi (trang Tài khoản) và admin đặt lại (trang Người
+  dùng), xem mục 3.8. "Quên mật khẩu" tự phục vụ qua email vẫn chưa có — cần gửi mail, xem rủi ro 2.
+- **Trang để trắng và `window.confirm()`.** Trang chưa làm từng `return null`; nút "Đặt lại tất cả" ở
+  Cấu hình dùng hộp thoại của trình duyệt; thanh lưu dùng `position: fixed` đè lên sidebar. Đã sửa
+  theo quy chuẩn UI/UX mới trong `CLAUDE.md`.
+- **Mã nguồn và giao diện lẫn tiếng Việt.** Đã chuyển toàn bộ sang tiếng Anh, kể cả tên định danh
+  (ví dụ `EmailDaTonTaiError` → `EmailAlreadyExistsError`, `ThaoTacBiChanError` →
+  `OperationBlockedError`, nút đồ thị `tro_ly`/`cong_cu` → `assistant`/`tools`, `useLuuTru` →
+  `useLocalStorage`, `laySafeAccessToken` → `getValidAccessToken`). Mã lỗi SSE (`llm_timeout`,
+  `llm_rate_limit`, ...) và tên trường trong hợp đồng sự kiện giữ nguyên. Đã kiểm: 132 test pass,
+  ruff sạch, `tsc`/`eslint`/`next build` sạch, chụp màn hình Chrome thật không còn chữ tiếng Việt
+  nào do mã sinh ra.
 
-**3. Cấu hình đổi trên web mất sau khi khởi động lại.** `MemoryOverrideStore` chỉ giữ trong bộ nhớ,
+### Còn tồn tại
+
+**1. Không giới hạn số lần thử đăng nhập/đăng ký.** Không có rate limit hay khoá tạm sau nhiều lần
+sai mật khẩu — endpoint `/auth/login` dò mật khẩu bằng vét cạn được nếu ai đó cố tình.
+
+**2. Chưa có "quên mật khẩu" tự phục vụ.** Người quên mật khẩu phải nhờ admin đặt lại. Làm luồng tự
+phục vụ (gửi liên kết qua email) cần hạ tầng gửi mail, hiện chưa có.
+
+**3. Không xác minh email lúc đăng ký.** Ai cũng đăng ký được với bất kỳ email nào gõ đúng định
+dạng, kể cả email không thuộc về mình.
+
+**4. Cấu hình đổi trên web mất sau khi khởi động lại.** `MemoryOverrideStore` chỉ giữ trong bộ nhớ,
 và `set_override_store()` chưa được gọi ở `lifespan`. Người dùng nhập khoá API trên giao diện,
 restart backend là mất. Cần một lớp lưu xuống Postgres — chỗ cắm đã có sẵn (`OverrideStore` Protocol).
-
-**4. Langfuse là lời hứa chưa thực hiện.** README, `docker-compose`, `.env.example` và cột
-"Observability lớp A" đều nói về Langfuse; thực tế `trace_id` được sinh ra và lưu nhưng không đi đâu
-cả. Frontend cũng đã có `NEXT_PUBLIC_LANGFUSE_HOST` và component `trace-link.tsx` (rỗng). Đây là
-khoảng cách giữa tài liệu và mã cần nói rõ khi báo cáo đồ án.
 
 **5. Hai nguồn sự thật cho system prompt.** Prompt thật nằm trong
 `app/modules/nl_command/prompts/__init__.py`, trong khi `prompts/system.md` và
@@ -267,12 +494,19 @@ file `.md` rồi tưởng đã đổi prompt.
 **6. `require_tool_calling()` viết xong nhưng chưa gọi.** Chính docstring của nó ghi "CHƯA ĐƯỢC GỌI".
 Chọn một model Groq nhỏ không hỗ trợ gọi công cụ thì lỗi chỉ lộ ra khi người dùng đã chat.
 
-**7. Không có test tích hợp.** `conftest.py` rỗng nên toàn bộ tầng HTTP, tầng CSDL và các endpoint
-hội thoại chưa có test nào chạm tới.
+**7. Không có test tích hợp.** Auth đã kiểm bằng tay qua HTTP thật (mục 3.8) trong lúc phát triển,
+nhưng đó là việc làm một lần, không lặp lại được. `conftest.py` rỗng nên toàn bộ tầng HTTP, tầng CSDL
+và các endpoint hội thoại/đăng nhập chưa có test tự động nào chạm tới.
 
 **8. `history_to_messages()` bỏ hết tool call của lượt trước.** Đây là lựa chọn có chủ ý và đã ghi rõ
 lý do (gửi thiếu vế là nhà cung cấp trả lỗi; kết quả cũ thường đã lỗi thời), nhưng hệ quả là trợ lý
 không nhớ nó đã tra gì ở lượt trước. Khi công cụ tra cụm xuất hiện, cần xem lại quyết định này.
+
+**Dữ liệu cũ trong CSDL vẫn tiếng Việt.** Tên hiển thị tài khoản (ví dụ admin "Người dùng cục bộ"),
+tiêu đề và nội dung hội thoại cũ được lưu trước khi đổi ngôn ngữ nên vẫn hiện tiếng Việt; mã không
+còn sinh ra chữ tiếng Việt. Hội thoại trống tạo trước khi đổi (tiêu đề "Hội thoại mới") sẽ không tự
+đặt tên theo câu hỏi đầu, vì tiêu đề mặc định nay là "New conversation". Sửa tên trong trang Người
+dùng / Tài khoản, hoặc xoá hội thoại cũ, nếu muốn giao diện sạch hẳn.
 
 ---
 
@@ -283,16 +517,29 @@ Xếp theo mức độ mở khoá cho phần còn lại:
 1. **`integrations/k8s/client.py` + vài công cụ chỉ đọc** (`list_pods`, `describe`, `logs`) gắn vào
    `get_tools()`. Đây là nút thắt: xong bước này thì khung chat lập tức có giá trị thật, và RCA có
    nguồn evidence.
-2. **Lớp lưu override xuống Postgres** + chặn quyền cho `PATCH /settings`. Hai việc nhỏ, gỡ được rủi
-   ro số 1 và số 3.
-3. **Nối Langfuse** (`langfuse_client.py` + `tracing.py`) — chỉ cần gắn `CallbackHandler` vào config
-   của LangGraph là có ngay trace, vì `trace_id` đã được sinh sẵn.
-4. **`audit.py`** — bảng append-only. Cần có trước khi có bất kỳ thao tác ghi nào lên cụm.
+2. **Lớp lưu override xuống Postgres**. Chỗ cắm đã có sẵn (`OverrideStore` Protocol) — rủi ro về
+   xác thực của endpoint này đã gỡ (mục 3.8), chỉ còn vấn đề mất cấu hình lúc restart.
+3. **Một máy chủ Langfuse v3** (Cloud là nhanh nhất) để phần tracing vừa viết chạy thật. Mã đã
+   xong, chỉ thiếu chỗ nhận dữ liệu.
+4. **`audit.py`** — bảng append-only. Cần có trước khi có bất kỳ thao tác ghi nào lên cụm, và là
+   thứ Langfuse không bao giờ thay được: nó chỉ biết LLM *định* làm gì.
 5. **Pipeline duyệt** (`planner` → `guardrails` → `dry_run` → approval gate → `executor` → `verifier`).
-   Hợp đồng sự kiện SSE cho phần này đã định nghĩa xong, nên frontend sẽ lắp vào nhanh.
+   Hợp đồng sự kiện SSE cho phần này đã định nghĩa xong, nên frontend sẽ lắp vào nhanh. Guardrail nên
+   dùng `require_role` đã có sẵn để chặn `user` khỏi bước duyệt — chỉ `admin`/`engineer` mới được.
 6. **RCA**, dùng lại các collector đã có từ bước 1.
+7. **Rate limit cho `/auth/login` và `/auth/register`** (rủi ro số 1 ở mục 6) — việc nhỏ, đáng làm
+   sớm trước khi có ai đó thử vét cạn mật khẩu.
+
+Lớp C (tự giám sát bằng Prometheus) cố tình **hoãn lại**: agent mới có hai công cụ tầm thường nên
+chưa có gì đáng đo. Khi nào deploy thật thì ba dòng `prometheus-fastapi-instrumentator` là gần như
+đủ — không bắc cầu số liệu từ Langfuse sang Prometheus, vì thứ chuyển được (token, cost) thì Langfuse
+hiển thị tốt hơn, còn thứ thật sự cần (app còn sống không, SSE có rò rỉ không) thì Langfuse không có
+dữ liệu để mà chuyển.
 
 ---
 
 *Báo cáo này đọc mã ở trạng thái nhánh `main`. Mọi nhận định về "chưa có" đều dựa trên nội dung file
 tại thời điểm đọc, không dựa vào README hay kế hoạch.*
+
+*Giữ cho tài liệu này khớp với mã là quy tắc thường trực của dự án — xem `CLAUDE.md` và skill
+`cap-nhat-hien-trang`.*

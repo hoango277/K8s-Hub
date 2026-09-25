@@ -1,14 +1,14 @@
 # Module: Skills
 
-Moi skill = 1 don vi nang luc dong goi (tuong duong 1 MCP server / tool group),
-duoc agent goi den. Runbook la 1 loai skill co nhieu buoc.
+Each skill = one packaged unit of capability (equivalent to one MCP server /
+tool group) that the agent calls. A runbook is a kind of skill with multiple steps.
 
-| File | Trach nhiem |
+| File | Responsibility |
 |---|---|
 | `schema.py` | SkillManifest: name, description, input schema, permission, danger level |
-| `registry.py` | Dang ky / tra cuu skill, expose sang LLM duoi dang tool definition |
-| `loader.py` | Nap skill tu builtin + MCP server ben ngoai |
-| `executor.py` | Chay skill, stream progress, ghi audit |
-| `mcp_client.py` | Ket noi toi MCP server, list tools, call tool |
-| `runbook.py` | Skill nhieu buoc: parse, chay tuan tu, retry, rollback |
-| `builtin/` | Cac skill dung san |
+| `registry.py` | Register / look up skills, expose them to the LLM as tool definitions |
+| `loader.py` | Load skills from builtin + external MCP servers |
+| `executor.py` | Run skills, stream progress, write audit |
+| `mcp_client.py` | Connect to MCP servers, list tools, call tool |
+| `runbook.py` | Multi-step skills: parse, run sequentially, retry, rollback |
+| `builtin/` | Ready-made skills |

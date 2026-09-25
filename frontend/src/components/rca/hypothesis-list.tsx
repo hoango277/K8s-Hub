@@ -1,4 +1,4 @@
-// Gia thuyet nguyen nhan + do tin cay + de xuat fix. TODO
+// Root-cause hypotheses + confidence + suggested fix. TODO
 export function HypothesisList() {
   return null;
 }

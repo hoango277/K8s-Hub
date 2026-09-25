@@ -1,16 +1,16 @@
-"""Sự kiện streaming đẩy từ backend về client qua SSE.
+"""Streaming events pushed from the backend to the client over SSE.
 
 ===========================================================================
- HỢP ĐỒNG GIỮA BACKEND VÀ FRONTEND
- File này phải khớp 1-1 với `frontend/src/types/events.ts`.
- Sửa ở đây thì BẮT BUỘC sửa bên kia và báo cả nhóm.
+ CONTRACT BETWEEN BACKEND AND FRONTEND
+ This file must match `frontend/src/types/events.ts` 1-to-1.
+ Changing it here REQUIRES changing the other side and telling the team.
 ===========================================================================
 
-Dùng chung cho hai luồng:
-  - Hội thoại ra lệnh  (app/modules/nl_command)
-  - Tiến trình chẩn đoán (app/modules/rca)
+Shared by two flows:
+  - Command conversation  (app/modules/nl_command)
+  - Diagnosis progress    (app/modules/rca)
 
-Cách đóng gói lên đường truyền: xem `to_sse()` ở cuối file.
+How events are packed onto the wire: see `to_sse()` at the end of the file.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from typing import Annotated, Any, Literal, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 # --------------------------------------------------------------------------
-# Kiểu dùng lại
+# Reusable types
 # --------------------------------------------------------------------------
 
 ToolStatus: TypeAlias = Literal["ok", "error"]
@@ -29,45 +29,46 @@ DangerLevel: TypeAlias = Literal["safe", "caution", "dangerous"]
 
 
 class BaseEvent(BaseModel):
-    """Phần chung của mọi event."""
+    """The part shared by every event."""
 
     model_config = ConfigDict(extra="forbid")
 
     seq: int = Field(
         default=0,
         description=(
-            "Số thứ tự tăng dần trong một luồng, bắt đầu từ 1. "
-            "Client dùng để phát hiện mất event và để resume sau khi mất kết nối "
-            "(gửi lại qua header Last-Event-ID). Do EventStream tự gán."
+            "Increasing sequence number within one stream, starting at 1. "
+            "The client uses it to detect lost events and to resume after a "
+            "disconnect (sent back via the Last-Event-ID header). Assigned by EventStream."
         ),
     )
 
 
 # --------------------------------------------------------------------------
-# Các loại event
+# Event types
 # --------------------------------------------------------------------------
 
 
 class TokenEvent(BaseEvent):
-    """Một mẩu văn bản của câu trả lời. Client nối các mẩu lại theo thứ tự."""
+    """A chunk of the answer text. The client joins the chunks in order."""
 
     type: Literal["token"] = "token"
     content: str
 
 
 class ThinkingEvent(BaseEvent):
-    """Một mẩu SUY LUẬN của mô hình, không phải câu trả lời.
+    """A chunk of the model's REASONING, not the answer.
 
-    Đây là phần mô hình tự nghĩ trước khi nói — nó cân nhắc gì, định tra cứu
-    gì. Rất đáng hiện ra trong vận hành: người trực nhìn được trợ lý đang đi
-    theo hướng nào, và bắt được sớm khi nó hiểu sai đề bài.
+    This is what the model thinks before speaking — what it is weighing, what
+    it plans to look up. Very worth showing in operations: the on-call
+    engineer can see which direction the assistant is heading, and catch it
+    early when it misunderstands the question.
 
-    Hiển thị TÁCH BIỆT với câu trả lời và phải nhìn ra ngay là suy luận. Trộn
-    lẫn hai thứ là nguy hiểm: suy luận thường chứa phỏng đoán và cả những kết
-    luận sai mà mô hình tự bác bỏ ngay sau đó.
+    Displayed SEPARATELY from the answer and must be immediately recognizable
+    as reasoning. Mixing the two is dangerous: reasoning often contains guesses
+    and even wrong conclusions the model rejects right afterwards.
 
-    Không phải nhà cung cấp nào cũng có. Không có thì đơn giản là không gửi
-    event nào loại này.
+    Not every provider has it. If there is none, simply no events of this type
+    are sent.
     """
 
     type: Literal["thinking"] = "thinking"
@@ -75,30 +76,31 @@ class ThinkingEvent(BaseEvent):
 
 
 class StepEvent(BaseEvent):
-    """Báo tiến trình một bước xử lý.
+    """Reports the progress of a processing step.
 
-    Chủ yếu dùng cho chẩn đoán ("Đang thu thập nhật ký..."), nhưng luồng ra lệnh
-    cũng dùng được. Nếu `key` trùng với một step đã gửi trước đó thì client CẬP NHẬT
-    dòng cũ chứ không thêm dòng mới — nhờ vậy mới đổi được trạng thái running → done.
+    Mainly used for diagnosis ("Collecting logs..."), but the command flow can
+    use it too. If `key` matches a step sent earlier, the client UPDATES the
+    old line instead of adding a new one — that is what allows the status to
+    change from running → done.
     """
 
     type: Literal["step"] = "step"
-    key: str = Field(description="Mã bước, ổn định trong một luồng. VD: 'collect_logs'")
-    label: str = Field(description="Chữ hiển thị cho người dùng")
+    key: str = Field(description="Step key, stable within one stream. E.g. 'collect_logs'")
+    label: str = Field(description="Text shown to the user")
     status: StepStatus = "running"
 
 
 class ToolCallStartEvent(BaseEvent):
-    """Trợ lý bắt đầu gọi một công cụ."""
+    """The assistant starts calling a tool."""
 
     type: Literal["tool_call_start"] = "tool_call_start"
-    id: str = Field(description="Mã lần gọi, dùng để ghép với tool_call_end")
-    name: str = Field(description="Tên công cụ, VD: 'list_resources'")
+    id: str = Field(description="Call id, used to pair with tool_call_end")
+    name: str = Field(description="Tool name, e.g. 'list_resources'")
     args: dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolCallEndEvent(BaseEvent):
-    """Công cụ chạy xong. `id` phải trùng với tool_call_start tương ứng."""
+    """The tool finished. `id` must match the corresponding tool_call_start."""
 
     type: Literal["tool_call_end"] = "tool_call_end"
     id: str
@@ -106,13 +108,13 @@ class ToolCallEndEvent(BaseEvent):
     duration_ms: int
     result: str | None = Field(
         default=None,
-        description="Kết quả ĐÃ RÚT GỌN để hiển thị. Bản đầy đủ xem trong Langfuse.",
+        description="TRUNCATED result for display. See Langfuse for the full version.",
     )
-    error: str | None = Field(default=None, description="Chỉ có khi status='error'")
+    error: str | None = Field(default=None, description="Only present when status='error'")
 
 
 class PlanStep(BaseModel):
-    """Một bước trong kế hoạch trợ lý đề xuất."""
+    """One step in the plan the assistant proposes."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -121,7 +123,7 @@ class PlanStep(BaseModel):
 
 
 class PlanEvent(BaseEvent):
-    """Kế hoạch trợ lý dự định làm, gửi TRƯỚC khi xin duyệt."""
+    """The plan the assistant intends to carry out, sent BEFORE asking for approval."""
 
     type: Literal["plan"] = "plan"
     steps: list[PlanStep]
@@ -129,71 +131,71 @@ class PlanEvent(BaseEvent):
 
 
 class ApprovalRequiredEvent(BaseEvent):
-    """Luồng dừng lại chờ người duyệt.
+    """The stream pauses to wait for human approval.
 
-    Sau event này luồng SSE KHÔNG kết thúc mà treo chờ. Client gọi
-    POST /approvals/{approval_id}/approve|reject qua một request riêng.
+    After this event the SSE stream does NOT end but hangs waiting. The client
+    calls POST /approvals/{approval_id}/approve|reject in a separate request.
     """
 
     type: Literal["approval_required"] = "approval_required"
     approval_id: str
-    summary: str = Field(description="VD: 'Tăng số bản chạy của api từ 1 lên 3'")
-    diff: str = Field(description="So sánh trước/sau, dạng unified diff YAML")
+    summary: str = Field(description="E.g. 'Scale api replicas from 1 to 3'")
+    diff: str = Field(description="Before/after comparison, as a unified YAML diff")
     danger_level: DangerLevel = "caution"
     dry_run_output: str | None = Field(
-        default=None, description="Kết quả chạy thử không ăn thật"
+        default=None, description="Dry-run output (not actually applied)"
     )
 
 
 class ApprovalResolvedEvent(BaseEvent):
-    """Người dùng đã quyết định. Gửi ngay trước khi luồng chạy tiếp."""
+    """The user has decided. Sent right before the stream resumes."""
 
     type: Literal["approval_resolved"] = "approval_resolved"
     approval_id: str
     approved: bool
     decided_by: str | None = None
-    reason: str | None = Field(default=None, description="Lý do khi từ chối")
+    reason: str | None = Field(default=None, description="Reason when rejected")
 
 
 class VerifyResultEvent(BaseEvent):
-    """Kết quả kiểm tra lại sau khi đã thực hiện thao tác lên cụm."""
+    """Result of re-checking after an action has been applied to the cluster."""
 
     type: Literal["verify_result"] = "verify_result"
     ok: bool
-    message: str = Field(description="VD: 'Đã lên đủ 3/3 bản chạy sau 12 giây'")
+    message: str = Field(description="E.g. '3/3 replicas ready after 12 seconds'")
 
 
 class ErrorEvent(BaseEvent):
-    """Có lỗi. Nếu retryable=False thì sau event này luồng sẽ kết thúc."""
+    """An error occurred. If retryable=False the stream ends after this event."""
 
     type: Literal["error"] = "error"
-    code: str = Field(description="VD: 'llm_timeout', 'guardrail_blocked', 'k8s_forbidden'")
+    code: str = Field(description="E.g. 'llm_timeout', 'guardrail_blocked', 'k8s_forbidden'")
     message: str
     retryable: bool = False
 
 
 class DoneEvent(BaseEvent):
-    """Luồng kết thúc bình thường. Luôn là event cuối cùng."""
+    """The stream ended normally. Always the last event."""
 
     type: Literal["done"] = "done"
-    message_id: str | None = Field(default=None, description="Id bản ghi trong CSDL")
+    message_id: str | None = Field(default=None, description="Record id in the database")
     trace_id: str | None = Field(
-        default=None, description="Id trace Langfuse, để client mở link xem chi tiết"
+        default=None, description="Langfuse trace id, so the client can open a link to the details"
     )
 
 
 class HeartbeatEvent(BaseEvent):
-    """Nhịp giữ kết nối, gửi mỗi ~15 giây khi không có gì để gửi.
+    """Keep-alive ping, sent every ~15 seconds when there is nothing else to send.
 
-    Không có nó thì proxy (nginx, ingress) sẽ cắt kết nối đang rảnh.
-    Client bỏ qua event này.
+    Without it, proxies (nginx, ingress) cut idle connections.
+    The client ignores this event.
     """
 
     type: Literal["heartbeat"] = "heartbeat"
 
 
 # --------------------------------------------------------------------------
-# Union + tiện ích
+# Union + helpers
 # --------------------------------------------------------------------------
 
 AgentEvent = Annotated[
@@ -216,10 +218,10 @@ AgentEventAdapter: TypeAdapter[AgentEvent] = TypeAdapter(AgentEvent)
 
 
 def to_sse(event: BaseEvent) -> dict[str, str]:
-    """Đóng gói event thành khung SSE cho `sse_starlette.EventSourceResponse`.
+    """Pack an event into an SSE frame for `sse_starlette.EventSourceResponse`.
 
-    Đặt tên event theo `type` để client vừa nghe được từng loại riêng
-    (addEventListener('token', ...)) vừa nghe được tất cả.
+    The event is named after its `type` so the client can listen to each kind
+    separately (addEventListener('token', ...)) as well as to all of them.
     """
     return {
         "event": event.type,  # type: ignore[attr-defined]
@@ -229,13 +231,13 @@ def to_sse(event: BaseEvent) -> dict[str, str]:
 
 
 class EventStream:
-    """Đánh số thứ tự và đóng gói event.
+    """Numbers and packs events.
 
-    Mỗi lần trả lời tạo một instance mới:
+    Create a new instance for each reply:
 
         stream = EventStream()
-        yield stream.emit(TokenEvent(content="Xin"))
-        yield stream.emit(TokenEvent(content=" chào"))
+        yield stream.emit(TokenEvent(content="Hel"))
+        yield stream.emit(TokenEvent(content="lo"))
         yield stream.emit(DoneEvent(trace_id=trace_id))
     """
 

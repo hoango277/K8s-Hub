@@ -1,9 +1,10 @@
-"""Kiểm tra các công cụ trợ lý được phép gọi.
+"""Tests for the tools the assistant is allowed to call.
 
-Trước khi có file này, không test nào THỰC SỰ gọi công cụ — chúng chỉ được
-kiểm gián tiếp qua luồng sự kiện giả. Hậu quả: một lần sửa làm `system_info`
-đọc nhầm tham số `config` (là RunnableConfig, không phải Settings) vẫn qua được
-toàn bộ bộ test, và chỉ nổ khi người dùng hỏi thật.
+Before this file existed, no test ACTUALLY called a tool — they were only
+checked indirectly through fake event streams. The consequence: a change that
+made `system_info` misread its `config` parameter (a RunnableConfig, not
+Settings) still passed the whole test suite, and only blew up when a user
+actually asked.
 """
 
 from __future__ import annotations
@@ -13,113 +14,114 @@ import pytest
 from app.modules.nl_command.tools import CHAT_TOOLS, current_time, get_tools, system_info
 
 
-def goi(cong_cu, metadata: dict | None = None) -> str:
-    """Gọi công cụ đúng cách LangGraph gọi nó."""
-    return cong_cu.invoke({}, config={"metadata": metadata or {}})
+def call(tool, metadata: dict | None = None) -> str:
+    """Call the tool the same way LangGraph calls it."""
+    return tool.invoke({}, config={"metadata": metadata or {}})
 
 
 # --------------------------------------------------------------------------
-# Chạy được thật
+# Actually runs
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("cong_cu", CHAT_TOOLS, ids=lambda t: t.name)
-def test_moi_cong_cu_chay_duoc(cong_cu):
-    """Gọi thật từng công cụ. Bắt lỗi kiểu 'đọc nhầm thuộc tính' ngay tại đây."""
-    ket_qua = goi(cong_cu)
+@pytest.mark.parametrize("tool", CHAT_TOOLS, ids=lambda t: t.name)
+def test_every_tool_runs(tool):
+    """Really call each tool. Catches 'misread attribute' bugs right here."""
+    result = call(tool)
 
-    assert isinstance(ket_qua, str)
-    assert ket_qua.strip()
+    assert isinstance(result, str)
+    assert result.strip()
 
 
-def test_khong_loi_khi_thieu_metadata():
-    """LangGraph có thể gọi mà không kèm metadata nào."""
+def test_no_error_without_metadata():
+    """LangGraph may call the tool without any metadata."""
     assert system_info.invoke({}).strip()
 
 
 # --------------------------------------------------------------------------
-# system_info phải khai đúng model ĐANG chạy
+# system_info must report the model that is ACTUALLY running
 # --------------------------------------------------------------------------
 
 
-def test_bao_dung_model_cua_luot_nay():
-    """Người dùng chọn model riêng cho một lượt thì công cụ phải khai đúng nó.
+def test_reports_the_model_of_this_turn():
+    """When the user picks a model for a single turn, the tool must report it.
 
-    Đọc cấu hình chung thì trợ lý tự khai sai về chính nó ngay sau khi người
-    dùng đổi model trên giao diện.
+    Reading the global configuration would make the assistant misreport itself
+    right after the user switched models in the UI.
     """
-    ket_qua = goi(
+    result = call(
         system_info,
         {"llm_provider": "google", "llm_model": "gemini-2.5-flash"},
     )
 
-    assert "google / gemini-2.5-flash" in ket_qua
+    assert "google / gemini-2.5-flash" in result
 
 
-def test_thieu_lua_chon_thi_lay_cau_hinh_chung():
+def test_falls_back_to_global_config_without_selection():
     from app.core.config import get_settings
 
     cfg = get_settings()
-    ket_qua = goi(system_info)
+    result = call(system_info)
 
-    assert f"{cfg.LLM_PROVIDER} / {cfg.llm_model_name()}" in ket_qua
+    assert f"{cfg.llm_default_provider()} / {cfg.llm_model_name()}" in result
 
 
-def test_co_du_thong_tin_van_hanh():
-    """Công cụ này tồn tại để trả lời 'hệ thống đang ở chế độ nào'."""
-    ket_qua = goi(system_info)
+def test_includes_operational_info():
+    """This tool exists to answer 'which mode is the system in'."""
+    result = call(system_info)
 
-    for phan in ("Mô hình AI:", "Chế độ thực thi:", "Namespace được phép:"):
-        assert phan in ket_qua
+    for part in ("AI model:", "Execution mode:", "Allowed namespaces:"):
+        assert part in result
 
 
 # --------------------------------------------------------------------------
-# Tham số `config` không được lộ ra cho mô hình
+# The `config` parameter must not be exposed to the model
 # --------------------------------------------------------------------------
 
 
-def test_mo_hinh_khong_nhin_thay_tham_so_config():
-    """`config` do LangChain tiêm vào, không phải thứ mô hình điền.
+def test_model_does_not_see_config_parameter():
+    """`config` is injected by LangChain, not something the model fills in.
 
-    Lọt vào schema thì mô hình sẽ cố sinh ra một object RunnableConfig — vừa
-    tốn token vừa dễ gọi sai.
+    If it leaked into the schema, the model would try to generate a
+    RunnableConfig object — wasting tokens and inviting bad calls.
     """
-    truong = system_info.args_schema.model_json_schema().get("properties", {})
+    fields = system_info.args_schema.model_json_schema().get("properties", {})
 
-    assert "config" not in truong
+    assert "config" not in fields
 
 
-@pytest.mark.parametrize("cong_cu", CHAT_TOOLS, ids=lambda t: t.name)
-def test_co_mo_ta_cho_mo_hinh_doc(cong_cu):
-    """Mô tả là thứ mô hình dựa vào để quyết định gọi hay không."""
-    assert (cong_cu.description or "").strip()
+@pytest.mark.parametrize("tool", CHAT_TOOLS, ids=lambda t: t.name)
+def test_has_description_for_the_model(tool):
+    """The description is what the model relies on to decide whether to call."""
+    assert (tool.description or "").strip()
 
 
 # --------------------------------------------------------------------------
-# Ranh giới an toàn
+# Safety boundaries
 # --------------------------------------------------------------------------
 
 
-def test_khong_cong_cu_nao_nhan_chuoi_lenh_tho():
-    """Không được có công cụ kiểu `run_kubectl(cmd)`.
+def test_no_tool_accepts_raw_command_strings():
+    """There must be no tool like `run_kubectl(cmd)`.
 
-    Tham số phải là trường rời rạc để kiểm tra được trước khi chạy. Nhận chuỗi
-    lệnh thô là mở đường cho mô hình tự chế lệnh tuỳ ý.
+    Parameters must be discrete fields so they can be checked before running.
+    Accepting raw command strings opens the door to the model inventing
+    arbitrary commands.
     """
-    ngo_vuc = {"cmd", "command", "shell", "script", "kubectl", "query_raw"}
+    forbidden = {"cmd", "command", "shell", "script", "kubectl", "query_raw"}
 
-    for cong_cu in CHAT_TOOLS:
-        truong = set(cong_cu.args_schema.model_json_schema().get("properties", {}))
-        assert not (truong & ngo_vuc), f"{cong_cu.name} nhận tham số nguy hiểm: {truong}"
+    for tool in CHAT_TOOLS:
+        fields = set(tool.args_schema.model_json_schema().get("properties", {}))
+        assert not (fields & forbidden), f"{tool.name} accepts dangerous parameters: {fields}"
 
 
-def test_get_tools_tra_ban_sao():
-    """Nơi gọi thêm/bớt công cụ không được làm hỏng danh sách gốc."""
-    ds = get_tools()
-    ds.clear()
+def test_get_tools_returns_a_copy():
+    """Callers adding/removing tools must not corrupt the original list."""
+    tools = get_tools()
+    tools.clear()
 
     assert len(get_tools()) == len(CHAT_TOOLS) > 0
 
 
-def test_current_time_tra_ve_gio_utc():
-    assert "UTC" in goi(current_time)
+def test_current_time_returns_utc():
+    assert "UTC" in call(current_time)

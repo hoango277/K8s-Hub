@@ -1,1 +1,1 @@
-// Fetch catalog skill + chay skill. TODO
+// Fetch the skill catalog + run a skill. TODO

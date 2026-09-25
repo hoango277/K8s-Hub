@@ -1,4 +1,4 @@
-// Bieu do token / cost / latency theo thoi gian. TODO
+// Token / cost / latency charts over time. TODO
 export function UsageChart() {
   return null;
 }

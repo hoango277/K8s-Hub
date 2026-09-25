@@ -1,18 +1,18 @@
 /**
- * Khoá cache của TanStack Query, gom về một chỗ.
+ * TanStack Query cache keys, gathered in one place.
  *
- * Gõ tay chuỗi khoá ở mỗi nơi là cách nhanh nhất để có bug "sửa xong mà màn
- * hình không đổi": chỗ ghi dùng `["threads"]`, chỗ đọc dùng `["thread"]`, và
- * lệnh làm mới không khớp vào đâu cả.
+ * Typing key strings by hand at each call site is the fastest way to get the
+ * "I fixed it but the screen didn't change" bug: the writer uses `["threads"]`,
+ * the reader uses `["thread"]`, and the invalidation matches nothing.
  *
- * Khoá xếp theo thứ tự từ rộng đến hẹp, nên `invalidateQueries({queryKey:
- * qk.threads.all})` sẽ làm mới cả danh sách lẫn từng hội thoại con.
+ * Keys are ordered from broad to narrow, so `invalidateQueries({queryKey:
+ * qk.threads.all})` refreshes both the list and each individual thread.
  */
 
 export const qk = {
   threads: {
     all: ["threads"] as const,
-    /** Mọi danh sách, bất kể có kèm hội thoại đã lưu trữ hay không. */
+    /** Every list, whether or not it includes archived threads. */
     lists: ["threads", "list"] as const,
     list: (includeArchived = false) => ["threads", "list", includeArchived] as const,
     detail: (id: string) => ["threads", "detail", id] as const,
@@ -23,4 +23,10 @@ export const qk = {
     models: (provider: string) => ["chat", "models", provider] as const,
   },
   settings: ["settings"] as const,
+  auth: {
+    me: ["auth", "me"] as const,
+  },
+  users: {
+    all: ["users"] as const,
+  },
 } as const;

@@ -1,30 +1,32 @@
-"""Các endpoint của khung trò chuyện.
+"""Chat endpoints.
 
-    POST   /chat/threads                  tạo hội thoại
-    GET    /chat/threads                  danh sách hội thoại
-    GET    /chat/threads/{id}             hội thoại kèm toàn bộ lịch sử
-    PATCH  /chat/threads/{id}             đổi tiêu đề / lưu trữ
-    DELETE /chat/threads/{id}             xoá hẳn
-    GET    /chat/threads/{id}/messages    chỉ lịch sử tin nhắn
-    POST   /chat/threads/{id}/stream      gửi câu hỏi, nhận trả lời theo luồng
-    GET    /chat/providers                nhà cung cấp LLM + đã có khoá chưa
-    GET    /chat/models                   model dùng được, hỏi thẳng nhà cung cấp
-    GET    /chat/tools                    công cụ trợ lý đang có
+    POST   /chat/threads                  create a conversation
+    GET    /chat/threads                  list conversations
+    GET    /chat/threads/{id}             a conversation with its full history
+    PATCH  /chat/threads/{id}             rename / archive
+    DELETE /chat/threads/{id}             delete permanently
+    GET    /chat/threads/{id}/messages    message history only
+    POST   /chat/threads/{id}/stream      send a question, receive a streamed answer
+    GET    /chat/providers                LLM providers + whether their key is set
+    GET    /chat/models                   usable models, asked straight from the provider
+    GET    /chat/tools                    the assistant's current tools
 
-VỀ ENDPOINT STREAM — ba điểm dễ sai:
+ABOUT THE STREAM ENDPOINT — three easy mistakes:
 
-  1. Việc chuẩn bị (kiểm tra quyền, ghi câu hỏi) làm XONG và COMMIT trước khi
-     mở luồng. Luồng đã mở rồi thì không đổi được mã HTTP nữa: hội thoại không
-     tồn tại mà phát hiện muộn thì client nhận 200 kèm một sự kiện lỗi, thay vì
-     404 rõ ràng.
+  1. All preparation (permission check, storing the question) is DONE and
+     COMMITTED before the stream opens. Once the stream is open the HTTP status
+     can no longer change: discovering late that the conversation does not
+     exist would give the client a 200 with an error event instead of a clean
+     404.
 
-  2. Phần chạy trong luồng dùng PHIÊN CSDL RIÊNG, không dùng phiên của request.
-     Phiên của request giữ một kết nối trong bộ gộp cho tới khi response kết
-     thúc — mà response ở đây có thể kéo dài hàng phút. Với Supabase (bộ gộp
-     chỉ cho vài kết nối) thì giữ như vậy là làm nghẽn cả hệ thống.
+  2. The streaming part uses its OWN database session, not the request's. The
+     request session holds a pooled connection until the response ends — and
+     this response can last minutes. With Supabase (a pooler with only a few
+     connections) that would choke the whole system.
 
-  3. Người dùng đóng tab giữa chừng thì phần trợ lý đã nói vẫn được lưu. Mở lại
-     hội thoại phải thấy đúng những gì đã xảy ra, kể cả khi nó dở dang.
+  3. If the user closes the tab mid-answer, what the assistant already said is
+     still saved. Reopening the conversation must show exactly what happened,
+     even if it was cut short.
 """
 
 from __future__ import annotations
@@ -52,6 +54,8 @@ from app.modules.nl_command.agent import (
     history_to_messages,
 )
 from app.modules.nl_command.tools import CHAT_TOOLS
+from app.modules.observability.langfuse_client import get_callback_handler
+from app.modules.observability.tracing import new_trace_id
 from app.schemas.chat import (
     ChatRequest,
     MessageOut,
@@ -67,31 +71,31 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Nhịp giữ kết nối. Không có nó, proxy đứng giữa sẽ cắt kết nối đang rảnh —
-# mà "rảnh" là chuyện bình thường khi trợ lý đang chờ một công cụ chạy xong.
-# sse-starlette gửi dạng dòng chú thích, client tự bỏ qua, không lẫn vào dữ liệu.
+# Keep-alive interval. Without it, an intermediate proxy cuts idle connections —
+# and being "idle" is normal while the assistant waits for a tool to finish.
+# sse-starlette sends it as a comment line that clients ignore.
 PING_SECONDS = 15
 
-# Các tác vụ ghi kết quả đang chạy ở nền.
+# Result-saving tasks running in the background.
 #
-# asyncio chỉ giữ tham chiếu YẾU tới task, nên không cất vào đây thì trình dọn
-# rác có thể thu một task đang ghi dở và bản ghi kẹt lại vĩnh viễn ở trạng thái
-# "streaming".
-_dang_ghi: set[asyncio.Task[None]] = set()
+# asyncio only keeps WEAK references to tasks, so without this set the garbage
+# collector could reclaim a task halfway through saving and the record would be
+# stuck in the "streaming" state forever.
+_pending_saves: set[asyncio.Task[None]] = set()
 
 
 # --------------------------------------------------------------------------
-# Hội thoại
+# Conversations
 # --------------------------------------------------------------------------
 
 
 async def _thread_or_404(db: Any, user: Any, thread_id: uuid.UUID) -> ChatThread:
     thread = await svc.get_thread(db, user, thread_id)
     if thread is None:
-        # Cố tình không phân biệt "không có" với "của người khác" — trả lời
-        # khác nhau là đã lộ ra hội thoại đó có tồn tại.
+        # Deliberately no distinction between "does not exist" and "belongs to
+        # someone else" — answering differently would reveal that it exists.
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy hội thoại"
+            status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found"
         )
     return thread
 
@@ -101,11 +105,12 @@ async def create_thread(payload: ThreadCreate, db: DbSession, user: CurrentUser)
     thread = await svc.create_thread(
         db, user, title=payload.title, cluster=payload.cluster
     )
-    # Chốt NGAY, đừng đợi `get_session` chốt hộ lúc dọn dẹp.
+    # Commit NOW; do not wait for `get_session` to commit during teardown.
     #
-    # Từ FastAPI 0.106, phần sau `yield` của dependency chạy SAU khi response đã
-    # gửi đi. Nghĩa là client nhận 201 rồi mà giao dịch vẫn chưa chốt — giao diện
-    # lập tức gọi tiếp lên hội thoại vừa tạo thì gặp 404. Đã tái hiện được.
+    # Since FastAPI 0.106 the code after a dependency's `yield` runs AFTER the
+    # response has been sent. So the client gets its 201 while the transaction
+    # is still uncommitted — and the UI immediately calling the new
+    # conversation gets a 404. Reproduced.
     await db.commit()
     return thread
 
@@ -114,7 +119,7 @@ async def create_thread(payload: ThreadCreate, db: DbSession, user: CurrentUser)
 async def list_threads(
     db: DbSession,
     user: CurrentUser,
-    include_archived: bool = Query(False, description="Kèm cả hội thoại đã lưu trữ"),
+    include_archived: bool = Query(False, description="Include archived conversations"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> Any:
@@ -141,7 +146,7 @@ async def update_thread(
     thread = await svc.update_thread(
         db, thread, title=payload.title, archived=payload.archived
     )
-    await db.commit()  # xem chú thích ở create_thread
+    await db.commit()  # see the note in create_thread
     return thread
 
 
@@ -151,7 +156,7 @@ async def delete_thread(
 ) -> Response:
     thread = await _thread_or_404(db, user, thread_id)
     await svc.delete_thread(db, thread)
-    await db.commit()  # xem chú thích ở create_thread
+    await db.commit()  # see the note in create_thread
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -165,28 +170,27 @@ async def list_messages(
 
 @router.get("/providers")
 async def list_providers() -> dict[str, Any]:
-    """Nhà cung cấp đang khai báo, kèm việc đã điền khoá API hay chưa.
+    """Declared providers, and whether their API key is set.
 
-    Giao diện dùng để hiện ô chọn và cảnh báo sớm: chọn nhà cung cấp chưa có
-    khoá thì báo ngay, thay vì để người dùng gõ xong câu hỏi rồi mới nhận lỗi.
+    The UI uses this to fill the picker and warn early: choosing a provider
+    without a key is flagged right away instead of after the user has typed a
+    question.
     """
     config = get_settings()
 
-    ra = []
-    for ten in sorted(config.LLM_PROVIDERS):
-        spec = config.llm_provider(ten)
-        ra.append(
+    providers = []
+    for name in sorted(config.LLM_PROVIDERS):
+        spec = config.llm_provider(name)
+        providers.append(
             {
-                "name": ten,
+                "name": name,
                 "api_key_set": bool(
                     str(getattr(config, spec.api_key_field, "") or "").strip()
                 ),
                 "api_key_field": spec.api_key_field,
                 "supports_tool_calling": spec.supports_tool_calling,
-                # Model riêng của nhà cung cấp này, KHÔNG dùng llm_model_name():
-                # hàm đó ưu tiên LLM_MODEL trong .env, nên sẽ trả về cùng một
-                # tên cho cả ba nhà cung cấp. Đổi sang Google mà giao diện lại
-                # chọn sẵn một model của Groq thì gửi đi là lỗi ngay.
+                # THIS provider's own default model — switching to Google with a
+                # Groq model still selected would fail on send.
                 "default_model": spec.model,
                 "fast_model": spec.fast_model,
                 "notes": spec.notes,
@@ -194,10 +198,10 @@ async def list_providers() -> dict[str, Any]:
         )
 
     return {
-        "providers": ra,
-        # Lựa chọn mặc định khi người dùng chưa chọn gì.
+        "providers": providers,
+        # Default selection when the user has not picked anything.
         "current": {
-            "provider": config.LLM_PROVIDER,
+            "provider": config.llm_default_provider(),
             "model": config.llm_model_name(),
         },
     }
@@ -205,29 +209,29 @@ async def list_providers() -> dict[str, Any]:
 
 @router.get("/models", response_model=ModelCatalog)
 async def list_models(
-    provider: str | None = Query(None, description="Bỏ trống thì lấy nhà cung cấp đang đặt"),
-    refresh: bool = Query(False, description="Bỏ qua bộ nhớ đệm, hỏi lại nhà cung cấp"),
+    provider: str | None = Query(None, description="Leave empty for the default provider"),
+    refresh: bool = Query(False, description="Bypass the cache and ask the provider again"),
 ) -> Any:
-    """Danh sách model dùng được, hỏi thẳng nhà cung cấp.
+    """Usable models, asked straight from the provider.
 
-    Không bao giờ trả lỗi: gọi API hỏng thì rơi về model khai trong cấu hình và
-    ghi lý do vào trường `error` để giao diện hiện cho người dùng biết.
+    Never fails: when the API call breaks it falls back to the models declared
+    in the provider spec and puts the reason in `error` for the UI to show.
     """
     config = get_settings()
-    ten = provider or config.LLM_PROVIDER
+    name = provider or config.llm_default_provider()
     try:
-        config.llm_provider(ten)
+        config.llm_provider(name)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
 
-    return await catalog_models(ten, refresh=refresh)
+    return await catalog_models(name, refresh=refresh)
 
 
 @router.get("/tools")
 async def list_tools() -> dict[str, Any]:
-    """Công cụ trợ lý đang có, để giao diện hiển thị cho người dùng biết."""
+    """The assistant's current tools, for the UI to show."""
     return {
         "tools": [
             {
@@ -240,7 +244,7 @@ async def list_tools() -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------
-# Trả lời theo luồng
+# Streamed answers
 # --------------------------------------------------------------------------
 
 
@@ -252,55 +256,63 @@ async def stream_reply(
     db: DbSession,
     user: CurrentUser,
 ) -> EventSourceResponse:
-    """Gửi một câu hỏi và nhận câu trả lời theo luồng (SSE).
+    """Send a question and receive the answer as a stream (SSE).
 
-    Client đọc bằng `fetch` + ReadableStream chứ không dùng `EventSource`, vì
-    `EventSource` chỉ gửi được GET nên không mang theo nội dung câu hỏi.
+    The client reads it with `fetch` + ReadableStream, not `EventSource`,
+    because `EventSource` can only send GET and cannot carry the question body.
     """
     config = get_settings()
     thread = await _thread_or_404(db, user, thread_id)
 
-    # Kiểm tra nhà cung cấp trước khi ghi gì — sai tên thì trả 400 luôn.
-    ten_provider = payload.provider or config.LLM_PROVIDER
+    # Validate the provider before writing anything — a bad name returns 400.
+    provider_name = payload.provider or config.llm_default_provider()
     try:
-        config.llm_provider(ten_provider)
+        config.llm_provider(provider_name)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
 
-    ten_model = payload.model or config.llm_model_name(provider=ten_provider)
-    trace_id = uuid.uuid4().hex
+    model_name = payload.model or config.llm_model_name(provider=provider_name)
+
+    # Generate the trace id FIRST, then force Langfuse to use it (see
+    # tracing.py). That way the id in the `messages` table always equals the id
+    # in Langfuse — required for `impact.py` to join traces with the audit log.
+    trace_id = new_trace_id()
 
     await svc.add_user_message(db, thread, payload.content)
     assistant = await svc.start_assistant_message(
-        db, thread, provider=ten_provider, model=ten_model, trace_id=trace_id
+        db, thread, provider=provider_name, model=model_name, trace_id=trace_id
     )
-    lich_su = await svc.list_messages(db, thread.id, limit=svc.HISTORY_LIMIT)
+    history = await svc.list_messages(db, thread.id, limit=svc.HISTORY_LIMIT)
 
-    # Chốt trước khi mở luồng: trả kết nối về bộ gộp, và câu hỏi không bị mất
-    # nếu người dùng đóng tab ngay sau khi bấm gửi.
+    # Commit before opening the stream: returns the connection to the pool, and
+    # the question is not lost if the user closes the tab right after sending.
     await db.commit()
 
     assistant_id = assistant.id
-    messages = history_to_messages(lich_su)
+    messages = history_to_messages(history)
 
-    async def phat_su_kien() -> AsyncIterator[dict[str, str]]:
+    async def emit_events() -> AsyncIterator[dict[str, str]]:
         stream = EventStream()
         collector = StreamCollector()
-        bat_dau = time.perf_counter()
-        bi_huy = False
+        started = time.perf_counter()
+        cancelled = False
+
+        # With Langfuse disabled this list is empty and the graph runs as usual.
+        handler = get_callback_handler(trace_id=trace_id)
+        callbacks = [handler] if handler is not None else []
 
         try:
             graph = build_chat_graph(provider=payload.provider, model=payload.model)
         except Exception as exc:
-            # Thiếu khoá API, chưa cài gói của nhà cung cấp… Luồng đã mở nên
-            # chỉ còn cách báo bằng sự kiện.
-            logger.exception("Không dựng được trợ lý")
+            # Missing API key, provider package not installed… The stream is
+            # already open, so the only way to report it is an event.
+            logger.exception("Could not build the assistant")
             yield stream.emit(
                 ErrorEvent(code="llm_config", message=str(exc), retryable=False)
             )
-            await _ghi_ket_qua(
+            await _save_result(
                 assistant_id, collector, latency_ms=0, error=str(exc)
             )
             yield stream.emit(DoneEvent(message_id=str(assistant_id), trace_id=trace_id))
@@ -315,83 +327,84 @@ async def stream_reply(
                 config={
                     "recursion_limit": RECURSION_LIMIT,
                     "run_id": uuid.UUID(trace_id),
+                    "callbacks": callbacks,
                     "metadata": {
                         "thread_id": str(thread_id),
                         "message_id": str(assistant_id),
                         "user": user.email,
-                        # Công cụ đọc hai giá trị này để tự khai đúng nhà cung
-                        # cấp và model ĐANG chạy, thay vì cấu hình chung.
-                        "llm_provider": ten_provider,
-                        "llm_model": ten_model,
+                        # Tools read these two values to report the provider and
+                        # model ACTUALLY running, not the global configuration.
+                        "llm_provider": provider_name,
+                        "llm_model": model_name,
                     },
                 },
             ):
-                # Client đã bỏ đi thì dừng sớm, đừng tốn thêm tiền gọi model.
+                # The client left: stop early, do not keep paying for the model.
                 if await request.is_disconnected():
-                    bi_huy = True
+                    cancelled = True
                     break
                 yield frame
 
         except asyncio.CancelledError:
-            bi_huy = True
+            cancelled = True
             raise
 
         finally:
-            # Chạy cả khi bị huỷ: phần trợ lý đã nói vẫn phải được lưu.
+            # Runs even when cancelled: what the assistant said must be saved.
             #
-            # Việc ghi phải nằm trong một task RIÊNG và được `shield` che lại.
-            # Lý do: khi người dùng đóng tab, sse-starlette huỷ chính task đang
-            # chạy hàm này. Cứ `await` thẳng thì lệnh ghi bị huỷ ngay ở điểm
-            # chờ đầu tiên — kết nối CSDL bị cắt giữa chừng và bản ghi nằm mãi
-            # ở trạng thái "streaming", trái đúng điều ghi ở đầu file này.
-            # Task riêng không nằm trong phạm vi huỷ của sse-starlette nên nó
-            # chạy tiếp tới khi ghi xong.
-            ghi = asyncio.create_task(
-                _ghi_ket_qua(
+            # The save MUST run in its OWN task, protected by `shield`. When the
+            # user closes the tab, sse-starlette cancels the very task running
+            # this function. Awaiting the save directly would cancel it at its
+            # first await — the DB connection is cut mid-write and the record
+            # stays "streaming" forever, contradicting point 3 above. A separate
+            # task is outside sse-starlette's cancel scope, so it finishes.
+            save = asyncio.create_task(
+                _save_result(
                     assistant_id,
                     collector,
-                    latency_ms=int((time.perf_counter() - bat_dau) * 1000),
+                    latency_ms=int((time.perf_counter() - started) * 1000),
                     error=collector.error
-                    or ("Người dùng dừng giữa chừng" if bi_huy else None),
+                    or ("Stopped by the user" if cancelled else None),
                 )
             )
-            _dang_ghi.add(ghi)
-            ghi.add_done_callback(_dang_ghi.discard)
+            _pending_saves.add(save)
+            save.add_done_callback(_pending_saves.discard)
 
-            # Luồng chạy trọn vẹn thì vẫn chờ ghi xong TRƯỚC khi phát `done`:
-            # client nạp lại hội thoại ngay khi nhận `done`, chờ ở đây mới bảo
-            # đảm nó đọc được bản đã chốt chứ không phải bản dở dang.
-            # Bị huỷ thì `shield` để việc ghi chạy nốt ở nền, còn lệnh huỷ vẫn
-            # lan ra bình thường.
-            await asyncio.shield(ghi)
+            # On a complete run, still wait for the save BEFORE emitting `done`:
+            # the client reloads the conversation as soon as it sees `done`, and
+            # waiting here guarantees it reads the final record, not a partial
+            # one. When cancelled, `shield` lets the save finish in the
+            # background while the cancellation propagates normally.
+            await asyncio.shield(save)
 
         yield stream.emit(DoneEvent(message_id=str(assistant_id), trace_id=trace_id))
 
-    return EventSourceResponse(phat_su_kien(), ping=PING_SECONDS)
+    return EventSourceResponse(emit_events(), ping=PING_SECONDS)
 
 
-async def _ghi_ket_qua(
+async def _save_result(
     message_id: uuid.UUID,
     collector: StreamCollector,
     *,
     latency_ms: int,
     error: str | None,
 ) -> None:
-    """Lưu kết quả bằng một phiên CSDL riêng.
+    """Save the result with a separate database session.
 
-    Không dùng phiên của request: tới lúc này nó có thể đã bị đóng, và giữ nó
-    mở suốt luồng thì chiếm mất kết nối trong bộ gộp.
+    Not the request's session: by now it may already be closed, and holding it
+    open for the whole stream would occupy a pooled connection.
 
-    Lỗi khi ghi được nuốt lại và chỉ ghi log — luồng SSE đã gần xong, ném lỗi
-    ở đây chỉ làm người dùng mất luôn câu trả lời vừa đọc trên màn hình.
+    Errors while saving are swallowed and only logged — the SSE stream is almost
+    done, and raising here would only make the user lose the answer they just
+    read on screen.
     """
-    from app.db.models.message import Message  # tránh vòng import lúc khởi động
+    from app.db.models.message import Message  # avoids an import cycle at startup
 
     try:
         async with get_sessionmaker()() as db:
             message = await db.get(Message, message_id)
             if message is None:
-                logger.warning("Không thấy tin nhắn %s để ghi kết quả", message_id)
+                logger.warning("Message %s not found when saving the result", message_id)
                 return
             await svc.finish_assistant_message(
                 db,
@@ -406,4 +419,4 @@ async def _ghi_ket_qua(
             )
             await db.commit()
     except Exception:
-        logger.exception("Không ghi được kết quả cho tin nhắn %s", message_id)
+        logger.exception("Could not save the result for message %s", message_id)

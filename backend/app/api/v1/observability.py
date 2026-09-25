@@ -1,10 +1,10 @@
-"""Observability cua chinh he thong (Langfuse) + metrics cum.
+"""Observability of the system itself (Langfuse) + cluster metrics.
 
 TODO:
-  GET /observability/traces               - proxy list trace tu Langfuse
-  GET /observability/traces/{id}          - chi tiet trace cua 1 message
+  GET /observability/traces               - proxy the trace list from Langfuse
+  GET /observability/traces/{id}          - trace details for one message
   GET /observability/metrics/usage        - token / cost / latency
-  GET /observability/metrics/cluster      - proxy query Prometheus
+  GET /observability/metrics/cluster      - proxy Prometheus queries
 """
 
 from fastapi import APIRouter

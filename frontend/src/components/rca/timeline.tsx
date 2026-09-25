@@ -1,4 +1,4 @@
-// Timeline su kien: deploy, event, alert, log spike. TODO
+// Event timeline: deploys, events, alerts, log spikes. TODO
 export function RcaTimeline() {
   return null;
 }

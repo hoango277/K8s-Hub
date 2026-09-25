@@ -1,1 +1,1 @@
-// Poll hang doi approval + mutation approve/reject. TODO
+// Poll the approval queue + approve/reject mutations. TODO

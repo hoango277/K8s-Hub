@@ -1,1 +1,1 @@
-"""Cau hinh background queue (Dramatiq/Arq + Redis). TODO."""
+"""Background queue configuration (Dramatiq/Arq + Redis). TODO."""

@@ -1,1 +1,1 @@
-"""Builtin skill: chan doan nhanh 1 workload. TODO."""
+"""Builtin skill: quick diagnosis of a single workload. TODO."""

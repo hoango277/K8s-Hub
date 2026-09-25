@@ -1,1 +1,1 @@
-"""Thuc thi action da duoc duyet + ghi audit. TODO."""
+"""Execute approved actions + write the audit log. TODO."""

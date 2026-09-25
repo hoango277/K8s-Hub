@@ -1,1 +1,1 @@
-"""Metric noi bo: latency, token, cost, approval rate. TODO."""
+"""Internal metrics: latency, tokens, cost, approval rate. TODO."""

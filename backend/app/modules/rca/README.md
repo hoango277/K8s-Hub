@@ -2,12 +2,12 @@
 
 Pipeline: `trigger -> collect evidence -> correlate -> hypothesize -> rank -> report`
 
-| File | Trach nhiem |
+| File | Responsibility |
 |---|---|
-| `agent.py` | LangGraph graph dieu phoi RCA |
-| `triggers.py` | Nguon kich hoat: user request / alert webhook / scheduled |
-| `collectors/` | Thu thap evidence tu K8s, Prometheus, Loki |
-| `analyzers/` | Detector theo trieu chung (CrashLoop, OOM, ImagePull...) |
-| `correlator.py` | Ghep evidence theo timeline, tim thay doi gan nhat |
-| `hypothesis.py` | LLM sinh + xep hang gia thuyet nguyen nhan |
-| `reporter.py` | Dung report cuoi: timeline + evidence + de xuat fix |
+| `agent.py` | LangGraph graph orchestrating RCA |
+| `triggers.py` | Trigger sources: user request / alert webhook / scheduled |
+| `collectors/` | Collect evidence from K8s, Prometheus, Loki |
+| `analyzers/` | Symptom-based detectors (CrashLoop, OOM, ImagePull...) |
+| `correlator.py` | Align evidence on a timeline, find the most recent change |
+| `hypothesis.py` | LLM generates + ranks root-cause hypotheses |
+| `reporter.py` | Build the final report: timeline + evidence + suggested fix |

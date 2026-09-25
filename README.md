@@ -23,35 +23,40 @@ B và C dùng chung công cụ nhưng ngược chiều: B **đọc** cụm của
 
 ## Stack
 
-**Backend** — FastAPI · LangGraph · Anthropic Claude · MCP · PostgreSQL + pgvector · Redis · kubernetes-asyncio · Langfuse
+**Backend** — FastAPI · LangGraph · Groq + Google Gemini · MCP · PostgreSQL + pgvector · Redis · kubernetes-asyncio · Langfuse
 
 **Frontend** — Next.js 15 · TypeScript · Tailwind v4 · shadcn/ui · assistant-ui · TanStack Query · Zustand
 
 ## Chạy local
 
+Hạ tầng (PostgreSQL, Redis, Langfuse, Prometheus, Loki) chạy sẵn trên cụm
+Kubernetes `lab1`, không dựng bằng Docker ở máy phát triển. Chỉ cần trỏ đúng địa
+chỉ trong `backend/.env` — xem `backend/.env.example` để biết những khoá cần điền.
+
 ```bash
-# 1. Hạ tầng
-docker compose -f deploy/local/docker-compose.yml up -d
-
-# 2. Backend
+# 1. Backend
 cd backend
-uv venv --python 3.12 && source .venv/Scripts/activate
-uv pip install -e ".[dev]"
-cp .env.example .env
-uvicorn app.main:app --reload
+python -m venv .venv && source .venv/Scripts/activate   # Windows Git Bash
+pip install -r requirements-dev.txt
+cp .env.example .env            # rồi sửa DATABASE_URL, khoá LLM, LANGFUSE_*
+alembic upgrade head
+PYTHONUTF8=1 uvicorn app.main:app --reload
 
-# 3. Frontend
+# 2. Frontend
 cd frontend
 npm install
 cp .env.local.example .env.local
 npm run dev
 ```
 
+`PYTHONUTF8=1` là bắt buộc trên Windows: console dùng cp1252 nên log tiếng Việt
+sẽ ném `UnicodeEncodeError` và che mất lỗi thật.
+
 | Service | URL |
 |---|---|
 | Frontend | http://localhost:3000 |
 | Backend docs | http://localhost:8000/docs |
-| Langfuse | http://localhost:3001 |
+| Langfuse, Prometheus, Loki | trên cụm `lab1`, địa chỉ đặt trong `backend/.env` |
 
 ## Nguyên tắc an toàn
 

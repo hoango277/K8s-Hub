@@ -1,5 +1,5 @@
-# Công cụ phát triển và kiểm thử.
-# Tương ứng [project.optional-dependencies].dev trong pyproject.toml.
+# Development and test tools.
+# Mirrors [project.optional-dependencies].dev in pyproject.toml.
 #
 #     pip install -r requirements-dev.txt
 

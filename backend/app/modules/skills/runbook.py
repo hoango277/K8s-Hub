@@ -1,1 +1,1 @@
-"""Runbook engine: skill nhieu buoc, retry, rollback, checkpoint. TODO."""
+"""Runbook engine: multi-step skills, retry, rollback, checkpoint. TODO."""

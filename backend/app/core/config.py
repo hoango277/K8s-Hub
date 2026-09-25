@@ -1,65 +1,67 @@
-"""Cấu hình ứng dụng — nguồn duy nhất cho toàn hệ thống.
+"""Application configuration — the single source of truth for the whole system.
 
-Hai tầng chồng lên nhau:
+Two layers stacked on top of each other:
 
-    .env  (CỨNG, đọc một lần lúc khởi động)
+    .env  (STATIC, read once at startup)
       +
-    phần người dùng đổi trên giao diện web  (NÓNG, đổi lúc chạy)
+    what the user changes in the web UI  (LIVE, changed at runtime)
       =
-    cấu hình đang có hiệu lực  ->  mọi module khác
+    effective configuration  ->  every other module
 
-  - `.env` giữ thứ không đổi lúc chạy: chuỗi kết nối CSDL, khoá JWT, môi trường.
-    Sửa file này KHÔNG tự động có hiệu lực — phải gọi `reload_from_env()`.
-  - Giao diện web đổi những trường trong `RUNTIME_EDITABLE` qua `apply_overrides()`.
-    Giá trị được kiểm tra trước khi áp; sai thì giữ nguyên cấu hình cũ.
-  - `config.py` là lớp cấu hình DUY NHẤT. Không module nào được đọc os.environ
-    hay file cấu hình riêng — tất cả đi qua đây.
+  - `.env` holds what does not change at runtime: database URL, JWT secret,
+    environment. Editing the file does NOT take effect automatically — call
+    `reload_from_env()`.
+  - The web UI changes the fields in `RUNTIME_EDITABLE` via `apply_overrides()`.
+    Values are validated before being applied; invalid input leaves the running
+    configuration untouched.
+  - `config.py` is the ONLY configuration layer. No module may read os.environ
+    or its own config file — everything goes through here.
 
-Dùng:
+Usage:
 
     from app.core.config import settings
-    print(settings.LLM_PROVIDER)     # luôn là giá trị mới nhất
+    print(settings.LLM_TEMPERATURE)  # always the latest value
 
-Module nào nhớ sẵn thứ dựng từ cấu hình thì đăng ký `on_reload()` để dọn đệm
-mỗi khi cấu hình đổi.
+Modules that cache something built from the configuration register an
+`on_reload()` callback to clear that cache whenever the configuration changes.
 """
 
 from __future__ import annotations
 
-import json
 import threading
 from collections.abc import Callable
-from typing import Annotated, Any, Literal, Protocol, get_args, get_origin
+from typing import Any, Literal, Protocol, get_args, get_origin
 
-from pydantic import BaseModel, Field, field_validator
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ---------------------------------------------------------------------------
-# Đặc tả nhà cung cấp LLM
+# LLM provider specs
 # ---------------------------------------------------------------------------
 
 
 class ProviderConfig(BaseModel):
-    """Mọi thứ cần biết để dựng một model của một nhà cung cấp.
+    """Everything needed to build a chat model for one provider.
 
-    `param_map` là chỗ hấp thụ khác biệt giữa các nhà cung cấp: khoá là tên
-    tham số chuẩn của hệ thống, giá trị là tên tham số thật của class đó.
-    Ví dụ Gemini gọi `max_tokens` là `max_output_tokens`.
+    `param_map` absorbs the differences between providers: keys are the
+    system's canonical parameter names, values are that class's real parameter
+    names. For example, Gemini calls `max_tokens` `max_output_tokens`.
     """
 
-    package: str = Field(description="Tên gói pip, dùng để gợi ý khi chưa cài")
-    module: str = Field(description="Đường dẫn import, ví dụ langchain_groq")
-    class_name: str = Field(description="Tên class trong module đó")
-    api_key_field: str = Field(description="Tên field khoá API trong Settings")
+    package: str = Field(description="pip package name, used in the 'not installed' hint")
+    module: str = Field(description="Import path, e.g. langchain_groq")
+    class_name: str = Field(description="Class name inside that module")
+    api_key_field: str = Field(description="Name of the API key field in Settings")
 
-    model: str = Field(description="Model chính")
-    fast_model: str = Field(default="", description="Model rẻ cho việc nhẹ")
+    model: str = Field(description="Default model")
+    fast_model: str = Field(default="", description="Cheap model for light work")
 
     param_map: dict[str, str] = Field(
-        description="tên chuẩn -> tên thật của nhà cung cấp",
+        description="canonical name -> the provider's real parameter name",
     )
     extra: dict[str, Any] = Field(
-        default_factory=dict, description="Tham số riêng, truyền thẳng vào constructor"
+        default_factory=dict,
+        description="Provider-specific arguments passed straight to the constructor",
     )
 
     supports_tool_calling: bool = True
@@ -67,27 +69,26 @@ class ProviderConfig(BaseModel):
     supports_structured_output: bool = True
     notes: str = ""
 
-    # --- Lấy danh sách model trực tiếp từ nhà cung cấp ---
+    # --- Listing models straight from the provider ---
     #
-    # Để ở đây thay vì viết cứng trong code: thêm một nhà cung cấp mới chỉ cần
-    # khai báo thêm một mục trong LLM_PROVIDERS, không phải sửa file nào.
+    # Declared here instead of hard-coded: adding a provider only needs one
+    # more entry in DEFAULT_LLM_PROVIDERS, no other file changes.
     models_url: str = Field(
         default="",
-        description="Địa chỉ API liệt kê model. Bỏ trống thì chỉ dùng model khai trong cấu hình.",
+        description="Model listing API. Leave empty to only use the models declared here.",
     )
-    models_style: Literal["openai", "google", "anthropic"] = Field(
+    models_style: Literal["openai", "google"] = Field(
         default="openai",
         description=(
-            "Kiểu trả về và cách xác thực của API liệt kê model. "
-            "'openai' (Groq và các API tương thích): Bearer token, kết quả ở khoá 'data'. "
-            "'google': khoá API gửi qua query param, kết quả ở khoá 'models'. "
-            "'anthropic': header x-api-key, kết quả ở khoá 'data'."
+            "Response shape and auth scheme of the model listing API. "
+            "'openai' (Groq and compatible APIs): Bearer token, results under 'data'. "
+            "'google': API key as a query param, results under 'models'."
         ),
     )
 
 
-# Tham số chuẩn của hệ thống. Nhà cung cấp nào không có tham số tương ứng thì
-# bỏ khoá đó khỏi param_map, nó sẽ không được truyền vào constructor.
+# The system's canonical parameters. If a provider has no equivalent, drop that
+# key from its param_map and it will not be passed to the constructor.
 CANONICAL_LLM_PARAMS = (
     "api_key",
     "model",
@@ -106,7 +107,7 @@ DEFAULT_LLM_PROVIDERS: dict[str, ProviderConfig] = {
         api_key_field="GROQ_API_KEY",
         models_url="https://api.groq.com/openai/v1/models",
         models_style="openai",
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         fast_model="llama-3.1-8b-instant",
         param_map={
             "api_key": "api_key",
@@ -117,8 +118,8 @@ DEFAULT_LLM_PROVIDERS: dict[str, ProviderConfig] = {
             "max_retries": "max_retries",
         },
         notes=(
-            "Nhanh và rẻ nhất. Chỉ một số model hỗ trợ gọi công cụ. "
-            "Model nhỏ hay bịa tên công cụ, không nên dùng để sinh phiếu lệnh."
+            "Fastest and cheapest. Only some models support tool calling. "
+            "Small models tend to invent tool names; avoid them for generating action plans."
         ),
     ),
     "google": ProviderConfig(
@@ -131,47 +132,27 @@ DEFAULT_LLM_PROVIDERS: dict[str, ProviderConfig] = {
         model="gemini-2.5-flash",
         fast_model="gemini-2.5-flash-lite",
         param_map={
-            "api_key": "google_api_key",      # khác: không phải api_key
+            "api_key": "google_api_key",      # differs: not api_key
             "model": "model",
             "temperature": "temperature",
-            "max_tokens": "max_output_tokens",  # khác: không phải max_tokens
+            "max_tokens": "max_output_tokens",  # differs: not max_tokens
             "timeout": "timeout",
             "max_retries": "max_retries",
         },
         extra={
-            # Gemini CÓ suy luận nhưng mặc định không gửi phần đó về, nên khung
-            # chat sẽ không hiện được "Đang suy nghĩ". Bật lên để nó trả kèm.
+            # Gemini DOES reason but does not send the reasoning back by
+            # default, so the chat could not show "Thinking". Turn it on.
             #
-            # Không tốn thêm tiền: token suy luận vẫn bị tính dù có gửi về hay
-            # không — tắt chỉ là tự bịt mắt mình.
+            # It costs nothing extra: reasoning tokens are billed whether they
+            # are returned or not — turning it off only blinds us.
             #
-            # Model không suy luận thì đây là tham số thừa, đã thử và không lỗi.
-            # Muốn tắt thì ghi đè LLM_PROVIDERS trong .env.
+            # For non-reasoning models this is a no-op; tested, no errors.
             "include_thoughts": True,
         },
         notes=(
-            "Cửa sổ ngữ cảnh rất lớn, hợp với RCA vì phải nhét nhiều nhật ký. "
-            "Báo lỗi nếu nội dung tin nhắn rỗng."
+            "Very large context window, a good fit for RCA which needs lots of logs. "
+            "Errors out if a message has empty content."
         ),
-    ),
-    "anthropic": ProviderConfig(
-        package="langchain-anthropic",
-        module="langchain_anthropic",
-        class_name="ChatAnthropic",
-        api_key_field="ANTHROPIC_API_KEY",
-        models_url="https://api.anthropic.com/v1/models",
-        models_style="anthropic",
-        model="claude-sonnet-5",
-        fast_model="claude-haiku-4-5-20251001",
-        param_map={
-            "api_key": "api_key",
-            "model": "model",
-            "temperature": "temperature",
-            "max_tokens": "max_tokens",
-            "timeout": "default_request_timeout",  # khác
-            "max_retries": "max_retries",
-        },
-        notes="Gọi công cụ ổn định và bám schema tốt nhất. Đắt hơn.",
     ),
 }
 
@@ -191,17 +172,17 @@ class Settings(BaseSettings):
     # --- App ---
     APP_NAME: str = "K8s Hub"
     APP_ENV: Literal["local", "dev", "staging", "prod"] = "local"
-    DEBUG: bool = Field(default=True, description="Hiện chi tiết lỗi và log dài hơn")
+    DEBUG: bool = Field(default=True, description="Show detailed errors and more verbose logs")
     API_V1_PREFIX: str = "/api/v1"
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
 
     # --- Database ---
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/k8shub"
 
-    # Alembic cần khoá tư vấn (advisory lock) để hai người không chạy migration
-    # cùng lúc, mà bộ gộp kết nối ở chế độ transaction thì không giữ được khoá đó.
-    # Với Supabase: dùng cùng host nhưng cổng 5432 (chế độ session).
-    # Để trống thì Alembic dùng luôn DATABASE_URL.
+    # Alembic needs an advisory lock so two people cannot run migrations at the
+    # same time, and a transaction-mode connection pooler cannot hold that lock.
+    # With Supabase: same host but port 5432 (session mode).
+    # Leave empty to make Alembic use DATABASE_URL.
     ALEMBIC_DATABASE_URL: str = ""
 
     # --- Redis ---
@@ -211,59 +192,41 @@ class Settings(BaseSettings):
     JWT_SECRET: str = "change-me"
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 60
+    # Refresh tokens live much longer than access tokens — they are only used
+    # to obtain a new access token, never sent with every request. A leak does
+    # less damage because they rotate: every refresh revokes the old token in
+    # the database (refresh_tokens table) and issues a new one — reusing an old
+    # one is a sign of theft.
+    JWT_REFRESH_EXPIRE_DAYS: int = 30
+
+    # First administrator account. Self-registration always creates the 'user'
+    # role, so there must be another way to create the first admin. `lifespan`
+    # checks at startup: if nobody has the admin role yet, this account is
+    # created (or promoted). Leave empty to skip that step and create an admin
+    # some other way (e.g. editing the database once).
+    ADMIN_BOOTSTRAP_EMAIL: str = ""
+    ADMIN_BOOTSTRAP_PASSWORD: str = ""
 
     # --- LLM ---
-    # Tên phải khớp một khoá trong LLM_PROVIDERS.
-    LLM_PROVIDER: str = Field(
-        default="groq", description="Nhà cung cấp AI đang dùng: groq, google hoặc anthropic"
-    )
-
-    # Để trống thì lấy model mặc định của nhà cung cấp trong LLM_PROVIDERS.
-    LLM_MODEL: str = Field(
-        default="", description="Model chính. Để trống thì dùng mặc định của nhà cung cấp"
-    )
-    LLM_FAST_MODEL: str = Field(
-        default="", description="Model rẻ cho việc nhẹ như phân loại ý định"
-    )
-
+    # Only model-call parameters. Provider/model selection: see `llm_default_provider`.
     LLM_TEMPERATURE: float = Field(
         default=0.0, ge=0.0, le=2.0,
-        description="Độ ngẫu nhiên. Để 0 cho kết quả ổn định khi sinh phiếu lệnh",
+        description="Randomness. Keep at 0 for stable output when generating action plans",
     )
     LLM_MAX_TOKENS: int = Field(
-        default=4096, gt=0, description="Độ dài tối đa của câu trả lời"
+        default=4096, gt=0, description="Maximum length of a response"
     )
     LLM_TIMEOUT_SECONDS: float = Field(
-        default=60.0, gt=0, description="Chờ AI trả lời tối đa bao nhiêu giây"
+        default=60.0, gt=0, description="Maximum seconds to wait for the model to respond"
     )
     LLM_MAX_RETRIES: int = Field(
-        default=3, ge=0, description="Số lần thử lại khi bị nghẽn hoặc lỗi mạng"
+        default=3, ge=0, description="Retries on rate limiting or network errors"
     )
 
-    # Catalog nhà cung cấp. Mặc định lấy DEFAULT_LLM_PROVIDERS ở trên.
-    # Đặt biến LLM_PROVIDERS trong .env dưới dạng JSON để GHI ĐÈ TỪNG PHẦN,
-    # hoặc thêm hẳn nhà cung cấp mới mà không phải sửa file này. Ví dụ:
-    #
-    #   LLM_PROVIDERS={"groq": {"model": "llama-3.1-8b-instant"}}
-    #
-    # NoDecode: tự parse JSON trong validator bên dưới, để chịu được khi biến
-    # trong .env bị bỏ trống (pydantic-settings mặc định sẽ vỡ ở chuỗi rỗng).
-    LLM_PROVIDERS: Annotated[dict[str, ProviderConfig], NoDecode] = Field(
-        default_factory=lambda: {
-            name: spec.model_copy(deep=True)
-            for name, spec in DEFAULT_LLM_PROVIDERS.items()
-        },
-        description=(
-            "Đặc tả từng nhà cung cấp. Ghi đè từng phần, chỉ cần nêu trường muốn đổi. "
-            "Dùng để đổi model hoặc thêm hẳn nhà cung cấp mới."
-        ),
-    )
-
-    # --- Khoá API ---
-    # Tên field phải khớp `api_key_field` của nhà cung cấp tương ứng.
-    GROQ_API_KEY: str = Field(default="", description="Khoá API của Groq")
-    GOOGLE_API_KEY: str = Field(default="", description="Khoá API của Google AI Studio")
-    ANTHROPIC_API_KEY: str = Field(default="", description="Khoá API của Anthropic")
+    # --- API keys ---
+    # Field names must match the provider's `api_key_field`.
+    GROQ_API_KEY: str = Field(default="", description="Groq API key")
+    GOOGLE_API_KEY: str = Field(default="", description="Google AI Studio API key")
 
     # --- Kubernetes ---
     KUBECONFIG: str | None = None
@@ -272,169 +235,150 @@ class Settings(BaseSettings):
     K8S_EXECUTION_MODE: Literal["read_only", "require_approval", "auto"] = Field(
         default="require_approval",
         description=(
-            "read_only: chỉ xem · require_approval: phải có người duyệt · "
-            "auto: tự thực hiện (NGUY HIỂM)"
+            "read_only: view only · require_approval: a human must approve · "
+            "auto: executes on its own (DANGEROUS)"
         ),
     )
     K8S_ALLOWED_NAMESPACES: list[str] = Field(
         default=[],
-        description="Chỉ được thao tác trong các khu vực này. Để trống là cho phép tất cả",
+        description="Only operate in these namespaces. Leave empty to allow all",
     )
 
     # --- Observability data sources ---
     PROMETHEUS_URL: str = Field(
-        default="http://localhost:9090", description="Địa chỉ kho số liệu, dùng cho chẩn đoán"
+        default="http://localhost:9090", description="Metrics store URL, used for diagnosis"
     )
     LOKI_URL: str = Field(
-        default="http://localhost:3100", description="Địa chỉ kho nhật ký, dùng cho chẩn đoán"
+        default="http://localhost:3100", description="Log store URL, used for diagnosis"
     )
 
     # --- Langfuse ---
     LANGFUSE_HOST: str = Field(
-        default="http://localhost:3001", description="Địa chỉ hệ thống theo dõi AI"
+        default="http://localhost:3001", description="LLM tracing server URL"
     )
-    LANGFUSE_PUBLIC_KEY: str = Field(default="", description="Khoá công khai Langfuse")
-    LANGFUSE_SECRET_KEY: str = Field(default="", description="Khoá bí mật Langfuse")
+    LANGFUSE_PUBLIC_KEY: str = Field(default="", description="Langfuse public key")
+    LANGFUSE_SECRET_KEY: str = Field(default="", description="Langfuse secret key")
     LANGFUSE_ENABLED: bool = Field(
-        default=False, description="Có ghi lại diễn biến mỗi lần gọi AI hay không"
+        default=False, description="Record a trace of every model call"
     )
 
-    # -----------------------------------------------------------------------
+    # --- LLM helpers ----------------------------------------------------
+    #
+    # Provider and model are NOT configuration in .env or on the Settings page.
+    # The user picks them per chat turn in the model picker, and the model list
+    # comes straight from the provider's API (app/integrations/llm/catalog.py).
+    # The four old variables — LLM_PROVIDER, LLM_MODEL, LLM_FAST_MODEL,
+    # LLM_PROVIDERS — only drifted from what the UI showed, so they were removed.
+    #
+    # Provider specs (which class, where to list models, parameter names) are
+    # still needed — the catalog reads them — but they are CODE, in
+    # DEFAULT_LLM_PROVIDERS above. Add a provider by adding an entry there.
 
-    @field_validator("LLM_PROVIDERS", mode="before")
-    @classmethod
-    def _merge_with_defaults(cls, value: Any) -> Any:
-        """Giá trị từ .env GHI ĐÈ TỪNG PHẦN lên mặc định, không thay thế cả cụm.
+    @property
+    def LLM_PROVIDERS(self) -> dict[str, ProviderConfig]:  # noqa: N802 — keeps the old name for callers
+        return DEFAULT_LLM_PROVIDERS
 
-        Nhờ vậy chỉ cần ghi `{"groq": {"model": "..."}}` là đổi được đúng một
-        trường, không phải chép lại toàn bộ đặc tả.
+    def llm_default_provider(self) -> str:
+        """Provider used when the user has not picked one.
 
-        Biến để trống trong .env thì coi như không ghi đè gì.
+        It is the FIRST one with an API key set, in DEFAULT_LLM_PROVIDERS order.
+        Derived instead of read from an LLM_PROVIDER variable: that variable
+        could point at a provider without a key, breaking the very first chat
+        message. The frontend (`use-models.ts`) applies the same rule, so both
+        sides always agree.
+
+        With no key set at all, returns the first provider — the "missing API
+        key" error raised when calling the model then names the variable to set.
         """
-        if isinstance(value, str):
-            raw = value.strip()
-            if not raw:
-                return {name: spec.model_dump() for name, spec in DEFAULT_LLM_PROVIDERS.items()}
-            try:
-                value = json.loads(raw)
-            except json.JSONDecodeError as exc:
-                raise ValueError(
-                    f"LLM_PROVIDERS phải là JSON hợp lệ hoặc để trống. Lỗi: {exc}"
-                ) from exc
-
-        if not isinstance(value, dict):
-            return value
-
-        merged: dict[str, Any] = {
-            name: spec.model_dump() for name, spec in DEFAULT_LLM_PROVIDERS.items()
-        }
-        for name, override in value.items():
-            if isinstance(override, ProviderConfig):
-                override = override.model_dump()
-            if not isinstance(override, dict):
-                merged[name] = override
-                continue
-            if name in merged:
-                merged[name] = {**merged[name], **override}
-            else:
-                merged[name] = override
-        return merged
-
-    # --- Tiện ích LLM ---------------------------------------------------
+        for name, spec in DEFAULT_LLM_PROVIDERS.items():
+            if str(getattr(self, spec.api_key_field, "") or "").strip():
+                return name
+        return next(iter(DEFAULT_LLM_PROVIDERS))
 
     def llm_provider(self, name: str | None = None) -> ProviderConfig:
-        """Đặc tả của nhà cung cấp đang dùng (hoặc của `name` nếu truyền vào)."""
-        key = name or self.LLM_PROVIDER
-        if key not in self.LLM_PROVIDERS:
-            available = ", ".join(sorted(self.LLM_PROVIDERS)) or "(trống)"
-            raise ValueError(
-                f"Không có nhà cung cấp LLM {key!r}. Hiện có: {available}. "
-                f"Kiểm tra LLM_PROVIDER trong .env."
-            )
-        return self.LLM_PROVIDERS[key]
+        """Spec of provider `name`, or of the default provider."""
+        key = name or self.llm_default_provider()
+        if key not in DEFAULT_LLM_PROVIDERS:
+            available = ", ".join(sorted(DEFAULT_LLM_PROVIDERS)) or "(none)"
+            raise ValueError(f"Unknown LLM provider {key!r}. Available: {available}.")
+        return DEFAULT_LLM_PROVIDERS[key]
 
     def llm_model_name(self, *, provider: str | None = None, profile: str = "default") -> str:
-        """Tên model theo hồ sơ. LLM_MODEL / LLM_FAST_MODEL trong .env được ưu tiên."""
+        """The provider's default model — used when a chat turn does not specify one."""
         spec = self.llm_provider(provider)
         if profile == "fast":
-            return self.LLM_FAST_MODEL or spec.fast_model or spec.model
-        return self.LLM_MODEL or spec.model
+            return spec.fast_model or spec.model
+        return spec.model
 
     def llm_api_key(self, *, provider: str | None = None) -> str:
-        """Khoá API của nhà cung cấp, đọc theo `api_key_field` của nó."""
+        """The provider's API key, read via its `api_key_field`."""
         spec = self.llm_provider(provider)
         key = str(getattr(self, spec.api_key_field, "") or "").strip()
         if not key:
             raise ValueError(
-                f"Thiếu khoá API cho nhà cung cấp {provider or self.LLM_PROVIDER!r}. "
-                f"Đặt {spec.api_key_field} trong file .env."
+                f"Missing API key for provider {provider or self.llm_default_provider()!r}. "
+                f"Set {spec.api_key_field} in Settings or in the .env file."
             )
         return key
 
 
-
-
 # ---------------------------------------------------------------------------
-# Trường được phép đổi lúc chạy (từ giao diện web)
+# Fields that may change at runtime (from the web UI)
 # ---------------------------------------------------------------------------
 
-#: Đổi được ngay khi hệ thống đang chạy, không cần khởi động lại.
+#: Can be changed while the system is running, no restart needed.
 RUNTIME_EDITABLE: frozenset[str] = frozenset(
     {
         "DEBUG",
-        # LLM
-        "LLM_PROVIDER",
-        "LLM_MODEL",
-        "LLM_FAST_MODEL",
+        # LLM — call parameters only; provider/model are picked in the chat
         "LLM_TEMPERATURE",
         "LLM_MAX_TOKENS",
         "LLM_TIMEOUT_SECONDS",
         "LLM_MAX_RETRIES",
-        "LLM_PROVIDERS",
-        # Kubernetes — đổi được vì chỉ ảnh hưởng lúc kiểm tra từng thao tác
+        # Kubernetes — editable because it only affects per-operation checks
         "K8S_EXECUTION_MODE",
         "K8S_ALLOWED_NAMESPACES",
-        # Nguồn dữ liệu quan sát
+        # Observability data sources
         "PROMETHEUS_URL",
         "LOKI_URL",
-        # Langfuse
-        "LANGFUSE_ENABLED",
-        "LANGFUSE_HOST",
+        # LANGFUSE_* is DELIBERATELY not here: the Langfuse SDK keeps a
+        # singleton keyed by public key, so rebuilding the client with another
+        # host or secret returns the old object and silently ignores the new
+        # values. Allowing edits in the UI would promise something that does
+        # not happen. Change them in .env and restart.
     }
 )
 
-#: Cũng đổi được nhưng là bí mật: KHÔNG trả về giao diện, KHÔNG ghi vào log.
+#: Also editable, but secret: NEVER returned to the UI, NEVER logged.
 RUNTIME_EDITABLE_SECRETS: frozenset[str] = frozenset(
     {
         "GROQ_API_KEY",
         "GOOGLE_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "LANGFUSE_PUBLIC_KEY",
-        "LANGFUSE_SECRET_KEY",
     }
 )
 
-#: Tập đầy đủ những trường giao diện được phép ghi.
+#: Every field the UI may write.
 ALL_EDITABLE: frozenset[str] = RUNTIME_EDITABLE | RUNTIME_EDITABLE_SECRETS
 
-# Những trường còn lại (DATABASE_URL, REDIS_URL, JWT_SECRET, APP_ENV...) chỉ đọc
-# từ .env lúc khởi động — đổi lúc chạy không có ý nghĩa hoặc không an toàn.
+# The remaining fields (DATABASE_URL, REDIS_URL, JWT_SECRET, APP_ENV, LANGFUSE_*)
+# are only read from .env at startup — changing them at runtime is meaningless,
+# unsafe, or not supported by the underlying library.
 
 
 class ConfigUpdateError(ValueError):
-    """Giá trị gửi từ giao diện không hợp lệ. Không có thay đổi nào được áp dụng."""
+    """The value sent from the UI is invalid. No change was applied."""
 
 
 # ---------------------------------------------------------------------------
-# Nơi lưu phần ghi đè
+# Where overrides are stored
 # ---------------------------------------------------------------------------
 
 
 class OverrideStore(Protocol):
-    """Nơi cất phần cấu hình người dùng đổi trên web, để khởi động lại vẫn còn.
+    """Where the UI-made configuration changes are kept, to survive restarts.
 
-    Bản mặc định chỉ giữ trong bộ nhớ. Khi có bảng dữ liệu thì viết một lớp
-    lưu xuống Postgres rồi gọi `set_override_store()` lúc khởi động.
+    The default keeps them in memory only. Once there is a table for it, write
+    a Postgres-backed class and call `set_override_store()` at startup.
     """
 
     def load(self) -> dict[str, Any]: ...
@@ -443,7 +387,7 @@ class OverrideStore(Protocol):
 
 
 class MemoryOverrideStore:
-    """Giữ trong bộ nhớ — mất khi tắt tiến trình."""
+    """Kept in memory — lost when the process stops."""
 
     def __init__(self) -> None:
         self._values: dict[str, Any] = {}
@@ -456,12 +400,12 @@ class MemoryOverrideStore:
 
 
 # ---------------------------------------------------------------------------
-# Trạng thái toàn cục
+# Global state
 # ---------------------------------------------------------------------------
 
 _lock = threading.RLock()
-_base: Settings | None = None          # đọc từ .env, chỉ một lần
-_effective: Settings | None = None     # .env + phần ghi đè
+_base: Settings | None = None          # read from .env, once
+_effective: Settings | None = None     # .env + overrides
 _overrides: dict[str, Any] = {}
 _store: OverrideStore = MemoryOverrideStore()
 _version: int = 0
@@ -469,10 +413,10 @@ _callbacks: list[Callable[[], None]] = []
 
 
 def _compose(base: Settings, overrides: dict[str, Any]) -> Settings:
-    """Dựng cấu hình hiệu lực = giá trị từ .env, đè lên bởi phần ghi đè.
+    """Build the effective configuration = values from .env, overlaid by overrides.
 
-    Ném ConfigUpdateError nếu có giá trị không hợp lệ — khi đó KHÔNG áp dụng
-    gì cả, cấu hình đang chạy giữ nguyên.
+    Raises ConfigUpdateError on any invalid value — in that case NOTHING is
+    applied and the running configuration stays as it was.
     """
     if not overrides:
         return base
@@ -480,26 +424,16 @@ def _compose(base: Settings, overrides: dict[str, Any]) -> Settings:
     data = base.model_dump()
 
     for name, value in overrides.items():
-        if name == "LLM_PROVIDERS":
-            # Ghi đè từng phần lên danh sách đang có, không thay cả cụm.
-            merged = dict(data.get("LLM_PROVIDERS") or {})
-            for provider_name, patch in (value or {}).items():
-                if isinstance(patch, dict) and provider_name in merged:
-                    merged[provider_name] = {**merged[provider_name], **patch}
-                else:
-                    merged[provider_name] = patch
-            data["LLM_PROVIDERS"] = merged
-        else:
-            data[name] = value
+        data[name] = value
 
     try:
         return Settings(_env_file=None, **data)
-    except Exception as exc:  # ValidationError và mọi lỗi dựng khác
-        raise ConfigUpdateError(f"Cấu hình không hợp lệ: {exc}") from exc
+    except Exception as exc:  # ValidationError and any other build error
+        raise ConfigUpdateError(f"Invalid configuration: {exc}") from exc
 
 
 def _rebuild_locked() -> Settings:
-    """Dựng lại cấu hình hiệu lực. Chỉ gọi khi đang giữ _lock."""
+    """Rebuild the effective configuration. Call only while holding _lock."""
     global _effective, _version
     assert _base is not None
     _effective = _compose(_base, _overrides)
@@ -527,31 +461,31 @@ def _ensure_loaded() -> Settings:
             try:
                 _effective = _compose(_base, _overrides)
             except ConfigUpdateError:
-                # Dữ liệu đã lưu bị hỏng thì bỏ qua, chạy bằng .env thuần.
+                # Stored data is corrupt: ignore it and run on plain .env.
                 _overrides = {}
                 _effective = _base
         return _effective
 
 
 # ---------------------------------------------------------------------------
-# API công khai
+# Public API
 # ---------------------------------------------------------------------------
 
 
 def get_settings() -> Settings:
-    """Cấu hình đang có hiệu lực (.env + phần đổi trên web)."""
+    """The effective configuration (.env + changes made in the UI)."""
     return _ensure_loaded()
 
 
 def get_base_settings() -> Settings:
-    """Chỉ giá trị từ .env, chưa tính phần ghi đè. Dùng cho nút khôi phục."""
+    """Values from .env only, without overrides. Used by the "restore" button."""
     _ensure_loaded()
     assert _base is not None
     return _base
 
 
 def runtime_overrides(*, redact_secrets: bool = True) -> dict[str, Any]:
-    """Những trường đang bị ghi đè so với .env."""
+    """Fields currently overridden relative to .env."""
     _ensure_loaded()
     with _lock:
         values = dict(_overrides)
@@ -563,24 +497,31 @@ def runtime_overrides(*, redact_secrets: bool = True) -> dict[str, Any]:
 
 
 def apply_overrides(values: dict[str, Any], *, replace: bool = False) -> Settings:
-    """Áp dụng thay đổi từ giao diện web.
+    """Apply changes coming from the web UI.
 
     Args:
-        values:  {tên trường: giá trị mới}. Đặt None để bỏ ghi đè trường đó,
-                 trả nó về giá trị trong .env.
-        replace: True thì thay toàn bộ phần ghi đè, False thì trộn vào cái đang có.
+        values:  {field name: new value}. Set None to drop the override and
+                 go back to the value in .env.
+        replace: True replaces all overrides, False merges into the current ones.
 
     Raises:
-        ConfigUpdateError: tên trường không được phép đổi, hoặc giá trị sai kiểu.
-                           Khi đó KHÔNG có thay đổi nào được áp dụng.
+        ConfigUpdateError: the field is not editable, or the value has the wrong
+                           type. In that case NO change is applied.
     """
     _ensure_loaded()
 
-    khong_cho_phep = sorted(set(values) - ALL_EDITABLE)
-    if khong_cho_phep:
+    # Two separate cases so the message tells the truth: a field that does not
+    # exist (e.g. the removed LLM_PROVIDER) is not the same as a real field that
+    # is only read at startup.
+    unknown = sorted(set(values) - set(Settings.model_fields))
+    if unknown:
+        raise ConfigUpdateError(f"Unknown configuration field: {', '.join(unknown)}.")
+
+    not_editable = sorted(set(values) - ALL_EDITABLE)
+    if not_editable:
         raise ConfigUpdateError(
-            f"Không được đổi lúc chạy: {', '.join(khong_cho_phep)}. "
-            f"Những trường này chỉ đọc từ .env lúc khởi động."
+            f"Cannot be changed at runtime: {', '.join(not_editable)}. "
+            f"These fields are only read from .env at startup."
         )
 
     with _lock:
@@ -592,7 +533,7 @@ def apply_overrides(values: dict[str, Any], *, replace: bool = False) -> Setting
             else:
                 candidate[name] = value
 
-        # Validate TRƯỚC khi ghi nhận — sai thì không đụng tới cấu hình đang chạy.
+        # Validate BEFORE committing — invalid input never touches the running config.
         _compose(_base, candidate)
 
         globals()["_overrides"] = candidate
@@ -604,15 +545,15 @@ def apply_overrides(values: dict[str, Any], *, replace: bool = False) -> Setting
 
 
 def clear_overrides() -> Settings:
-    """Bỏ hết phần đổi trên web, quay về đúng .env."""
+    """Drop every UI change and go back to exactly what .env says."""
     return apply_overrides({}, replace=True)
 
 
 def reload_from_env() -> Settings:
-    """Đọc lại .env từ đĩa. Phần đổi trên web được giữ và áp lại lên trên.
+    """Re-read .env from disk. UI changes are kept and re-applied on top.
 
-    Dùng sau khi triển khai bản mới hoặc sửa .env bằng tay. Không tự động —
-    phải gọi tường minh.
+    Use after deploying a new version or editing .env by hand. Not automatic —
+    must be called explicitly.
     """
     global _base
     _ensure_loaded()
@@ -624,22 +565,22 @@ def reload_from_env() -> Settings:
 
 
 def set_override_store(store: OverrideStore) -> None:
-    """Đổi nơi lưu phần ghi đè (mặc định là bộ nhớ).
+    """Change where overrides are stored (memory by default).
 
-    Gọi lúc khởi động để nạp lại những gì người dùng đã đổi ở phiên trước.
+    Call at startup to reload what users changed in a previous session.
     """
     global _store, _effective
     with _lock:
         _store = store
-        _effective = None  # buộc nạp lại từ store mới
+        _effective = None  # force a reload from the new store
     _ensure_loaded()
     _notify()
 
 
 def on_reload(callback: Callable[[], None]) -> Callable[[], None]:
-    """Đăng ký hàm được gọi mỗi khi cấu hình đổi.
+    """Register a function to be called whenever the configuration changes.
 
-    Dùng cho module có bộ nhớ đệm dựng từ cấu hình (client LLM, engine DB...):
+    For modules with caches built from the configuration (LLM client, DB engine...):
 
         @on_reload
         def _clear_cache() -> None:
@@ -651,13 +592,13 @@ def on_reload(callback: Callable[[], None]) -> Callable[[], None]:
 
 
 def settings_version() -> int:
-    """Tăng thêm 1 sau mỗi lần cấu hình đổi. Dùng làm khoá cho bộ nhớ đệm."""
+    """Incremented on every configuration change. Useful as a cache key."""
     _ensure_loaded()
     return _version
 
 
 def _jsonable(value: Any) -> Any:
-    """Đổi model Pydantic lồng nhau thành dict thuần để trả về JSON."""
+    """Turn nested Pydantic models into plain dicts for JSON responses."""
     if isinstance(value, BaseModel):
         return value.model_dump()
     if isinstance(value, dict):
@@ -668,11 +609,11 @@ def _jsonable(value: Any) -> Any:
 
 
 def _field_type(annotation: Any) -> tuple[str, list[Any] | None]:
-    """Suy ra kiểu và danh sách lựa chọn để giao diện dựng đúng ô nhập."""
+    """Infer the type and choices so the UI renders the right input."""
     if get_origin(annotation) is Literal:
         return "enum", list(get_args(annotation))
 
-    # Bóc Annotated[...] và Optional[...]
+    # Unwrap Annotated[...] and Optional[...]
     args = get_args(annotation)
     if get_origin(annotation) is not None and args:
         if annotation is not None and get_origin(annotation) in (list, dict):
@@ -680,9 +621,9 @@ def _field_type(annotation: Any) -> tuple[str, list[Any] | None]:
         for arg in args:
             if arg is type(None):
                 continue
-            kieu, lua_chon = _field_type(arg)
-            if kieu != "string":
-                return kieu, lua_chon
+            kind, choices = _field_type(arg)
+            if kind != "string":
+                return kind, choices
 
     if annotation is bool:
         return "boolean", None
@@ -696,21 +637,21 @@ def _field_type(annotation: Any) -> tuple[str, list[Any] | None]:
 
 
 def _field_bounds(info: Any) -> dict[str, Any]:
-    """Lấy giới hạn min/max từ ràng buộc của Pydantic (ge, le, gt, lt)."""
+    """Read min/max bounds from Pydantic constraints (ge, le, gt, lt)."""
     bounds: dict[str, Any] = {}
     for meta in getattr(info, "metadata", []) or []:
-        for ten, khoa in (("ge", "minimum"), ("gt", "exclusive_minimum"),
+        for attr, key in (("ge", "minimum"), ("gt", "exclusive_minimum"),
                           ("le", "maximum"), ("lt", "exclusive_maximum")):
-            value = getattr(meta, ten, None)
+            value = getattr(meta, attr, None)
             if value is not None:
-                bounds[khoa] = value
+                bounds[key] = value
     return bounds
 
 
 def editable_fields(*, include_secrets: bool = True) -> list[dict[str, Any]]:
-    """Mô tả các trường cho giao diện web dựng form.
+    """Describe the fields so the web UI can build the form.
 
-    Giá trị của trường bí mật KHÔNG bao giờ được trả ra — chỉ báo đã đặt hay chưa.
+    Secret values are NEVER returned — only whether they are set.
     """
     config = _ensure_loaded()
     base = get_base_settings()
@@ -723,18 +664,15 @@ def editable_fields(*, include_secrets: bool = True) -> list[dict[str, Any]]:
             continue
         is_secret = name in RUNTIME_EDITABLE_SECRETS
         current = getattr(config, name)
-        kieu, lua_chon = _field_type(info.annotation)
+        kind, choices = _field_type(info.annotation)
         if is_secret:
-            kieu = "secret"
-        elif name == "LLM_PROVIDER":
-            # Danh sách động theo những nhà cung cấp đang khai báo.
-            kieu, lua_chon = "enum", sorted(config.LLM_PROVIDERS)
+            kind = "secret"
 
         out.append(
             {
                 "name": name,
-                "type": kieu,
-                "options": lua_chon,
+                "type": kind,
+                "options": choices,
                 "secret": is_secret,
                 "description": info.description or "",
                 "value": None if is_secret else _jsonable(current),
@@ -748,10 +686,11 @@ def editable_fields(*, include_secrets: bool = True) -> list[dict[str, Any]]:
 
 
 class _SettingsProxy:
-    """Cho phép `from app.core.config import settings` luôn thấy giá trị mới nhất.
+    """Makes `from app.core.config import settings` always see the latest values.
 
-    Nếu gán `settings = Settings()` một lần lúc import thì sau khi người dùng đổi
-    cấu hình trên web, mọi module vẫn cầm object cũ. Proxy này luôn hỏi lại.
+    Assigning `settings = Settings()` once at import time would leave every
+    module holding the old object after a user changes the configuration in the
+    UI. This proxy always asks again.
     """
 
     __slots__ = ()

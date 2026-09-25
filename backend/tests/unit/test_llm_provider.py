@@ -1,7 +1,8 @@
-"""Kiểm tra lớp bọc nhà cung cấp LLM và cơ chế hot-reload cấu hình.
+"""Tests for the LLM provider wrapper and the configuration hot-reload mechanism.
 
-Không gọi mạng, không cần cài langchain-groq / langchain-google-genai:
-dùng một module giả để soi phần ánh xạ tham số — đó mới là chỗ dễ sai.
+No network calls, no need to install langchain-groq / langchain-google-genai:
+a fake module is used to inspect the parameter mapping — that is where
+mistakes are most likely.
 """
 
 from __future__ import annotations
@@ -17,12 +18,12 @@ from app.core.config import ProviderConfig, Settings
 from app.integrations.llm import provider as P
 
 # ---------------------------------------------------------------------------
-# Nhà cung cấp giả
+# Fake provider
 # ---------------------------------------------------------------------------
 
 
 class FakeChatModel:
-    """Ghi lại đúng những kwargs nhận được để bài test soi."""
+    """Records exactly the kwargs it received so the tests can inspect them."""
 
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
@@ -41,7 +42,7 @@ FAKE_SPEC = ProviderConfig(
     package="fake-llm-pkg",
     module="fake_llm_pkg",
     class_name="FakeChatModel",
-    api_key_field="GROQ_API_KEY",  # mượn một field có sẵn trong Settings
+    api_key_field="GROQ_API_KEY",  # borrow a field that already exists in Settings
     model="big-model",
     fast_model="small-model",
     param_map={
@@ -56,54 +57,60 @@ FAKE_SPEC = ProviderConfig(
 )
 
 
-def fake_settings(**kwargs: Any) -> Settings:
-    """Settings dùng nhà cung cấp giả, không đọc .env của máy."""
-    base: dict[str, Any] = {
-        "_env_file": None,
-        "LLM_PROVIDER": "fake",
-        "LLM_PROVIDERS": {"fake": FAKE_SPEC},
-        "GROQ_API_KEY": "sk-test",
-    }
+@pytest.fixture(autouse=True)
+def _restore_provider_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`fake_settings` patches the provider catalog directly — restore it after each test."""
+    monkeypatch.setattr(C, "DEFAULT_LLM_PROVIDERS", dict(C.DEFAULT_LLM_PROVIDERS))
+
+
+def fake_settings(spec: ProviderConfig = FAKE_SPEC, **kwargs: Any) -> Settings:
+    """Settings whose default provider is the fake provider.
+
+    The provider catalog now lives in code (no more LLM_PROVIDERS in .env), so
+    the fake provider is plugged in by replacing the whole catalog. It is the
+    ONLY entry, so `llm_default_provider()` picks it.
+    """
+    C.DEFAULT_LLM_PROVIDERS = {"fake": spec}  # the autouse fixture restores it
+    base: dict[str, Any] = {"_env_file": None, "GROQ_API_KEY": "sk-test"}
     base.update(kwargs)
     return Settings(**base)
 
 
 # ---------------------------------------------------------------------------
-# Đặc tả mặc định trong config.py
+# Default specs in config.py
 # ---------------------------------------------------------------------------
 
 
-def test_co_du_ba_nha_cung_cap() -> None:
-    assert {"groq", "google", "anthropic"} <= set(C.DEFAULT_LLM_PROVIDERS)
+def test_has_all_providers() -> None:
+    assert set(C.DEFAULT_LLM_PROVIDERS) == {"groq", "google"}
 
 
-@pytest.mark.parametrize("name", ["groq", "google", "anthropic"])
-def test_moi_nha_cung_cap_khai_bao_du(name: str) -> None:
+@pytest.mark.parametrize("name", ["groq", "google"])
+def test_each_provider_is_fully_declared(name: str) -> None:
     spec = C.DEFAULT_LLM_PROVIDERS[name]
-    assert spec.model, f"{name} thiếu model mặc định"
-    assert spec.fast_model, f"{name} thiếu model rẻ"
-    assert spec.supports_tool_calling, f"{name} phải hỗ trợ gọi công cụ"
-    # Thiếu ánh xạ thì tham số bị âm thầm bỏ qua — phải có đủ.
-    assert set(spec.param_map) == set(C.CANONICAL_LLM_PARAMS), f"{name} ánh xạ thiếu"
-    # Khoá API phải trỏ tới một field có thật trong Settings.
-    assert spec.api_key_field in Settings.model_fields, f"{name} trỏ sai field khoá"
+    assert spec.model, f"{name} is missing a default model"
+    assert spec.fast_model, f"{name} is missing a cheap model"
+    assert spec.supports_tool_calling, f"{name} must support tool calling"
+    # A missing mapping means the parameter is silently dropped — all must be present.
+    assert set(spec.param_map) == set(C.CANONICAL_LLM_PARAMS), f"{name} mapping incomplete"
+    # The API key must point to a field that actually exists in Settings.
+    assert spec.api_key_field in Settings.model_fields, f"{name} points to the wrong key field"
 
 
-def test_ten_tham_so_khac_nhau_giua_cac_nha_cung_cap() -> None:
-    """Đây chính là lý do cần lớp bọc — ba nhà đặt tên khác nhau."""
+def test_parameter_names_differ_between_providers() -> None:
+    """This is exactly why the wrapper exists — providers name things differently."""
     d = C.DEFAULT_LLM_PROVIDERS
     assert d["groq"].param_map["max_tokens"] == "max_tokens"
     assert d["google"].param_map["max_tokens"] == "max_output_tokens"
     assert d["google"].param_map["api_key"] == "google_api_key"
-    assert d["anthropic"].param_map["timeout"] == "default_request_timeout"
 
 
 # ---------------------------------------------------------------------------
-# Ánh xạ tham số
+# Parameter mapping
 # ---------------------------------------------------------------------------
 
 
-def test_doi_dung_ten_tham_so(fake_module: Any) -> None:
+def test_renames_parameters_correctly(fake_module: Any) -> None:
     llm = P.create_chat_model(config=fake_settings())
     assert llm.kwargs == {
         "secret": "sk-test",
@@ -112,116 +119,114 @@ def test_doi_dung_ten_tham_so(fake_module: Any) -> None:
         "output_limit": 4096,
         "deadline": 60.0,
         "retries": 3,
-        "vendor_flag": True,  # từ `extra`
+        "vendor_flag": True,  # from `extra`
     }
 
 
-def test_ho_so_fast_doi_model(fake_module: Any) -> None:
+def test_fast_profile_switches_model(fake_module: Any) -> None:
     llm = P.create_chat_model(config=fake_settings(), profile="fast")
     assert llm.kwargs["model_name"] == "small-model"
 
 
-def test_env_ghi_de_ten_model(fake_module: Any) -> None:
-    """LLM_MODEL trong .env thắng model mặc định của nhà cung cấp."""
-    llm = P.create_chat_model(config=fake_settings(LLM_MODEL="model-tu-env"))
-    assert llm.kwargs["model_name"] == "model-tu-env"
+def test_legacy_llm_env_vars_are_ignored(fake_module: Any) -> None:
+    """LLM_MODEL/LLM_PROVIDER left over in an old .env must have no effect —
+    the model is chosen per chat turn, defaulting to the provider spec."""
+    cfg = fake_settings(LLM_MODEL="model-from-env", LLM_PROVIDER="google")
+    llm = P.create_chat_model(config=cfg)
+    assert llm.kwargs["model_name"] == "big-model"
+    assert cfg.llm_default_provider() == "fake"
 
 
-def test_tham_so_truyen_tay_thang_settings(fake_module: Any) -> None:
+def test_explicit_parameters_win_over_settings(fake_module: Any) -> None:
     llm = P.create_chat_model(
         config=fake_settings(LLM_TEMPERATURE=0.1),
-        model="model-tuy-chon",
+        model="custom-model",
         temperature=0.7,
         max_tokens=100,
     )
-    assert llm.kwargs["model_name"] == "model-tuy-chon"
+    assert llm.kwargs["model_name"] == "custom-model"
     assert llm.kwargs["temp"] == 0.7
     assert llm.kwargs["output_limit"] == 100
 
 
-def test_bo_qua_tham_so_nha_cung_cap_khong_nhan(fake_module: Any) -> None:
-    """Không khai báo `timeout` thì không được truyền vào constructor."""
+def test_skips_parameters_the_provider_does_not_accept(fake_module: Any) -> None:
+    """If `timeout` isn't declared it must not be passed to the constructor."""
     spec = FAKE_SPEC.model_copy(deep=True)
     del spec.param_map["timeout"]
-    llm = P.create_chat_model(config=fake_settings(LLM_PROVIDERS={"fake": spec}))
+    llm = P.create_chat_model(config=fake_settings(spec))
     assert "deadline" not in llm.kwargs
     assert "timeout" not in llm.kwargs
 
 
 # ---------------------------------------------------------------------------
-# Thông báo lỗi
+# Error messages
 # ---------------------------------------------------------------------------
 
 
-def test_bao_loi_khi_thieu_khoa(fake_module: Any) -> None:
+def test_error_when_key_missing(fake_module: Any) -> None:
     with pytest.raises(P.LLMConfigError, match="GROQ_API_KEY"):
         P.create_chat_model(config=fake_settings(GROQ_API_KEY=""))
 
 
-def test_bao_loi_khi_khong_co_nha_cung_cap() -> None:
-    with pytest.raises(P.LLMConfigError, match="khong-ton-tai"):
-        P.create_chat_model("khong-ton-tai", config=fake_settings())
+def test_error_when_provider_unknown() -> None:
+    with pytest.raises(P.LLMConfigError, match="does-not-exist"):
+        P.create_chat_model("does-not-exist", config=fake_settings())
 
 
-def test_bao_loi_khi_chua_cai_goi() -> None:
-    spec = FAKE_SPEC.model_copy(update={"module": "goi_chua_bao_gio_ton_tai"})
-    with pytest.raises(P.LLMProviderNotInstalled, match="uv pip install"):
-        P.create_chat_model(config=fake_settings(LLM_PROVIDERS={"fake": spec}))
+def test_error_when_package_not_installed() -> None:
+    spec = FAKE_SPEC.model_copy(update={"module": "package_that_never_existed"})
+    with pytest.raises(P.LLMProviderNotInstalledError, match="pip install"):
+        P.create_chat_model(config=fake_settings(spec))
 
 
-def test_bao_loi_khi_param_map_co_khoa_la(fake_module: Any) -> None:
+def test_error_when_param_map_has_unknown_key(fake_module: Any) -> None:
     spec = FAKE_SPEC.model_copy(deep=True)
-    spec.param_map["khoa_bia_dat"] = "gi_do"
-    with pytest.raises(P.LLMConfigError, match="khoa_bia_dat"):
-        P.create_chat_model(config=fake_settings(LLM_PROVIDERS={"fake": spec}))
+    spec.param_map["made_up_key"] = "whatever"
+    with pytest.raises(P.LLMConfigError, match="made_up_key"):
+        P.create_chat_model(config=fake_settings(spec))
 
 
 # ---------------------------------------------------------------------------
-# Ghi đè từng phần qua .env
+# Default provider — inferred, no more LLM_PROVIDER variable
 # ---------------------------------------------------------------------------
 
 
-def test_ghi_de_tung_phan_giu_nguyen_truong_khac() -> None:
-    """Chỉ ghi `model` thì các trường còn lại phải giữ nguyên mặc định."""
-    cfg = Settings(_env_file=None, LLM_PROVIDERS={"groq": {"model": "model-khac"}})
-    groq = cfg.llm_provider("groq")
-    assert groq.model == "model-khac"
-    assert groq.module == "langchain_groq"           # giữ nguyên
-    assert groq.param_map["timeout"] == "request_timeout"  # giữ nguyên
-    # Nhà cung cấp khác không bị ảnh hưởng
-    assert "google" in cfg.LLM_PROVIDERS
-    assert cfg.llm_provider("anthropic").model == "claude-sonnet-5"
+def _cfg(**keys: str) -> Settings:
+    base = {"GROQ_API_KEY": "", "GOOGLE_API_KEY": ""}
+    base.update(keys)
+    return Settings(_env_file=None, **base)
 
 
-def test_them_nha_cung_cap_moi_khong_sua_code() -> None:
-    """Thêm hẳn nhà cung cấp mới chỉ bằng cấu hình."""
-    cfg = Settings(
-        _env_file=None,
-        LLM_PROVIDERS={
-            "openai": {
-                "package": "langchain-openai",
-                "module": "langchain_openai",
-                "class_name": "ChatOpenAI",
-                "api_key_field": "GROQ_API_KEY",
-                "model": "gpt-4o",
-                "param_map": {"api_key": "api_key", "model": "model"},
-            }
-        },
-    )
-    assert cfg.llm_provider("openai").model == "gpt-4o"
-    assert "groq" in cfg.LLM_PROVIDERS  # mặc định vẫn còn
+def test_default_is_first_provider_with_a_key() -> None:
+    assert _cfg(GOOGLE_API_KEY="k").llm_default_provider() == "google"
+    assert _cfg(GROQ_API_KEY="k", GOOGLE_API_KEY="k").llm_default_provider() == "groq"
 
 
+def test_no_keys_falls_back_to_first_provider() -> None:
+    """So the error at model-call time names the missing key, instead of a vague error."""
+    assert _cfg().llm_default_provider() == next(iter(C.DEFAULT_LLM_PROVIDERS))
+
+
+def test_whitespace_only_key_does_not_count() -> None:
+    assert _cfg(GROQ_API_KEY="   ", GOOGLE_API_KEY="k").llm_default_provider() == "google"
+
+
+def test_legacy_llm_fields_are_no_longer_editable_on_web() -> None:
+    """Provider/model are chosen in the chat panel — the Settings page must not
+    show these four fields anymore, otherwise the two places would disagree."""
+    for name in ("LLM_PROVIDER", "LLM_MODEL", "LLM_FAST_MODEL", "LLM_PROVIDERS"):
+        assert name not in C.ALL_EDITABLE, name
+        assert name not in Settings.model_fields, name
 
 
 # ---------------------------------------------------------------------------
-# Đổi cấu hình lúc chạy (từ giao diện web)
+# Changing configuration at runtime (from the web UI)
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
 def clean_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Trạng thái cấu hình sạch, không đọc .env của máy, không dính bài test khác."""
+    """Clean configuration state: doesn't read the machine's .env, doesn't leak between tests."""
     monkeypatch.setattr(C.Settings, "model_config", C.SettingsConfigDict(extra="ignore"))
     monkeypatch.setattr(C, "_base", None)
     monkeypatch.setattr(C, "_effective", None)
@@ -230,32 +235,32 @@ def clean_config(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(C, "_callbacks", [])
 
 
-def test_mac_dinh_khong_co_ghi_de(clean_config: None) -> None:
+def test_no_overrides_by_default(clean_config: None) -> None:
     assert C.runtime_overrides() == {}
     assert C.get_settings() is C.get_base_settings()
 
 
-def test_doi_gia_tri_tu_giao_dien(clean_config: None) -> None:
-    C.apply_overrides({"LLM_TEMPERATURE": 0.9, "LLM_PROVIDER": "google"})
+def test_change_values_from_ui(clean_config: None) -> None:
+    C.apply_overrides({"LLM_TEMPERATURE": 0.9, "K8S_EXECUTION_MODE": "read_only"})
 
     cfg = C.get_settings()
     assert cfg.LLM_TEMPERATURE == 0.9
-    assert cfg.LLM_PROVIDER == "google"
-    # .env không bị động tới
+    assert cfg.K8S_EXECUTION_MODE == "read_only"
+    # .env is left untouched
     assert C.get_base_settings().LLM_TEMPERATURE == 0.0
 
 
-def test_proxy_thay_gia_tri_moi(clean_config: None) -> None:
-    """`from app.core.config import settings` phải thấy giá trị mới ngay."""
+def test_proxy_sees_new_values(clean_config: None) -> None:
+    """`from app.core.config import settings` must see new values immediately."""
     proxy = C.settings
-    assert proxy.LLM_PROVIDER == "groq"
+    assert proxy.LLM_MAX_TOKENS == 4096
 
-    C.apply_overrides({"LLM_PROVIDER": "anthropic"})
+    C.apply_overrides({"LLM_MAX_TOKENS": 1234})
 
-    assert proxy.LLM_PROVIDER == "anthropic", "proxy vẫn cầm object cũ"
+    assert proxy.LLM_MAX_TOKENS == 1234, "proxy still holds the old object"
 
 
-def test_dat_none_de_tra_ve_gia_tri_env(clean_config: None) -> None:
+def test_setting_none_restores_env_value(clean_config: None) -> None:
     C.apply_overrides({"LLM_TEMPERATURE": 0.9})
     assert C.get_settings().LLM_TEMPERATURE == 0.9
 
@@ -264,58 +269,58 @@ def test_dat_none_de_tra_ve_gia_tri_env(clean_config: None) -> None:
     assert "LLM_TEMPERATURE" not in C.runtime_overrides()
 
 
-def test_xoa_het_ghi_de(clean_config: None) -> None:
-    C.apply_overrides({"LLM_PROVIDER": "google", "LLM_MAX_TOKENS": 1000})
+def test_clear_all_overrides(clean_config: None) -> None:
+    C.apply_overrides({"LLM_TEMPERATURE": 0.7, "LLM_MAX_TOKENS": 1000})
     C.clear_overrides()
 
     assert C.runtime_overrides() == {}
-    assert C.get_settings().LLM_PROVIDER == "groq"
+    assert C.get_settings().LLM_MAX_TOKENS == 4096
 
 
-def test_chan_truong_khong_duoc_phep_doi(clean_config: None) -> None:
-    """Đổi chuỗi kết nối CSDL hay khoá JWT lúc chạy là vô nghĩa/nguy hiểm."""
+def test_rejects_non_editable_fields(clean_config: None) -> None:
+    """Changing the DB connection string or JWT key at runtime is pointless/dangerous."""
     with pytest.raises(C.ConfigUpdateError, match="DATABASE_URL"):
-        C.apply_overrides({"DATABASE_URL": "postgresql://ke-tan-cong/"})
+        C.apply_overrides({"DATABASE_URL": "postgresql://attacker/"})
 
     with pytest.raises(C.ConfigUpdateError, match="JWT_SECRET"):
         C.apply_overrides({"JWT_SECRET": "hack"})
 
 
-def test_gia_tri_sai_bi_tu_choi_va_khong_ap_dung_gi(clean_config: None) -> None:
-    """Sai một trường thì cả lô bị huỷ, cấu hình đang chạy giữ nguyên."""
-    C.apply_overrides({"LLM_PROVIDER": "google"})
+def test_invalid_value_rejects_whole_batch(clean_config: None) -> None:
+    """One bad field cancels the whole batch; the running configuration stays as is."""
+    C.apply_overrides({"LLM_TEMPERATURE": 0.5})
 
     with pytest.raises(C.ConfigUpdateError):
         C.apply_overrides(
             {
-                "LLM_MAX_TOKENS": 8000,                 # hợp lệ
-                "K8S_EXECUTION_MODE": "khong-ton-tai",  # sai
+                "LLM_MAX_TOKENS": 8000,                  # valid
+                "K8S_EXECUTION_MODE": "does-not-exist",  # invalid
             }
         )
 
     cfg = C.get_settings()
-    assert cfg.LLM_PROVIDER == "google", "cấu hình cũ phải giữ nguyên"
-    assert cfg.LLM_MAX_TOKENS == 4096, "trường hợp lệ trong lô hỏng KHÔNG được áp"
+    assert cfg.LLM_TEMPERATURE == 0.5, "the old configuration must stay unchanged"
+    assert cfg.LLM_MAX_TOKENS == 4096, "valid fields in a failed batch must NOT be applied"
     assert "LLM_MAX_TOKENS" not in C.runtime_overrides()
 
 
-def test_che_giau_khoa_bi_mat(clean_config: None) -> None:
-    C.apply_overrides({"GROQ_API_KEY": "sk-that"})
+def test_secrets_are_redacted(clean_config: None) -> None:
+    C.apply_overrides({"GROQ_API_KEY": "sk-real"})
 
     assert C.runtime_overrides()["GROQ_API_KEY"] == "***"
-    assert C.runtime_overrides(redact_secrets=False)["GROQ_API_KEY"] == "sk-that"
-    # Giá trị thật vẫn dùng được ở trong hệ thống
-    assert C.get_settings().GROQ_API_KEY == "sk-that"
+    assert C.runtime_overrides(redact_secrets=False)["GROQ_API_KEY"] == "sk-real"
+    # The real value is still usable inside the system
+    assert C.get_settings().GROQ_API_KEY == "sk-real"
 
 
-def test_editable_fields_khong_lo_khoa_bi_mat(clean_config: None) -> None:
-    C.apply_overrides({"GROQ_API_KEY": "sk-that", "LLM_TEMPERATURE": 0.5})
+def test_editable_fields_do_not_leak_secrets(clean_config: None) -> None:
+    C.apply_overrides({"GROQ_API_KEY": "sk-real", "LLM_TEMPERATURE": 0.5})
     fields = {f["name"]: f for f in C.editable_fields()}
 
-    khoa = fields["GROQ_API_KEY"]
-    assert khoa["secret"] is True
-    assert khoa["value"] is None, "không được trả giá trị khoá ra giao diện"
-    assert khoa["is_set"] is True
+    key = fields["GROQ_API_KEY"]
+    assert key["secret"] is True
+    assert key["value"] is None, "the key value must not be returned to the UI"
+    assert key["is_set"] is True
 
     temp = fields["LLM_TEMPERATURE"]
     assert temp["secret"] is False
@@ -326,55 +331,44 @@ def test_editable_fields_khong_lo_khoa_bi_mat(clean_config: None) -> None:
     assert "DATABASE_URL" not in fields
 
 
-def test_ghi_de_llm_providers_tung_phan(clean_config: None) -> None:
-    """Đổi model của groq từ giao diện không được xoá các trường khác."""
-    C.apply_overrides({"LLM_PROVIDERS": {"groq": {"model": "model-tu-web"}}})
-
-    groq = C.get_settings().llm_provider("groq")
-    assert groq.model == "model-tu-web"
-    assert groq.module == "langchain_groq"                  # giữ nguyên
-    assert groq.param_map["timeout"] == "request_timeout"   # giữ nguyên
-    assert C.get_settings().llm_provider("google").model == "gemini-2.5-flash"
-
-
-def test_version_tang_sau_moi_lan_doi(clean_config: None) -> None:
-    truoc = C.settings_version()
+def test_version_increments_on_every_change(clean_config: None) -> None:
+    before = C.settings_version()
     C.apply_overrides({"LLM_MAX_TOKENS": 2048})
-    assert C.settings_version() == truoc + 1
+    assert C.settings_version() == before + 1
 
 
-def test_callback_duoc_goi_khi_doi(clean_config: None) -> None:
-    goi: list[int] = []
-    C.on_reload(lambda: goi.append(1))
+def test_callback_runs_on_change(clean_config: None) -> None:
+    calls: list[int] = []
+    C.on_reload(lambda: calls.append(1))
 
     C.apply_overrides({"LLM_MAX_TOKENS": 2048})
     C.clear_overrides()
 
-    assert len(goi) == 2
+    assert len(calls) == 2
 
 
-def test_luu_lai_de_khoi_dong_lai_van_con(clean_config: None) -> None:
-    """Phần đổi trên web được cất vào store và nạp lại ở lần khởi động sau."""
+def test_persisted_so_it_survives_restart(clean_config: None) -> None:
+    """Changes made on the web are saved to the store and reloaded on the next startup."""
     store = C.MemoryOverrideStore()
     C.set_override_store(store)
 
-    C.apply_overrides({"LLM_PROVIDER": "anthropic"})
-    assert store.load() == {"LLM_PROVIDER": "anthropic"}
+    C.apply_overrides({"LLM_TEMPERATURE": 0.3})
+    assert store.load() == {"LLM_TEMPERATURE": 0.3}
 
-    # Giả lập khởi động lại: xoá cấu hình đang có, giữ nguyên store
+    # Simulate a restart: drop the current configuration, keep the store
     C._effective = None  # type: ignore[attr-defined]
     C._base = None  # type: ignore[attr-defined]
     C._overrides = {}  # type: ignore[attr-defined]
 
-    assert C.get_settings().LLM_PROVIDER == "anthropic"
+    assert C.get_settings().LLM_TEMPERATURE == 0.3
 
 
-def test_bo_qua_du_lieu_luu_bi_hong(clean_config: None) -> None:
-    """Store chứa giá trị rác thì chạy bằng .env thuần, không sập lúc khởi động."""
+def test_ignores_corrupted_persisted_data(clean_config: None) -> None:
+    """If the store holds garbage, run on plain .env instead of crashing at startup."""
 
     class BrokenStore:
         def load(self) -> dict[str, Any]:
-            return {"K8S_EXECUTION_MODE": "gia-tri-rac"}
+            return {"K8S_EXECUTION_MODE": "garbage-value"}
 
         def save(self, values: dict[str, Any]) -> None: ...
 
@@ -386,41 +380,41 @@ def test_bo_qua_du_lieu_luu_bi_hong(clean_config: None) -> None:
     assert C.runtime_overrides() == {}
 
 
-def test_reload_from_env_giu_phan_doi_tren_web(clean_config: None) -> None:
-    """Đọc lại .env không được thổi bay thứ người dùng đã đổi."""
-    C.apply_overrides({"LLM_PROVIDER": "google"})
+def test_reload_from_env_keeps_web_changes(clean_config: None) -> None:
+    """Re-reading .env must not wipe out what the user changed."""
+    C.apply_overrides({"LLM_TEMPERATURE": 0.3})
     C.reload_from_env()
 
-    assert C.get_settings().LLM_PROVIDER == "google"
-    assert C.runtime_overrides() == {"LLM_PROVIDER": "google"}
+    assert C.get_settings().LLM_TEMPERATURE == 0.3
+    assert C.runtime_overrides() == {"LLM_TEMPERATURE": 0.3}
 
 
 # ---------------------------------------------------------------------------
-# Bộ nhớ đệm model theo cấu hình
+# Model cache tied to configuration
 # ---------------------------------------------------------------------------
 
 
-def test_client_dang_ky_don_dem() -> None:
-    """client.py phải đăng ký hàm dọn đệm vào danh sách callback của config."""
+def test_client_registers_cache_clearing() -> None:
+    """client.py must register its cache-clearing function in config's callback list."""
     from app.integrations.llm import client
 
     assert client._clear_model_cache in C._callbacks, (
-        "client.py quên gắn @on_reload — model cũ sẽ nằm lại trong bộ nhớ đệm"
+        "client.py forgot @on_reload — stale models will stay in the cache"
     )
 
 
-def test_dem_bi_xoa_khi_doi_cau_hinh(
+def test_cache_cleared_when_config_changes(
     clean_config: None, fake_module: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Đổi cấu hình trên web thì bộ nhớ đệm model phải RỖNG.
+    """Changing configuration on the web must leave the model cache EMPTY.
 
-    Không kiểm bằng cách so tên model: `settings_version()` nằm trong khoá đệm
-    nên model mới vẫn được dựng dù callback có chạy hay không — bài test kiểu
-    đó xanh cả khi cơ chế dọn đệm đã hỏng.
+    Not checked by comparing model names: `settings_version()` is part of the
+    cache key, so a new model gets built whether or not the callback runs — a
+    test like that stays green even when cache clearing is broken.
     """
     from app.integrations.llm import client
 
-    C.on_reload(client._clear_model_cache)  # fixture đã xoá danh sách callback
+    C.on_reload(client._clear_model_cache)  # the fixture wiped the callback list
     client._clear_model_cache()
 
     cfg = fake_settings()
@@ -430,51 +424,51 @@ def test_dem_bi_xoa_khi_doi_cau_hinh(
     assert client.cache_size() == 1
 
     C.apply_overrides({"LLM_MAX_TOKENS": 2048})
-    assert client.cache_size() == 0, "đệm không được dọn khi cấu hình đổi"
+    assert client.cache_size() == 0, "cache was not cleared when the configuration changed"
 
 
-def test_dem_lai_model_giua_hai_lan_goi(fake_module: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Gọi hai lần cùng tham số phải trả về cùng một đối tượng."""
+def test_model_is_reused_between_calls(fake_module: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two calls with the same parameters must return the same object."""
     from app.integrations.llm import client
 
     client._clear_model_cache()
     cfg = fake_settings()
-    # client.py import get_settings vào namespace riêng -> phải vá ở đó
+    # client.py imports get_settings into its own namespace -> must patch it there
     monkeypatch.setattr(client, "get_settings", lambda: cfg)
     assert client.get_llm() is client.get_llm()
 
 
 # ---------------------------------------------------------------------------
-# Đối chiếu với thư viện THẬT
+# Cross-check against the REAL library
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("ten", ["groq", "google", "anthropic"])
-def test_param_map_khop_voi_class_that(ten: str) -> None:
-    """param_map phải trùng tên tham số thật của class LangChain.
+@pytest.mark.parametrize("name", ["groq", "google"])
+def test_param_map_matches_real_class(name: str) -> None:
+    """param_map must match the real parameter names of the LangChain class.
 
-    Các bài test khác dùng module giả nên ánh xạ sai vẫn xanh. Bài này nạp
-    thư viện thật — bỏ qua nếu nhà cung cấp đó chưa được cài.
+    The other tests use a fake module, so a wrong mapping still passes. This
+    one loads the real library — skipped if that provider isn't installed.
     """
     from app.integrations.llm.provider import build_params, import_chat_class
 
-    spec = C.DEFAULT_LLM_PROVIDERS[ten]
+    spec = C.DEFAULT_LLM_PROVIDERS[name]
     try:
         cls = import_chat_class(spec)
     except Exception:
-        pytest.skip(f"chưa cài {spec.package}")
+        pytest.skip(f"{spec.package} not installed")
 
-    hop_le = set(getattr(cls, "model_fields", {}) or {})
-    hop_le |= {
+    valid = set(getattr(cls, "model_fields", {}) or {})
+    valid |= {
         f.alias
         for f in (getattr(cls, "model_fields", {}) or {}).values()
         if getattr(f, "alias", None)
     }
 
-    sai = [thuc for thuc in spec.param_map.values() if thuc not in hop_le]
-    assert not sai, f"{spec.class_name} không nhận tham số: {sai}"
+    wrong = [real for real in spec.param_map.values() if real not in valid]
+    assert not wrong, f"{spec.class_name} does not accept parameters: {wrong}"
 
     cfg = Settings(
-        _env_file=None, GROQ_API_KEY="x", GOOGLE_API_KEY="x", ANTHROPIC_API_KEY="x"
+        _env_file=None, GROQ_API_KEY="x", GOOGLE_API_KEY="x"
     )
-    cls(**build_params(cfg, ten))  # dựng được thật thì mới chắc chắn đúng
+    cls(**build_params(cfg, name))  # only building it for real proves it's right

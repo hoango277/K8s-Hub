@@ -1,74 +1,81 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { RotateCcw, Settings } from "lucide-react";
 
 import { FieldInput } from "@/components/settings/field-input";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { PageHeader } from "@/components/ui/page-header";
+import { Spinner } from "@/components/ui/spinner";
 import { useReloadEnv, useResetSettings, useSettings, useUpdateSettings } from "@/hooks/use-settings";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { GROUP_ORDER, groupOf, NGUY_HIEM, type SettingField } from "@/types/settings";
+import { DANGEROUS_OPTIONS, GROUP_ORDER, groupOf, type SettingField } from "@/types/settings";
 
-/** Giá trị đang hiển thị cho một trường: đã sửa thì lấy bản nháp, chưa thì lấy từ máy chủ. */
+/** Value shown for a field: the draft if edited, otherwise the server value. */
 type Draft = Record<string, unknown>;
 
-function hienThi(field: SettingField): unknown {
-  // Bí mật không bao giờ được máy chủ trả giá trị về.
+function displayValue(field: SettingField): unknown {
+  // The server never returns the value of a secret.
   return field.secret ? "" : field.value;
 }
 
-function bangNhau(a: unknown, b: unknown): boolean {
+function isEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
 export function SettingsForm() {
-  const { data, isLoading, error } = useSettings();
-  const capNhat = useUpdateSettings();
-  const datLai = useResetSettings();
-  const napLai = useReloadEnv();
+  const { data, isLoading, error, refetch } = useSettings();
+  const update = useUpdateSettings();
+  const resetAll = useResetSettings();
+  const reloadEnv = useReloadEnv();
 
   const [draft, setDraft] = useState<Draft>({});
-  const [thongBao, setThongBao] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
 
-  const daSua = useMemo(() => {
+  const changed = useMemo(() => {
     if (!data) return [] as string[];
     return Object.keys(draft).filter((name) => {
       const field = data.fields.find((f) => f.name === name);
       if (!field) return false;
-      // Với bí mật, chỉ tính là sửa khi người dùng gõ gì đó.
+      // A secret only counts as changed once the user types something.
       if (field.secret) return typeof draft[name] === "string" && draft[name] !== "";
-      return !bangNhau(draft[name], field.value);
+      return !isEqual(draft[name], field.value);
     });
   }, [draft, data]);
 
-  const dangGui = capNhat.isPending || datLai.isPending || napLai.isPending;
-  const loiGui = capNhat.error instanceof ApiError ? capNhat.error.message : null;
+  const isSubmitting = update.isPending || resetAll.isPending || reloadEnv.isPending;
+  const submitError = update.error instanceof ApiError ? update.error.message : null;
 
-  function datGiaTri(name: string, value: unknown) {
+  function setValue(name: string, value: unknown) {
     setDraft((d) => ({ ...d, [name]: value }));
-    setThongBao(null);
-    capNhat.reset();
+    setNotice(null);
+    update.reset();
   }
 
-  function huyBo() {
+  function discard() {
     setDraft({});
-    setThongBao(null);
-    capNhat.reset();
+    setNotice(null);
+    update.reset();
   }
 
-  async function luu() {
-    if (!data || daSua.length === 0) return;
+  async function save() {
+    if (!data || changed.length === 0) return;
 
     const values: Record<string, unknown> = {};
-    for (const name of daSua) {
+    for (const name of changed) {
       const field = data.fields.find((f) => f.name === name)!;
       let value = draft[name];
 
-      // Ô JSON được gõ dạng chữ, phải parse trước khi gửi.
+      // JSON fields are typed as text and must be parsed before sending.
       if (field.type === "object" && typeof value === "string") {
         try {
           value = value.trim() === "" ? {} : JSON.parse(value);
         } catch {
-          setThongBao(`${field.name}: không phải JSON hợp lệ`);
+          setNotice(`${field.name}: not valid JSON`);
           return;
         }
       }
@@ -76,83 +83,88 @@ export function SettingsForm() {
     }
 
     try {
-      await capNhat.mutateAsync({ values });
+      await update.mutateAsync({ values });
       setDraft({});
-      setThongBao(`Đã lưu ${daSua.length} thay đổi`);
+      setNotice(`Saved ${changed.length} ${changed.length === 1 ? "change" : "changes"}`);
     } catch {
-      /* lỗi hiển thị qua capNhat.error */
+      /* the error is shown via update.error */
     }
   }
 
-  async function khoiPhuc(field: SettingField) {
-    // Gửi null để backend bỏ ghi đè, trả về giá trị trong .env.
-    await capNhat.mutateAsync({ values: { [field.name]: null } });
+  async function restore(field: SettingField) {
+    // Sending null makes the backend drop the override and fall back to .env.
+    await update.mutateAsync({ values: { [field.name]: null } });
     setDraft((d) => {
-      const { [field.name]: _bo, ...con } = d;
-      return con;
+      const rest = { ...d };
+      delete rest[field.name];
+      return rest;
     });
-    setThongBao(`Đã khôi phục ${field.name} về giá trị trong .env`);
+    setNotice(`Restored ${field.name} to its .env value`);
   }
 
   if (isLoading) {
-    return <p className="p-8 text-sm text-[var(--muted-foreground)]">Đang tải cấu hình…</p>;
-  }
-
-  if (error || !data) {
     return (
-      <div className="m-8 rounded-lg border border-[var(--destructive)] p-4 text-sm">
-        <p className="font-medium text-[var(--destructive)]">Không tải được cấu hình</p>
-        <p className="mt-1 text-[var(--muted-foreground)]">
-          {error instanceof Error ? error.message : "Lỗi không xác định"}
-        </p>
+      <div className="flex items-center justify-center gap-2 p-16 text-sm text-[var(--muted-foreground)]">
+        <Spinner /> Loading settings…
       </div>
     );
   }
 
-  const theoNhom = GROUP_ORDER.map((g) => ({
-    ten: g,
+  if (error || !data) {
+    return (
+      <div className="mx-auto max-w-4xl px-6 pt-8">
+        <div role="alert" className="rounded-lg border border-[var(--destructive)]/40 bg-[var(--destructive)]/5 p-5 text-sm">
+          <p className="font-medium text-[var(--destructive)]">Couldn&apos;t load settings</p>
+          <p className="mt-1 text-[var(--muted-foreground)]">
+            {error instanceof Error ? error.message : "Check that the backend is running, then try again."}
+          </p>
+          <Button variant="outline" size="sm" className="mt-3" onClick={() => void refetch()}>
+            Try again
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const groups = GROUP_ORDER.map((g) => ({
+    name: g,
     fields: data.fields.filter((f) => groupOf(f.name) === g),
   })).filter((g) => g.fields.length > 0);
 
   return (
-    <div className="mx-auto max-w-4xl px-6 pb-32 pt-8">
-      <header className="mb-8">
-        <h1 className="text-2xl font-semibold">Cấu hình hệ thống</h1>
-        <p className="mt-1 text-sm text-[var(--muted-foreground)]">
-          Thay đổi ở đây có hiệu lực ngay, không cần khởi động lại. Giá trị gốc nằm trong
-          file <code className="rounded bg-[var(--muted)] px-1 py-0.5 text-xs">.env</code>.
-        </p>
-      </header>
+    <div className="mx-auto max-w-4xl px-6 pt-8">
+      <PageHeader
+        icon={Settings}
+        title="System settings"
+        description={
+          <>
+            Changes here take effect immediately, no restart needed. The base values live in the{" "}
+            <code className="rounded bg-[var(--muted)] px-1 py-0.5 text-xs">.env</code> file.
+          </>
+        }
+      />
 
-      {theoNhom.map((nhom) => (
-        <section key={nhom.ten} className="mb-10">
+      {groups.map((group) => (
+        <section key={group.name} className="mb-10">
           <h2 className="mb-4 text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
-            {nhom.ten}
+            {group.name}
           </h2>
 
           <div className="divide-y rounded-lg border">
-            {nhom.fields.map((field) => {
-              const coNhap = field.name in draft;
-              const value = coNhap ? draft[field.name] : hienThi(field);
-              const daDoi = daSua.includes(field.name);
-              const canhBao =
-                NGUY_HIEM[field.name]?.includes(String(value)) ?? false;
+            {group.fields.map((field) => {
+              const hasDraft = field.name in draft;
+              const value = hasDraft ? draft[field.name] : displayValue(field);
+              const isChanged = changed.includes(field.name);
+              const showWarning =
+                DANGEROUS_OPTIONS[field.name]?.includes(String(value)) ?? false;
 
               return (
                 <div key={field.name} className="grid gap-3 p-4 sm:grid-cols-[1fr_20rem]">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <code className="text-sm font-medium">{field.name}</code>
-                      {field.overridden && (
-                        <span className="rounded-full bg-[var(--accent)] px-2 py-0.5 text-[11px] text-[var(--accent-foreground)]">
-                          đang ghi đè
-                        </span>
-                      )}
-                      {daDoi && (
-                        <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">
-                          chưa lưu
-                        </span>
-                      )}
+                      {field.overridden && <Badge>Overridden</Badge>}
+                      {isChanged && <Badge tone="warning">Unsaved</Badge>}
                     </div>
 
                     {field.description && (
@@ -164,18 +176,18 @@ export function SettingsForm() {
                     {field.overridden && !field.secret && (
                       <button
                         type="button"
-                        onClick={() => void khoiPhuc(field)}
-                        disabled={dangGui}
+                        onClick={() => void restore(field)}
+                        disabled={isSubmitting}
                         className="mt-1.5 text-xs text-[var(--muted-foreground)] underline underline-offset-2 hover:text-[var(--foreground)] disabled:opacity-50"
                       >
-                        Khôi phục về {JSON.stringify(field.env_value)}
+                        Restore to {JSON.stringify(field.env_value)}
                       </button>
                     )}
 
-                    {canhBao && (
+                    {showWarning && (
                       <p className="mt-2 rounded-md bg-[var(--destructive)]/10 px-2 py-1.5 text-xs text-[var(--destructive)]">
-                        Chế độ này cho phép AI tự thực hiện thao tác lên cụm mà không cần người
-                        duyệt. Chỉ dùng trên cụm thử nghiệm.
+                        This mode lets the AI act on the cluster without human approval. Use it on
+                        test clusters only.
                       </p>
                     )}
                   </div>
@@ -184,11 +196,11 @@ export function SettingsForm() {
                     <FieldInput
                       field={field}
                       value={value}
-                      onChange={(v) => datGiaTri(field.name, v)}
+                      onChange={(v) => setValue(field.name, v)}
                     />
                     {field.secret && field.is_set && (
                       <p className="mt-1 text-[11px] text-[var(--muted-foreground)]">
-                        Đã có khoá. Để trống nếu không muốn đổi.
+                        A key is already set. Leave blank to keep it.
                       </p>
                     )}
                   </div>
@@ -199,66 +211,73 @@ export function SettingsForm() {
         </section>
       ))}
 
-      {/* Thanh hành động dính đáy màn hình */}
-      <div className="fixed inset-x-0 bottom-0 border-t bg-[var(--background)]/95 backdrop-blur">
-        <div className="mx-auto flex max-w-4xl flex-wrap items-center gap-3 px-6 py-3">
-          <button
-            type="button"
-            onClick={() => void luu()}
-            disabled={daSua.length === 0 || dangGui}
-            className="rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] transition hover:opacity-90 disabled:opacity-40"
-          >
-            {capNhat.isPending ? "Đang lưu…" : `Lưu${daSua.length ? ` (${daSua.length})` : ""}`}
-          </button>
+      {/* Action bar sticks to the bottom of the CONTENT AREA — `sticky`, not `fixed`:
+          fixed spans the full screen width, so it covers the sidebar and drifts off the content column. */}
+      <div className="sticky bottom-0 -mx-6 mt-2 border-t bg-[var(--background)]/95 backdrop-blur">
+        <div className="flex flex-wrap items-center gap-3 px-6 py-3">
+          <Button onClick={() => void save()} disabled={changed.length === 0 || isSubmitting}>
+            {update.isPending ? "Saving…" : `Save changes${changed.length ? ` (${changed.length})` : ""}`}
+          </Button>
 
-          <button
-            type="button"
-            onClick={huyBo}
-            disabled={daSua.length === 0 || dangGui}
-            className="rounded-md border px-4 py-2 text-sm transition hover:bg-[var(--accent)] disabled:opacity-40"
-          >
-            Huỷ
-          </button>
+          <Button variant="outline" onClick={discard} disabled={changed.length === 0 || isSubmitting}>
+            Cancel
+          </Button>
 
-          <div className="ml-auto flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => void napLai.mutateAsync()}
-              disabled={dangGui}
-              title="Đọc lại file .env từ đĩa, giữ nguyên phần đã đổi ở đây"
-              className="text-sm text-[var(--muted-foreground)] underline underline-offset-2 hover:text-[var(--foreground)] disabled:opacity-40"
+          <div className="ml-auto flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void reloadEnv.mutateAsync().then(() => setNotice("Reloaded the .env file"))}
+              disabled={isSubmitting}
+              title="Re-read the .env file from disk, keeping the changes made here"
             >
-              Đọc lại .env
-            </button>
+              {reloadEnv.isPending ? <Spinner /> : <RotateCcw aria-hidden />}
+              Reload .env
+            </Button>
 
-            <button
-              type="button"
-              onClick={() => {
-                if (confirm("Bỏ hết thay đổi và quay về đúng file .env?")) {
-                  void datLai.mutateAsync().then(() => setDraft({}));
-                }
-              }}
-              disabled={Object.keys(data.overrides).length === 0 || dangGui}
-              className="text-sm text-[var(--destructive)] underline underline-offset-2 disabled:opacity-40"
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setConfirmReset(true)}
+              disabled={Object.keys(data.overrides).length === 0 || isSubmitting}
+              className="text-[var(--destructive)] hover:text-[var(--destructive)]"
             >
-              Đặt lại tất cả
-            </button>
+              Reset all
+            </Button>
           </div>
         </div>
 
-        {(loiGui || thongBao) && (
+        {(submitError || notice) && (
           <div
             className={cn(
               "border-t px-6 py-2 text-sm",
-              loiGui
+              submitError
                 ? "bg-[var(--destructive)]/10 text-[var(--destructive)]"
                 : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
             )}
           >
-            <div className="mx-auto max-w-4xl">{loiGui ?? thongBao}</div>
+            <div role={submitError ? "alert" : "status"}>
+              {submitError ?? notice}
+            </div>
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={confirmReset}
+        destructive
+        title="Reset all settings?"
+        description="Every change saved from this page is discarded and the system goes back to the values in the .env file. API keys entered here are removed too."
+        confirmLabel="Reset"
+        onConfirm={() => {
+          setConfirmReset(false);
+          void resetAll.mutateAsync().then(() => {
+            setDraft({});
+            setNotice("Restored the settings from .env");
+          });
+        }}
+        onCancel={() => setConfirmReset(false)}
+      />
     </div>
   );
 }

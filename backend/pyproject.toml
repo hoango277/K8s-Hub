@@ -3,19 +3,19 @@ name = "k8s-hub-backend"
 version = "0.1.0"
 description = "K8s Hub - AI-assisted Kubernetes operations platform (backend)"
 readme = "README.md"
-# Máy phát triển đang chạy 3.14.
+# The development machine runs 3.14.
 #
-# Sàn là 3.11 vì một lý do cụ thể: từ 3.11 trở lên LangChain mới tự chuyền
-# RunnableConfig qua contextvars trong hàm async. Trên 3.10, nút nào quên
-# truyền config xuống sẽ MẤT STREAMING mà không báo lỗi gì — khung chat chỉ
-# hiện công cụ chạy, không hiện chữ nào. Xem app/modules/nl_command/agent.py.
+# The floor is 3.11 for a specific reason: only from 3.11 does LangChain pass
+# RunnableConfig through contextvars in async functions. On 3.10, a node that forgets
+# to pass config down LOSES STREAMING silently — the chat panel only
+# shows tools running, never any text. See app/modules/nl_command/agent.py.
 requires-python = ">=3.11"
 
 dependencies = [
     # --- Web framework ---
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
-    "pydantic>=2.9.0",
+    "pydantic[email]>=2.9.0",
     "pydantic-settings>=2.6.0",
     "sse-starlette>=2.1.3",
     "python-multipart>=0.0.12",
@@ -30,14 +30,15 @@ dependencies = [
     "redis>=5.2.0",
 
     # --- LLM / agent ---
-    # Không khai `anthropic` ở đây: langchain-anthropic đã kéo nó theo.
     "langgraph>=0.2.50",
     "langgraph-checkpoint-postgres>=2.0.0",
     "langchain-core>=0.3.20",
-    # Nhà cung cấp LLM — chỉ cần cài cái nào đang dùng (xem config/llm.yaml)
+    # The umbrella package is only needed by the Langfuse CallbackHandler: it reads
+    # langchain.__version__ to tell v0 from v1. Without it, the import fails.
+    "langchain>=1.0",
+    # LLM providers — install only the ones in use
     "langchain-groq>=0.2.3",
     "langchain-google-genai>=2.0.8",
-    "langchain-anthropic>=0.3.0",
     "mcp>=1.1.0",
 
     # --- Kubernetes / observability sources ---
@@ -46,7 +47,11 @@ dependencies = [
     "pyyaml>=6.0.2",
 
     # --- Observability of the LLM/agent (use case) ---
+    # Langfuse 3+ is built on OpenTelemetry. The two otel packages are declared explicitly
+    # because app/modules/observability/ imports them directly, not only via langfuse.
     "langfuse>=3.0.0",
+    "opentelemetry-api>=1.33.1",
+    "opentelemetry-sdk>=1.33.1",
 
     # --- Self-monitoring of this app (metrics + structured logs) ---
     "prometheus-fastapi-instrumentator>=7.0.0",
@@ -54,7 +59,9 @@ dependencies = [
 
     # --- Auth ---
     "python-jose[cryptography]>=3.3.0",
-    "passlib[bcrypt]>=1.7.4",
+    # Do NOT use passlib: unmaintained since 2020 and broken with
+    # bcrypt>=4.1 (see app/core/security.py). Call bcrypt directly.
+    "bcrypt>=4.0",
 ]
 
 [project.optional-dependencies]

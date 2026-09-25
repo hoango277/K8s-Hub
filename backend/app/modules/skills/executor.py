@@ -1,1 +1,1 @@
-"""Thuc thi skill, stream progress event, ghi audit log. TODO."""
+"""Run skills, stream progress events, write the audit log. TODO."""

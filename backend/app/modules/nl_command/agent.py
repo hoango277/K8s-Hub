@@ -1,21 +1,22 @@
-"""Đồ thị xử lý một lượt trò chuyện.
+"""The graph that handles one chat turn.
 
-Vòng chạy rất ngắn:
+The loop is very short:
 
-    người dùng hỏi -> [trợ lý] -> có gọi công cụ? -> [công cụ] -> [trợ lý] -> trả lời
+    user asks -> [assistant] -> tool call? -> [tools] -> [assistant] -> answer
 
-`tools_condition` là thứ quyết định rẽ nhánh: nếu câu trả lời của mô hình có
-kèm yêu cầu gọi công cụ thì đi tiếp sang nút công cụ, không thì kết thúc.
-Vòng lặp này chạy đến khi mô hình không đòi gọi gì nữa.
+`tools_condition` decides the branch: if the model's reply includes a tool-call
+request, go on to the tools node, otherwise finish. The loop runs until the
+model stops asking for tools.
 
-Vì sao dùng LangGraph chứ không tự viết vòng while: LangGraph phát ra sự kiện
-chi tiết cho từng bước (`astream_events`), và chính nhờ đó khung chat mới hiện
-được "đang gọi công cụ X" theo thời gian thực. Tự viết thì phải tự làm lại
-toàn bộ phần đó.
+Why LangGraph instead of a hand-written while loop: LangGraph emits detailed
+events for every step (`astream_events`), and that is exactly what lets the
+chat panel show "calling tool X" in real time. Writing it by hand would mean
+rebuilding all of that.
 
-Chưa gắn checkpointer: lịch sử được nạp lại từ CSDL của chính hệ thống
-(bảng `messages`) ở mỗi lượt, nên không cần LangGraph nhớ hộ. Khi làm bước
-duyệt thao tác — cần dừng giữa chừng rồi chạy tiếp — thì mới cần checkpointer.
+No checkpointer yet: history is reloaded from the system's own database
+(the `messages` table) on every turn, so LangGraph doesn't need to remember it
+for us. A checkpointer only becomes necessary with the action approval step —
+which needs to pause midway and resume later.
 """
 
 from __future__ import annotations
@@ -37,8 +38,8 @@ from app.modules.nl_command.tools import get_tools
 
 logger = logging.getLogger(__name__)
 
-# Chặn vòng lặp gọi công cụ chạy mãi. Mỗi vòng là 2 bước (trợ lý + công cụ),
-# nên con số này cho phép khoảng 12 lần gọi công cụ trong một lượt.
+# Stops the tool-calling loop from running forever. Each round is 2 steps
+# (assistant + tools), so this number allows about 12 tool calls per turn.
 RECURSION_LIMIT = 25
 
 
@@ -48,76 +49,78 @@ def build_chat_graph(
     model: str | None = None,
     tools: Sequence[BaseTool] | None = None,
 ) -> Any:
-    """Dựng đồ thị cho một lượt trò chuyện.
+    """Build the graph for one chat turn.
 
     Args:
-        provider: Ép nhà cung cấp cho lượt này. Bỏ trống thì theo cấu hình.
-        model:    Ép tên model cho lượt này.
-        tools:    Ép danh sách công cụ. Chủ yếu dùng cho test.
+        provider: Force the provider for this turn. If empty, follow the configuration.
+        model:    Force the model name for this turn.
+        tools:    Force the tool list. Mainly used by tests.
     """
-    cong_cu = list(get_tools() if tools is None else tools)
+    tool_list = list(get_tools() if tools is None else tools)
     llm = get_llm(provider=provider, model=model)
 
-    # Không có công cụ nào thì đừng gọi bind_tools — vài nhà cung cấp sẽ báo
-    # lỗi khi nhận danh sách rỗng.
-    llm_da_gan = llm.bind_tools(cong_cu) if cong_cu else llm
+    # With no tools, don't call bind_tools — some providers raise an error when
+    # given an empty list.
+    bound_llm = llm.bind_tools(tool_list) if tool_list else llm
 
-    loi_nhac = SystemMessage(content=build_system_prompt(cong_cu))
+    system_message = SystemMessage(content=build_system_prompt(tool_list))
 
-    async def tro_ly(state: ChatState, config: RunnableConfig) -> dict[str, list[AnyMessage]]:
-        """Hỏi mô hình.
+    async def assistant(state: ChatState, config: RunnableConfig) -> dict[str, list[AnyMessage]]:
+        """Ask the model.
 
-        Lời nhắc hệ thống được ghép vào đây chứ không lưu trong trạng thái —
-        nếu lưu, mỗi vòng lặp gọi công cụ sẽ thêm một bản nữa.
+        The system prompt is prepended here rather than stored in the state —
+        if it were stored, every tool-calling round would add another copy.
 
-        Truyền `config` xuống `ainvoke` là BẮT BUỘC, đừng bỏ đi cho gọn.
-        Từ Python 3.11 trở lên LangChain tự chuyền config qua contextvars nên
-        bỏ quên vẫn chạy, nhưng trên 3.10 thì KHÔNG: mô hình chạy tách rời khỏi
-        luồng sự kiện, và hậu quả là khung chat không nhận được chữ nào, chỉ
-        thấy công cụ chạy. Lỗi đó không ném ngoại lệ, chỉ im lặng mất streaming
-        — rất dễ tưởng nhầm là do nhà cung cấp. Đây cũng là lý do dự án đặt sàn
-        Python ở 3.11 (xem pyproject.toml).
+        Passing `config` down to `ainvoke` is MANDATORY, don't drop it to tidy
+        up. From Python 3.11 on, LangChain propagates config through
+        contextvars, so forgetting it still works, but on 3.10 it does NOT: the
+        model runs detached from the event stream, and as a result the chat
+        panel receives no text at all, only sees the tools running. That bug
+        raises no exception, streaming just silently disappears — very easy to
+        mistake for a provider problem. This is also why the project sets its
+        Python floor at 3.11 (see pyproject.toml).
         """
-        tra_loi = await llm_da_gan.ainvoke([loi_nhac, *state["messages"]], config)
-        return {"messages": [tra_loi]}
+        reply = await bound_llm.ainvoke([system_message, *state["messages"]], config)
+        return {"messages": [reply]}
 
-    do_thi = StateGraph(ChatState)
-    do_thi.add_node("tro_ly", tro_ly)
-    do_thi.add_edge(START, "tro_ly")
+    graph = StateGraph(ChatState)
+    graph.add_node("assistant", assistant)
+    graph.add_edge(START, "assistant")
 
-    if cong_cu:
-        do_thi.add_node("cong_cu", ToolNode(cong_cu))
-        # tools_condition trả về "tools" khi mô hình đòi gọi công cụ, END khi không.
-        do_thi.add_conditional_edges(
-            "tro_ly",
+    if tool_list:
+        graph.add_node("tools", ToolNode(tool_list))
+        # tools_condition returns "tools" when the model asks for a tool, END otherwise.
+        graph.add_conditional_edges(
+            "assistant",
             tools_condition,
-            {"tools": "cong_cu", END: END},
+            {"tools": "tools", END: END},
         )
-        do_thi.add_edge("cong_cu", "tro_ly")
+        graph.add_edge("tools", "assistant")
     else:
-        do_thi.add_edge("tro_ly", END)
+        graph.add_edge("assistant", END)
 
-    return do_thi.compile()
+    return graph.compile()
 
 
 def history_to_messages(rows: Iterable[Any]) -> list[AnyMessage]:
-    """Đổi lịch sử trong CSDL thành tin nhắn cho mô hình.
+    """Convert history from the database into messages for the model.
 
-    CHỈ lấy phần chữ của người dùng và trợ lý. Các lần gọi công cụ ở lượt trước
-    bị bỏ qua có chủ ý: muốn gửi lại chúng thì phải gửi kèm ĐỦ cặp yêu cầu gọi
-    và kết quả trả về, thiếu một vế là nhà cung cấp trả lỗi. Kết quả tra cứu cũ
-    cũng thường đã lỗi thời — bắt trợ lý tra lại thì đúng hơn là cho nó tin vào
-    số liệu từ mười phút trước.
+    ONLY the user's and assistant's text is taken. Tool calls from previous
+    turns are deliberately skipped: resending them would require sending BOTH
+    halves of each call request / result pair, and if either half is missing
+    the provider returns an error. Old lookup results are usually stale anyway
+    — making the assistant look things up again is more correct than letting
+    it trust numbers from ten minutes ago.
     """
     messages: list[AnyMessage] = []
     for row in rows:
-        noi_dung = (row.content or "").strip()
-        if not noi_dung:
+        content = (row.content or "").strip()
+        if not content:
             continue
         if row.role == "user":
-            messages.append(HumanMessage(content=noi_dung))
+            messages.append(HumanMessage(content=content))
         elif row.role == "assistant" and row.status == "complete":
-            messages.append(AIMessage(content=noi_dung))
+            messages.append(AIMessage(content=content))
     return messages
 
 

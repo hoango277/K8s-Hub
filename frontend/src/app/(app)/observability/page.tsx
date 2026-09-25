@@ -1,15 +1,26 @@
-// USE CASE: Observability của LLM
-//
-// Trang này KHÔNG phải dashboard giám sát cụm K8s (cái đó thuộc RCA / Grafana).
-// Nó trả lời: LLM đã làm gì, tốn bao nhiêu, và đã tác động gì lên cluster.
-//
-// TODO:
-//   - Trace list (Langfuse): request → tool call → kết quả
-//   - Token / cost / latency theo thời gian, theo user, theo use case
-//   - Impact view: join trace ↔ audit log — resource/namespace nào bị đụng vào
-//   - Chất lượng: approval rate, reject rate, dry-run fail rate
-//   - Link "Mở trong Langfuse" theo trace_id
+import { Telescope } from "lucide-react";
 
+import { ComingSoon } from "@/components/layout/coming-soon";
+
+export const metadata = { title: "AI observability · K8s Hub" };
+
+// This page is NOT a K8s cluster monitoring dashboard (that belongs to
+// Diagnosis / Grafana). It answers: what did the assistant do, what did it
+// cost, and what did it change in the cluster.
 export default function ObservabilityPage() {
-  return null;
+  return (
+    <ComingSoon
+      icon={Telescope}
+      title="AI observability"
+      description="What the assistant did, what it cost, and what it changed in the cluster."
+      feature={[
+        "Traces from Langfuse: question, tools called, results",
+        "Tokens, cost and latency over time and per user",
+        "Which resources and namespaces were changed — linking traces to the audit log",
+        "Approval, rejection and failed dry-run rates",
+        "Open a trace directly in Langfuse",
+        "Score answer quality against a fixed dataset",
+      ]}
+    />
+  );
 }

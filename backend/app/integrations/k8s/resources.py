@@ -1,1 +1,1 @@
-"""Wrapper doc/ghi resource, server-side apply. TODO."""
+"""Resource read/write wrapper, server-side apply. TODO."""

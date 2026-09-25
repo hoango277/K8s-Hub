@@ -1,1 +1,1 @@
-<!-- System prompt cho RCA agent. TODO -->
+<!-- System prompt for the RCA agent. TODO -->

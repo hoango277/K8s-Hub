@@ -1,1 +1,1 @@
-"""Collector: container logs (Loki hoac K8s API). TODO."""
+"""Collector: container logs (Loki or the K8s API). TODO."""

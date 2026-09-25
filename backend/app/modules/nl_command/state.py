@@ -1,9 +1,9 @@
-"""Trạng thái mà đồ thị LangGraph mang theo giữa các bước.
+"""The state the LangGraph graph carries between steps.
 
-Chỉ có một thứ duy nhất: danh sách tin nhắn. `add_messages` là bộ gộp của
-LangGraph — nút nào trả về tin nhắn mới thì chúng được NỐI vào danh sách cũ
-chứ không ghi đè, và tin nhắn trùng id thì được thay thế. Không có nó, mỗi
-vòng lặp gọi công cụ sẽ xoá sạch ngữ cảnh phía trước.
+There is only one thing: the message list. `add_messages` is LangGraph's
+reducer — new messages returned by a node are APPENDED to the old list rather
+than overwriting it, and messages with the same id are replaced. Without it,
+every tool-calling round would wipe out the preceding context.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from langgraph.graph.message import add_messages
 
 
 class ChatState(TypedDict):
-    """Trạng thái của một lượt trò chuyện."""
+    """The state of one chat turn."""
 
     messages: Annotated[list[AnyMessage], add_messages]
 

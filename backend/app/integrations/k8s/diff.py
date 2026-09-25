@@ -1,1 +1,1 @@
-"""Sinh diff manifest before/after. TODO."""
+"""Generate before/after manifest diffs. TODO."""

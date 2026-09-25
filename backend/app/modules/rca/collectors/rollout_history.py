@@ -1,1 +1,1 @@
-"""Collector: lich su deploy/rollout, image thay doi. TODO."""
+"""Collector: deploy/rollout history, image changes. TODO."""

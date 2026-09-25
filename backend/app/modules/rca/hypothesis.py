@@ -1,1 +1,1 @@
-"""Sinh va xep hang gia thuyet nguyen nhan goc. TODO."""
+"""Generate and rank root-cause hypotheses. TODO."""

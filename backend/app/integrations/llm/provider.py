@@ -1,10 +1,11 @@
-"""Dựng model LLM từ đặc tả trong `app.core.config`.
+"""Build LLM models from the specs in `app.core.config`.
 
-Module này KHÔNG đọc biến môi trường, KHÔNG đọc file cấu hình nào.
-Mọi giá trị đều lấy qua `Settings` — đúng luồng  .env -> config.py -> đây.
+This module does NOT read environment variables or any configuration file.
+Every value comes through `Settings` — following the flow .env -> config.py -> here.
 
-Việc duy nhất nó làm: import động đúng class và đổi tên tham số chuẩn của hệ
-thống sang tên thật của từng nhà cung cấp (xem `ProviderConfig.param_map`).
+Its only job: dynamically import the right class and rename the system's
+canonical parameter names to each provider's real names (see
+`ProviderConfig.param_map`).
 """
 
 from __future__ import annotations
@@ -19,28 +20,28 @@ if TYPE_CHECKING:
 
 
 class LLMConfigError(RuntimeError):
-    """Cấu hình LLM sai: không có nhà cung cấp, thiếu khoá, ánh xạ sai tên..."""
+    """Invalid LLM configuration: no provider, missing key, wrong name mapping..."""
 
 
-class LLMProviderNotInstalled(LLMConfigError):
-    """Chưa cài gói Python của nhà cung cấp."""
+class LLMProviderNotInstalledError(LLMConfigError):
+    """The provider's Python package isn't installed."""
 
 
 def import_chat_class(spec: ProviderConfig) -> type:
-    """Import class của nhà cung cấp. Báo lỗi kèm lệnh cài nếu thiếu gói."""
+    """Import the provider's class. Reports an error with the install command if missing."""
     try:
         module = importlib.import_module(spec.module)
     except ImportError as exc:
-        raise LLMProviderNotInstalled(
-            f"Chưa cài gói cho nhà cung cấp này. Chạy:  uv pip install {spec.package}"
+        raise LLMProviderNotInstalledError(
+            f"The package for this provider is not installed. Run:  pip install {spec.package}"
         ) from exc
 
     try:
         return getattr(module, spec.class_name)
     except AttributeError as exc:
         raise LLMConfigError(
-            f"Module {spec.module!r} không có class {spec.class_name!r}. "
-            f"Kiểm tra lại 'class_name' trong LLM_PROVIDERS."
+            f"Module {spec.module!r} has no class {spec.class_name!r}. "
+            f"Check 'class_name' in LLM_PROVIDERS."
         ) from exc
 
 
@@ -62,10 +63,11 @@ def build_params(
     timeout: float | None = None,
     max_retries: int | None = None,
 ) -> dict[str, Any]:
-    """Gộp giá trị rồi đổi sang tên tham số thật của nhà cung cấp.
+    """Merge values, then rename them to the provider's real parameter names.
 
-    Tham số truyền tay thắng giá trị trong Settings. Tham số nào nhà cung cấp
-    không khai báo trong `param_map` thì bỏ qua, không truyền vào constructor.
+    Explicitly passed parameters win over values in Settings. Parameters the
+    provider doesn't declare in `param_map` are skipped and not passed to the
+    constructor.
     """
     spec = config.llm_provider(provider)
 
@@ -81,9 +83,9 @@ def build_params(
     unknown = set(spec.param_map) - set(CANONICAL_LLM_PARAMS)
     if unknown:
         raise LLMConfigError(
-            f"Nhà cung cấp {provider!r}: param_map có khoá lạ {sorted(unknown)}. "
-            f"Chỉ chấp nhận {', '.join(CANONICAL_LLM_PARAMS)}. "
-            f"Tham số riêng thì để trong 'extra'."
+            f"Provider {provider!r}: param_map has unknown keys {sorted(unknown)}. "
+            f"Only {', '.join(CANONICAL_LLM_PARAMS)} are accepted. "
+            f"Put provider-specific parameters in 'extra'."
         )
 
     kwargs: dict[str, Any] = {}
@@ -92,7 +94,7 @@ def build_params(
             continue
         real_name = spec.param_map.get(canon_name)
         if real_name is None:
-            continue  # nhà cung cấp không nhận tham số này
+            continue  # the provider doesn't accept this parameter
         kwargs[real_name] = value
 
     kwargs.update(spec.extra)
@@ -111,9 +113,9 @@ def create_chat_model(
     max_retries: int | None = None,
     **overrides: Any,
 ) -> BaseChatModel:
-    """Dựng một `BaseChatModel` của LangChain, dùng được ngay với LangGraph."""
+    """Build a LangChain `BaseChatModel`, ready to use with LangGraph."""
     cfg = config or get_settings()
-    name = provider or cfg.LLM_PROVIDER
+    name = provider or cfg.llm_default_provider()
 
     try:
         spec = cfg.llm_provider(name)
@@ -131,7 +133,7 @@ def create_chat_model(
             timeout=timeout,
             max_retries=max_retries,
         )
-    except ValueError as exc:  # thiếu khoá API
+    except ValueError as exc:  # missing API key
         raise LLMConfigError(str(exc)) from exc
 
     kwargs.update(overrides)
@@ -141,15 +143,15 @@ def create_chat_model(
         return cls(**kwargs)
     except TypeError as exc:
         raise LLMConfigError(
-            f"Không dựng được {spec.class_name} cho nhà cung cấp {name!r}. "
-            f"Có thể 'param_map' ánh xạ sai tên tham số. "
-            f"Đã truyền: {sorted(kwargs)}. Lỗi gốc: {exc}"
+            f"Could not build {spec.class_name} for provider {name!r}. "
+            f"'param_map' may map to the wrong parameter names. "
+            f"Passed: {sorted(kwargs)}. Original error: {exc}"
         ) from exc
 
 
 __all__ = [
     "LLMConfigError",
-    "LLMProviderNotInstalled",
+    "LLMProviderNotInstalledError",
     "build_params",
     "create_chat_model",
     "import_chat_class",

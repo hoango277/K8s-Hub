@@ -1,8 +1,8 @@
-"""Kiểu dữ liệu vào/ra của các endpoint hội thoại.
+"""Input/output types for the conversation endpoints.
 
-Khác với `app/schemas/events.py` (những gì chảy qua SSE lúc trợ lý đang chạy),
-file này mô tả những gì ĐỌC ĐƯỢC LẠI sau đó: danh sách hội thoại, lịch sử
-tin nhắn, các lần gọi công cụ đã lưu.
+Unlike `app/schemas/events.py` (what flows over SSE while the assistant is
+running), this file describes what can be READ BACK afterwards: the
+conversation list, message history, and stored tool calls.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ class ThreadCreate(BaseModel):
     title: str | None = Field(
         default=None,
         max_length=120,
-        description="Bỏ trống thì lấy câu hỏi đầu tiên làm tiêu đề",
+        description="Leave empty to use the first question as the title",
     )
     cluster: str | None = Field(default=None, max_length=120)
 
@@ -37,7 +37,7 @@ class ThreadUpdate(BaseModel):
 
 
 class ThreadOut(BaseModel):
-    """Một dòng trong danh sách hội thoại ở thanh bên."""
+    """One row in the sidebar conversation list."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -71,7 +71,7 @@ class MessageOut(BaseModel):
     role: MessageRole
     content: str
 
-    # Phần suy luận, nếu nhà cung cấp có lộ ra.
+    # The reasoning, if the provider exposes it.
     reasoning: str | None = None
 
     position: int
@@ -79,15 +79,16 @@ class MessageOut(BaseModel):
     error: str | None
     created_at: datetime
 
-    # Chỉ tin nhắn của trợ lý mới có.
+    # Only assistant messages have these.
     trace_id: str | None = None
     provider: str | None = None
     model: str | None = None
     latency_ms: int | None = None
 
-    # Số token đã tốn. Bảng `messages` lưu sẵn từ đầu, nhưng trước đây không
-    # khai ở đây nên API im lặng bỏ qua — nhìn từ ngoài cứ như hệ thống không
-    # đếm được token. Đây là nguồn số liệu cho phần chi phí ở trang giám sát.
+    # Tokens spent. The `messages` table has stored these from the start, but
+    # they used to be missing here so the API silently dropped them — from the
+    # outside it looked as if the system could not count tokens. This is the
+    # data source for the cost section of the observability page.
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
 
@@ -95,23 +96,23 @@ class MessageOut(BaseModel):
 
 
 class ThreadDetail(ThreadOut):
-    """Hội thoại kèm toàn bộ lịch sử — dùng khi mở lại một hội thoại cũ."""
+    """A conversation with its full history — used when reopening an old conversation."""
 
     messages: list[MessageOut] = Field(default_factory=list)
 
 
 class ChatRequest(BaseModel):
-    """Nội dung người dùng gửi để bắt đầu một lượt trả lời."""
+    """What the user sends to start a response turn."""
 
     model_config = ConfigDict(extra="forbid")
 
     content: str = Field(min_length=1, max_length=8000)
 
-    # Ghi đè cho riêng lượt này, không đụng tới cấu hình chung.
+    # Overrides for this turn only; the global configuration is left untouched.
     provider: str | None = Field(
-        default=None, description="Ép nhà cung cấp cho lượt này. VD: 'google'"
+        default=None, description="Force the provider for this turn, e.g. 'google'"
     )
-    model: str | None = Field(default=None, description="Ép tên model cho lượt này")
+    model: str | None = Field(default=None, description="Force the model name for this turn")
 
 
 __all__ = [

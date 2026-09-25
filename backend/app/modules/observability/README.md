@@ -1,46 +1,46 @@
-# Module: Observability (của LLM / Agent)
+# Module: Observability (of the LLM / Agent)
 
-> **Phạm vi module này = giám sát chính con AI**, không phải giám sát cụm K8s.
+> **This module's scope = monitoring the AI itself**, not monitoring the K8s cluster.
 >
-> - Giám sát cụm K8s đích (nguồn evidence cho RCA) → `app/integrations/prometheus`, `app/integrations/loki`
-> - Giám sát sức khỏe của chính app K8s-Hub → `app/core/telemetry.py`
+> - Monitoring the target K8s cluster (evidence source for RCA) → `app/integrations/prometheus`, `app/integrations/loki`
+> - Monitoring the health of the K8s-Hub app itself → `app/core/telemetry.py`
 
-Trả lời hai câu hỏi:
+It answers two questions:
 
-1. **LLM đã làm gì?** — prompt nào, model nào, gọi tool gì, tốn bao nhiêu token/tiền, mất bao lâu. → Langfuse.
-2. **LLM đã tác động gì?** — resource nào thực sự bị thay đổi trên cluster, ai duyệt, diff ra sao, có phải rollback không. → audit log trong Postgres.
+1. **What did the LLM do?** — which prompt, which model, which tools it called, how many tokens/how much money, how long it took. → Langfuse.
+2. **What did the LLM affect?** — which resources actually changed on the cluster, who approved, what the diff was, whether a rollback was needed. → audit log in Postgres.
 
-Langfuse **không** biết vế 2. Hai vế được nối với nhau bằng `trace_id`:
+Langfuse does **not** know about the second half. The two halves are joined by `trace_id`:
 
 ```
 Langfuse trace ──trace_id──▶ audit_log (Postgres)
-LLM định làm gì                thực tế đã đổi gì trên cluster
+what the LLM intended          what actually changed on the cluster
 ```
 
-| File | Trách nhiệm |
+| File | Responsibility |
 |---|---|
-| `langfuse_client.py` | Khởi tạo client + CallbackHandler cho LangGraph |
-| `tracing.py` | Tạo trace/span, gắn `trace_id` vào message trả về cho FE |
-| `prompts.py` | Đọc prompt có version từ Langfuse prompt management |
-| `audit.py` | Ghi audit log append-only: actor, action, resource, diff, kết quả, `trace_id` |
-| `impact.py` | Join trace ↔ audit: LLM đụng vào resource/namespace nào, blast radius |
-| `evaluation.py` | Dataset + score: accuracy NL→command, chất lượng RCA (LLM-as-judge) |
-| `metrics.py` | Chỉ số vận hành AI: approval rate, reject rate, dry-run fail rate, token/cost theo user |
+| `langfuse_client.py` | Initialize the client + CallbackHandler for LangGraph |
+| `tracing.py` | Create traces/spans, attach `trace_id` to messages returned to the FE |
+| `prompts.py` | Read versioned prompts from Langfuse prompt management |
+| `audit.py` | Append-only audit log: actor, action, resource, diff, result, `trace_id` |
+| `impact.py` | Join trace ↔ audit: which resources/namespaces the LLM touched, blast radius |
+| `evaluation.py` | Dataset + scoring: NL→command accuracy, RCA quality (LLM-as-judge) |
+| `metrics.py` | AI operations metrics: approval rate, reject rate, dry-run fail rate, tokens/cost per user |
 
-## Chỉ số nên track (dùng cho chương đánh giá của luận văn)
+## Metrics worth tracking (for the thesis evaluation chapter)
 
-**Chất lượng**
-- Tỉ lệ plan sinh ra pass được dry-run (manifest hợp lệ)
-- Tỉ lệ approve / reject / sửa tay của người vận hành
-- Accuracy NL → intent + resource đích (chấm trên dataset cố định)
-- RCA: tỉ lệ hypothesis hạng 1 trùng nguyên nhân thật
+**Quality**
+- Share of generated plans that pass dry-run (valid manifests)
+- Operator approve / reject / manual-edit rate
+- NL → intent + target resource accuracy (scored on a fixed dataset)
+- RCA: share of rank-1 hypotheses matching the real cause
 
-**Chi phí & hiệu năng**
-- Token / cost mỗi request, mỗi phiên RCA
-- Latency theo từng node của graph (tìm nút thắt)
-- Số vòng tool call trung bình để hoàn thành 1 tác vụ
+**Cost & performance**
+- Tokens / cost per request, per RCA session
+- Latency per graph node (find bottlenecks)
+- Average number of tool-call rounds to complete a task
 
-**An toàn**
-- Số lần guardrail chặn (namespace ngoài phạm vi, danger op)
-- Số action thực thi ở chế độ `auto` vs `require_approval`
-- Số lần phải rollback sau khi apply
+**Safety**
+- Number of guardrail blocks (out-of-scope namespace, danger op)
+- Number of actions executed in `auto` vs `require_approval` mode
+- Number of rollbacks needed after apply

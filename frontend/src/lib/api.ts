@@ -1,11 +1,20 @@
 /**
- * Gọi backend FastAPI.
+ * Calls to the FastAPI backend.
  *
- * Mặc định đi qua rewrite trong next.config.ts (/api/backend/* -> backend/api/v1/*)
- * để tránh CORS lúc phát triển.
+ * By default requests go through the rewrite in next.config.ts
+ * (/api/backend/* -> backend/api/v1/*) to avoid CORS during development.
  */
 
+import { getValidAccessToken, clearTokens } from "@/lib/auth-tokens";
+
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/api/backend";
+
+/** Endpoints that do NOT need — and should not carry — the current session's
+ * access token. `/auth/refresh` stands on its own with a separate refresh token
+ * (see sse.ts and auth-tokens.ts); `/auth/login` and `/auth/register`
+ * authenticate with what the user just typed, so there is no session to attach
+ * yet. */
+const NO_TOKEN_PATHS = ["/auth/login", "/auth/register", "/auth/refresh"];
 
 export class ApiError extends Error {
   constructor(
@@ -18,7 +27,7 @@ export class ApiError extends Error {
   }
 }
 
-/** Bóc thông báo lỗi từ nhiều dạng body khác nhau của FastAPI. */
+/** Extract an error message from the various body shapes FastAPI returns. */
 function extractMessage(body: unknown, fallback: string): string {
   if (typeof body === "string" && body) return body;
 
@@ -26,7 +35,7 @@ function extractMessage(body: unknown, fallback: string): string {
     const detail = (body as { detail: unknown }).detail;
     if (typeof detail === "string") return detail;
 
-    // Lỗi validate của FastAPI: [{loc: [...], msg: "..."}]
+    // FastAPI validation error: [{loc: [...], msg: "..."}]
     if (Array.isArray(detail)) {
       const parts = detail
         .map((d) => {
@@ -44,17 +53,23 @@ function extractMessage(body: unknown, fallback: string): string {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+
+  if (!NO_TOKEN_PATHS.some((p) => path.startsWith(p))) {
+    // Proactively refresh the access token BEFORE sending if it is about to
+    // expire — see auth-tokens.ts for why we don't wait for a 401 to refresh.
+    const token = await getValidAccessToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
+
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}${path}`, {
-      ...init,
-      headers: {
-        "Content-Type": "application/json",
-        ...init?.headers,
-      },
-    });
+    res = await fetch(`${API_BASE}${path}`, { ...init, headers });
   } catch {
-    throw new ApiError(0, "Không kết nối được tới máy chủ. Backend đã chạy chưa?");
+    throw new ApiError(0, "Can't reach the server. Is the backend running?");
   }
 
   const text = await res.text();
@@ -68,7 +83,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!res.ok) {
-    throw new ApiError(res.status, extractMessage(body, `Lỗi ${res.status}`), body);
+    // A 401 here means the access token was already refreshed (if it could be)
+    // and was still rejected — the account is locked, or the refresh token has
+    // expired too. Nothing left to salvage: clear the session so AuthProvider
+    // sends the user to /login, instead of leaving them stuck on a screen that
+    // keeps showing errors without explaining why.
+    if (res.status === 401 && !NO_TOKEN_PATHS.some((p) => path.startsWith(p))) {
+      clearTokens();
+    }
+    throw new ApiError(res.status, extractMessage(body, `Error ${res.status}`), body);
   }
   return body as T;
 }

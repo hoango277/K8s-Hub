@@ -1,17 +1,18 @@
-"""Dịch sự kiện của LangGraph sang sự kiện gửi cho trình duyệt.
+"""Translate LangGraph events into events sent to the browser.
 
-LangGraph phát ra một luồng sự kiện rất chi tiết (`astream_events`) mô tả mọi
-thứ đang xảy ra bên trong: mô hình đang nhả chữ, một công cụ bắt đầu chạy, một
-công cụ vừa xong… Nhưng đó là ngôn ngữ nội bộ của thư viện, không phải thứ nên
-để lọt ra ngoài — nó đổi theo phiên bản, và chứa nhiều thông tin thừa.
+LangGraph emits a very detailed event stream (`astream_events`) describing
+everything happening inside: the model emitting text, a tool starting, a tool
+finishing… But that is the library's internal language, not something that
+should leak out — it changes between versions and carries a lot of noise.
 
-File này là lớp phiên dịch duy nhất giữa hai thế giới đó. Bên trong là sự kiện
-của LangGraph, bên ngoài là `app/schemas/events.py` — hợp đồng cố định với
-frontend. Đổi phiên bản LangGraph thì chỉ file này phải sửa.
+This file is the single translation layer between those two worlds. Inside are
+LangGraph events, outside is `app/schemas/events.py` — the fixed contract with
+the frontend. When LangGraph changes version, only this file has to change.
 
-Ngoài việc phát sự kiện, nó còn GOM LẠI kết quả cuối cùng (toàn bộ câu trả lời,
-các lần gọi công cụ, số token) vào `StreamCollector` để tầng gọi ghi vào CSDL —
-tránh phải nghe lại luồng lần thứ hai.
+Besides emitting events, it also COLLECTS the final result (the full answer,
+the tool calls, the token counts) into `StreamCollector` so the caller can
+write it to the database — without having to listen to the stream a second
+time.
 """
 
 from __future__ import annotations
@@ -35,15 +36,16 @@ from app.schemas.events import (
 
 logger = logging.getLogger(__name__)
 
-# Kết quả công cụ gửi xuống trình duyệt bị cắt bớt: log một pod có thể vài trăm
-# nghìn ký tự, đẩy hết xuống thì treo trình duyệt. Bản đầy đủ vẫn đi vào
-# Langfuse và vẫn được mô hình nhìn thấy — chỗ này chỉ là phần để HIỂN THỊ.
+# Tool results sent to the browser are truncated: a pod's logs can be hundreds
+# of thousands of characters, and pushing all of it down freezes the browser.
+# The full version still goes to Langfuse and is still seen by the model — this
+# is only the part for DISPLAY.
 RESULT_DISPLAY_MAX = 2000
 
 
 @dataclass
 class ToolCallRecord:
-    """Một lần gọi công cụ, gom đủ để ghi vào CSDL."""
+    """One tool call, with everything needed to write it to the database."""
 
     call_id: str
     name: str
@@ -54,9 +56,9 @@ class ToolCallRecord:
     error: str | None = None
     duration_ms: int | None = None
 
-    # Dùng để tính thời lượng; đồng hồ hệ thống có thể bị chỉnh nên không lấy
-    # hiệu của hai mốc datetime.
-    _bat_dau: float = field(default_factory=time.perf_counter, repr=False)
+    # Used to compute the duration; the system clock can be adjusted, so we
+    # don't take the difference of two datetime stamps.
+    _started: float = field(default_factory=time.perf_counter, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,11 +75,11 @@ class ToolCallRecord:
 
 @dataclass
 class StreamCollector:
-    """Những gì đọng lại sau khi luồng chạy xong."""
+    """What remains after the stream has finished."""
 
     content: str = ""
 
-    # Phần mô hình tự nghĩ. Rỗng khi nhà cung cấp không lộ suy luận.
+    # The model's own thinking. Empty when the provider doesn't expose reasoning.
     reasoning: str = ""
 
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
@@ -90,75 +92,75 @@ class StreamCollector:
 
 
 def _text_of(content: Any) -> str:
-    """Lấy phần chữ TRẢ LỜI từ nội dung tin nhắn.
+    """Extract the ANSWER text from message content.
 
-    Mỗi nhà cung cấp trả một dạng khác nhau: Groq trả chuỗi, Gemini và Claude
-    trả danh sách khối (chữ, suy luận, yêu cầu gọi công cụ). Chỉ lấy khối chữ.
+    Each provider returns a different shape: Groq returns a string, Gemini and
+    Claude return a list of blocks (text, reasoning, tool-call requests). Only
+    text blocks are taken.
 
-    Khối có cờ `thought` bị loại: Gemini đánh dấu phần suy luận bằng cờ đó
-    nhưng vẫn để type='text'. Không loại thì suy luận sẽ lẫn thẳng vào câu trả
-    lời — người dùng đọc được cả những phỏng đoán mà mô hình đã tự bác bỏ.
+    Blocks with the `thought` flag are dropped: Gemini marks reasoning with
+    that flag but still uses type='text'. Without dropping them the reasoning
+    would leak straight into the answer — the user would read even the guesses
+    the model had already rejected.
     """
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        phan = []
-        for khoi in content:
-            if isinstance(khoi, str):
-                phan.append(khoi)
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
             elif (
-                isinstance(khoi, dict)
-                and khoi.get("type") == "text"
-                and not khoi.get("thought")
+                isinstance(block, dict)
+                and block.get("type") == "text"
+                and not block.get("thought")
             ):
-                phan.append(str(khoi.get("text", "")))
-        return "".join(phan)
+                parts.append(str(block.get("text", "")))
+        return "".join(parts)
     return ""
 
 
 def _reasoning_of(chunk: Any) -> str:
-    """Lấy phần SUY LUẬN từ một mẩu tin nhắn, nếu nhà cung cấp có gửi.
+    """Extract the REASONING from a message chunk, if the provider sent any.
 
-    Ba nơi khác nhau tuỳ nhà cung cấp:
-      - Groq / các API tương thích OpenAI: additional_kwargs['reasoning_content']
-      - Anthropic: khối content type='thinking'
-      - Google Gemini: khối content type='text' kèm cờ thought=True
+    It lives in two different places depending on the provider:
+      - Groq / OpenAI-compatible APIs: additional_kwargs['reasoning_content']
+      - Google Gemini: content blocks with type='text' plus thought=True
 
-    Không có thì trả về chuỗi rỗng — nơi gọi tự hiểu là mô hình này không lộ
-    suy luận, và đơn giản không gửi event nào.
+    If there is none, return an empty string — the caller takes that to mean
+    this model doesn't expose reasoning, and simply sends no event.
     """
     ak = getattr(chunk, "additional_kwargs", None) or {}
-    tho = ak.get("reasoning_content") or ak.get("reasoning")
-    if isinstance(tho, str) and tho:
-        return tho
+    raw = ak.get("reasoning_content") or ak.get("reasoning")
+    if isinstance(raw, str) and raw:
+        return raw
 
     content = getattr(chunk, "content", None)
     if isinstance(content, list):
-        phan = []
-        for khoi in content:
-            if not isinstance(khoi, dict):
+        parts = []
+        for block in content:
+            if not isinstance(block, dict):
                 continue
-            if khoi.get("type") in ("thinking", "thinking_delta"):
-                phan.append(str(khoi.get("thinking") or khoi.get("text") or ""))
-            elif khoi.get("thought") and khoi.get("type") == "text":
-                phan.append(str(khoi.get("text", "")))
-        return "".join(phan)
+            if block.get("thought") and block.get("type") == "text":
+                parts.append(str(block.get("text", "")))
+        return "".join(parts)
     return ""
 
 
-def _rut_gon(text: str, gioi_han: int = RESULT_DISPLAY_MAX) -> str:
-    if len(text) <= gioi_han:
+def _truncate(text: str, limit: int = RESULT_DISPLAY_MAX) -> str:
+    if len(text) <= limit:
         return text
-    con_lai = len(text) - gioi_han
-    return f"{text[:gioi_han]}\n… (còn {con_lai} ký tự, xem đầy đủ trong trace)"
+    remaining = len(text) - limit
+    return f"{text[:limit]}\n… ({remaining} more characters, see the full trace)"
 
 
-def _ket_qua_cong_cu(output: Any) -> tuple[str, bool]:
-    """Bóc nội dung và trạng thái từ đầu ra của một công cụ.
+def _tool_result(output: Any) -> tuple[str, bool]:
+    """Extract the content and status from a tool's output.
 
-    ToolNode bắt lỗi của công cụ và trả về một ToolMessage có status='error'
-    thay vì ném ngoại lệ — nhờ vậy mô hình đọc được thông báo lỗi và tự xử lý.
-    Nghĩa là lỗi công cụ KHÔNG làm luồng dừng, phải nhận ra qua chỗ này.
+    ToolNode catches tool errors and returns a ToolMessage with status='error'
+    instead of raising — that way the model can read the error message and
+    handle it itself. It means tool errors do NOT stop the stream; they have
+    to be detected here.
     """
     status = getattr(output, "status", None)
     if hasattr(output, "content"):
@@ -174,43 +176,44 @@ async def stream_graph_events(
     collector: StreamCollector,
     config: dict[str, Any] | None = None,
 ) -> AsyncIterator[dict[str, str]]:
-    """Chạy đồ thị và sinh ra các khung SSE theo thời gian thực.
+    """Run the graph and yield SSE frames in real time.
 
-    Kết quả cuối cùng được ghi vào `collector`; hàm này chỉ sinh ra khung để
-    gửi đi. Lỗi được biến thành `ErrorEvent` chứ không ném ra ngoài, vì luồng
-    SSE đã mở rồi thì không đổi được mã HTTP nữa — báo lỗi bằng dữ liệu là
-    cách duy nhất để client biết chuyện gì xảy ra.
+    The final result is written into `collector`; this function only yields
+    frames to send. Errors become an `ErrorEvent` rather than being raised,
+    because once the SSE stream is open the HTTP status can no longer change —
+    reporting the error as data is the only way for the client to know what
+    happened.
     """
-    dang_chay: dict[str, ToolCallRecord] = {}
-    chu: list[str] = []
-    nghi: list[str] = []
+    running: dict[str, ToolCallRecord] = {}
+    text_parts: list[str] = []
+    reasoning_parts: list[str] = []
 
     try:
         async for event in graph.astream_events(state, config=config, version="v2"):
-            loai = event["event"]
+            kind = event["event"]
 
-            # --- Mô hình đang nhả chữ ---
-            if loai == "on_chat_model_stream":
+            # --- The model is emitting text ---
+            if kind == "on_chat_model_stream":
                 chunk = event["data"]["chunk"]
 
-                # Suy luận trước, vì nó đến trước câu trả lời. Hai thứ này đi
-                # theo hai đường riêng và KHÔNG được trộn vào nhau.
-                suy_luan = _reasoning_of(chunk)
-                if suy_luan:
-                    nghi.append(suy_luan)
-                    yield stream.emit(ThinkingEvent(content=suy_luan))
+                # Reasoning first, since it arrives before the answer. The two
+                # travel on separate paths and must NOT be mixed together.
+                reasoning = _reasoning_of(chunk)
+                if reasoning:
+                    reasoning_parts.append(reasoning)
+                    yield stream.emit(ThinkingEvent(content=reasoning))
 
                 text = _text_of(getattr(chunk, "content", ""))
                 if text:
-                    chu.append(text)
+                    text_parts.append(text)
                     yield stream.emit(TokenEvent(content=text))
 
-            # --- Mô hình nói xong một lượt: lấy số token ---
-            elif loai == "on_chat_model_end":
+            # --- The model finished a turn: read the token counts ---
+            elif kind == "on_chat_model_end":
                 usage = getattr(event["data"].get("output"), "usage_metadata", None)
                 if usage:
-                    # Một lượt có thể gọi mô hình nhiều lần (mỗi vòng công cụ là
-                    # một lần), nên phải cộng dồn chứ không gán đè.
+                    # One turn can call the model several times (each tool round
+                    # is one call), so accumulate instead of overwriting.
                     collector.prompt_tokens = (collector.prompt_tokens or 0) + int(
                         usage.get("input_tokens", 0)
                     )
@@ -218,119 +221,123 @@ async def stream_graph_events(
                         collector.completion_tokens or 0
                     ) + int(usage.get("output_tokens", 0))
 
-            # --- Một công cụ bắt đầu chạy ---
-            elif loai == "on_tool_start":
+            # --- A tool starts running ---
+            elif kind == "on_tool_start":
                 call_id = str(event["run_id"])
                 args = event["data"].get("input") or {}
                 if not isinstance(args, dict):
                     args = {"input": str(args)}
 
-                ban_ghi = ToolCallRecord(
+                record = ToolCallRecord(
                     call_id=call_id,
                     name=event["name"],
                     args=args,
                     started_at=datetime.now(UTC),
                 )
-                dang_chay[call_id] = ban_ghi
-                collector.tool_calls.append(ban_ghi)
+                running[call_id] = record
+                collector.tool_calls.append(record)
 
                 yield stream.emit(
-                    ToolCallStartEvent(id=call_id, name=ban_ghi.name, args=args)
+                    ToolCallStartEvent(id=call_id, name=record.name, args=args)
                 )
 
-            # --- Công cụ chạy xong ---
-            elif loai == "on_tool_end":
+            # --- The tool finished ---
+            elif kind == "on_tool_end":
                 call_id = str(event["run_id"])
-                ban_ghi = dang_chay.pop(call_id, None)
-                if ban_ghi is None:
-                    # Không có cặp mở tương ứng — bỏ qua, gửi đi client cũng
-                    # không biết ghép vào đâu.
-                    logger.warning("Nhận on_tool_end không có on_tool_start: %s", call_id)
+                record = running.pop(call_id, None)
+                if record is None:
+                    # No matching start — skip it; even if sent, the client
+                    # wouldn't know what to attach it to.
+                    logger.warning("Got on_tool_end without on_tool_start: %s", call_id)
                     continue
 
-                noi_dung, co_loi = _ket_qua_cong_cu(event["data"].get("output"))
-                ban_ghi.duration_ms = int(
-                    (time.perf_counter() - ban_ghi._bat_dau) * 1000
+                content, is_error = _tool_result(event["data"].get("output"))
+                record.duration_ms = int(
+                    (time.perf_counter() - record._started) * 1000
                 )
-                ban_ghi.status = "error" if co_loi else "ok"
-                if co_loi:
-                    ban_ghi.error = _rut_gon(noi_dung)
+                record.status = "error" if is_error else "ok"
+                if is_error:
+                    record.error = _truncate(content)
                 else:
-                    ban_ghi.result = _rut_gon(noi_dung)
+                    record.result = _truncate(content)
 
                 yield stream.emit(
                     ToolCallEndEvent(
                         id=call_id,
-                        status=ban_ghi.status,
-                        duration_ms=ban_ghi.duration_ms,
-                        result=ban_ghi.result,
-                        error=ban_ghi.error,
+                        status=record.status,
+                        duration_ms=record.duration_ms,
+                        result=record.result,
+                        error=record.error,
                     )
                 )
 
     except asyncio.CancelledError:
-        # Người dùng đóng tab hoặc bấm dừng. Không phải lỗi — để nơi gọi lo
-        # việc lưu lại phần đã nói.
-        collector.content = "".join(chu)
-        collector.reasoning = "".join(nghi)
+        # The user closed the tab or pressed stop. Not an error — let the
+        # caller take care of saving what was said so far.
+        collector.content = "".join(text_parts)
+        collector.reasoning = "".join(reasoning_parts)
         raise
 
     except Exception as exc:
-        logger.exception("Luồng trò chuyện gặp lỗi")
+        logger.exception("Chat stream failed")
         collector.error = f"{type(exc).__name__}: {exc}"
         yield stream.emit(
             ErrorEvent(
-                code=_ma_loi(exc),
-                message=_thong_bao_loi(exc),
-                retryable=_co_the_thu_lai(exc),
+                code=_error_code(exc),
+                message=_error_message(exc),
+                retryable=_is_retryable(exc),
             )
         )
 
     finally:
-        collector.content = "".join(chu)
-        collector.reasoning = "".join(nghi)
+        collector.content = "".join(text_parts)
+        collector.reasoning = "".join(reasoning_parts)
 
-        # Công cụ nào mở mà chưa đóng thì đánh dấu lỗi, đừng để nó nằm mãi ở
-        # trạng thái "đang chạy" trong CSDL.
-        for ban_ghi in dang_chay.values():
-            ban_ghi.status = "error"
-            ban_ghi.error = "Luồng kết thúc khi công cụ chưa trả kết quả"
-            ban_ghi.duration_ms = int((time.perf_counter() - ban_ghi._bat_dau) * 1000)
+        # Any tool that was opened but never closed is marked as an error, so
+        # it doesn't sit forever in the "running" state in the database.
+        for record in running.values():
+            record.status = "error"
+            record.error = "The stream ended before the tool returned a result"
+            record.duration_ms = int((time.perf_counter() - record._started) * 1000)
 
 
 # --------------------------------------------------------------------------
-# Phân loại lỗi — để client biết nên hiện gì và có nên cho thử lại không
+# Error classification — so the client knows what to show and whether to
+# offer a retry
 # --------------------------------------------------------------------------
 
 
-def _ma_loi(exc: Exception) -> str:
-    ten = type(exc).__name__.lower()
-    chuoi = str(exc).lower()
+def _error_code(exc: Exception) -> str:
+    type_name = type(exc).__name__.lower()
+    text = str(exc).lower()
 
-    if "timeout" in ten or "timeout" in chuoi:
+    if "timeout" in type_name or "timeout" in text:
         return "llm_timeout"
-    if "ratelimit" in ten or "rate limit" in chuoi or "429" in chuoi:
+    if "ratelimit" in type_name or "rate limit" in text or "429" in text:
         return "llm_rate_limit"
-    if "authentication" in ten or "api key" in chuoi or "401" in chuoi:
+    if "authentication" in type_name or "api key" in text or "401" in text:
         return "llm_auth"
-    if "recursion" in ten or "recursion" in chuoi:
+    if "recursion" in type_name or "recursion" in text:
         return "agent_loop"
     return "agent_error"
 
 
-def _thong_bao_loi(exc: Exception) -> str:
-    """Câu hiện cho người dùng. Chi tiết kỹ thuật nằm ở log máy chủ."""
-    ma = _ma_loi(exc)
+def _error_message(exc: Exception) -> str:
+    """The sentence shown to the user. Technical details go to the server log."""
+    code = _error_code(exc)
     return {
-        "llm_timeout": "Mô hình trả lời quá lâu. Thử lại hoặc đổi sang model nhanh hơn.",
-        "llm_rate_limit": "Đã chạm giới hạn gọi của nhà cung cấp. Chờ một lát rồi thử lại.",
-        "llm_auth": "Khoá API không hợp lệ. Kiểm tra lại trong phần Cấu hình.",
-        "agent_loop": "Trợ lý gọi công cụ quá nhiều lần mà chưa ra kết quả. Thử hỏi cụ thể hơn.",
-    }.get(ma, f"Lỗi khi xử lý: {exc}")
+        "llm_timeout": "The model took too long to respond. Try again or switch to a faster model.",
+        "llm_rate_limit": "Hit the provider's rate limit. Wait a moment and try again.",
+        "llm_auth": "Invalid API key. Check it in Settings.",
+        "agent_loop": (
+            "The assistant called tools too many times without reaching an answer. "
+            "Try a more specific question."
+        ),
+    }.get(code, f"Error while processing: {exc}")
 
 
-def _co_the_thu_lai(exc: Exception) -> bool:
-    return _ma_loi(exc) in {"llm_timeout", "llm_rate_limit"}
+def _is_retryable(exc: Exception) -> bool:
+    return _error_code(exc) in {"llm_timeout", "llm_rate_limit"}
 
 
 __all__ = [

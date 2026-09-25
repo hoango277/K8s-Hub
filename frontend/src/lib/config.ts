@@ -1,1 +1,1 @@
-// Doc bien moi truong public (API base, Langfuse host). TODO
+// Read public environment variables (API base, Langfuse host). TODO

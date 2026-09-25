@@ -1,10 +1,11 @@
 /**
- * Dữ liệu hội thoại đọc từ backend.
+ * Conversation data read from the backend.
  *
- * Khớp với `backend/app/schemas/chat.py`. Sửa một bên thì phải sửa bên kia.
+ * Matches `backend/app/schemas/chat.py`. Change one side, change the other.
  *
- * Phân biệt với `types/events.ts`: file đó là những gì CHẢY QUA khi trợ lý
- * đang chạy; file này là những gì ĐỌC LẠI ĐƯỢC sau đó từ cơ sở dữ liệu.
+ * Contrast with `types/events.ts`: that file is what FLOWS THROUGH while the
+ * assistant is running; this file is what can be READ BACK afterwards from
+ * the database.
  */
 
 export type MessageRole = "user" | "assistant" | "system";
@@ -38,7 +39,7 @@ export interface Message {
   role: MessageRole;
   content: string;
 
-  /** Phần mô hình tự nghĩ. null nếu nhà cung cấp không lộ suy luận. */
+  /** The model's own reasoning. null if the provider doesn't expose it. */
   reasoning: string | null;
 
   position: number;
@@ -50,7 +51,7 @@ export interface Message {
   model: string | null;
   latency_ms: number | null;
 
-  /** Số token đã tốn. null với tin nhắn của người dùng. */
+  /** Tokens spent. null for user messages. */
   prompt_tokens: number | null;
   completion_tokens: number | null;
 
@@ -61,7 +62,7 @@ export interface ThreadDetail extends Thread {
   messages: Message[];
 }
 
-/** Thân request gửi tới `POST /chat/threads/{id}/stream`. */
+/** Request body sent to `POST /chat/threads/{id}/stream`. */
 export interface ChatRequest {
   content: string;
   provider?: string | null;
@@ -73,13 +74,13 @@ export interface ToolInfo {
   description: string;
 }
 
-/** Một nhà cung cấp LLM đang được khai báo ở backend. */
+/** An LLM provider declared on the backend. */
 export interface ProviderInfo {
   name: string;
   api_key_set: boolean;
   api_key_field: string;
   supports_tool_calling: boolean;
-  /** Model mặc định CỦA RIÊNG nhà cung cấp này. */
+  /** This provider's OWN default model. */
   default_model: string;
   fast_model: string;
   notes: string;
@@ -87,7 +88,7 @@ export interface ProviderInfo {
 
 export interface ProvidersView {
   providers: ProviderInfo[];
-  /** Lựa chọn hệ thống đang đặt, dùng khi người dùng chưa chọn gì. */
+  /** The system's current choice, used when the user hasn't picked anything. */
   current: { provider: string; model: string };
 }
 
@@ -101,8 +102,8 @@ export interface ModelInfo {
 export interface ModelCatalog {
   provider: string;
   models: ModelInfo[];
-  /** 'api' = hỏi được nhà cung cấp, 'config' = phải dùng model khai sẵn. */
+  /** 'api' = the provider was queried, 'config' = fell back to preconfigured models. */
   source: "api" | "config";
-  /** Lý do không hỏi được nhà cung cấp. Có giá trị thì source='config'. */
+  /** Why the provider couldn't be queried. When set, source='config'. */
   error: string | null;
 }

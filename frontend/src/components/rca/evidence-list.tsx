@@ -1,4 +1,4 @@
-// Evidence thu thap duoc, nhom theo nguon. TODO
+// Collected evidence, grouped by source. TODO
 export function EvidenceList() {
   return null;
 }

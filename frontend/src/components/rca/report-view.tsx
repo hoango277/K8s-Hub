@@ -1,4 +1,4 @@
-// Report tong hop 1 phien RCA. TODO
+// Summary report for one RCA run. TODO
 export function RcaReportView() {
   return null;
 }

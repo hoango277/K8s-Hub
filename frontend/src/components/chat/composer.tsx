@@ -8,45 +8,45 @@ import { cn } from "@/lib/utils";
 interface Props {
   onSend: (content: string) => void;
   onStop: () => void;
-  dangChay: boolean;
+  isStreaming: boolean;
   disabled?: boolean;
   placeholder?: string;
-  /** Chỗ đặt ô chọn nhà cung cấp và model, nằm trong cùng khung với ô nhập. */
+  /** Slot for the provider and model pickers, inside the same frame as the input. */
   toolbar?: ReactNode;
 }
 
-const CAO_TOI_DA = 200;
+const MAX_HEIGHT = 200;
 
 /**
- * Ô nhập câu hỏi.
+ * The question input.
  *
- * Ô nhập, phần chọn model và nút gửi nằm chung MỘT khung có viền, thay vì ba
- * khối rời rạc xếp chồng lên nhau. Chúng luôn được dùng cùng lúc trong một
- * thao tác, nên gom lại thì mắt không phải nhảy qua ba vùng riêng biệt.
+ * The textarea, model picker and send button share ONE bordered frame instead
+ * of three separate stacked blocks. They are always used together in a single
+ * action, so grouping them keeps the eye from jumping between three regions.
  */
 export function Composer({
   onSend,
   onStop,
-  dangChay,
+  isStreaming,
   disabled = false,
-  placeholder = "Hỏi về cụm, hoặc mô tả việc cần làm…",
+  placeholder = "Ask about your cluster, or describe what you need done…",
   toolbar,
 }: Props) {
   const [text, setText] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
 
-  // Ô nhập cao dần theo nội dung, đến một mức thì tự cuộn.
+  // The textarea grows with its content up to a limit, then scrolls.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, CAO_TOI_DA)}px`;
+    el.style.height = `${Math.min(el.scrollHeight, MAX_HEIGHT)}px`;
   }, [text]);
 
-  const guiDuoc = Boolean(text.trim()) && !disabled && !dangChay;
+  const canSend = Boolean(text.trim()) && !disabled && !isStreaming;
 
-  function gui() {
-    if (!guiDuoc) return;
+  function submit() {
+    if (!canSend) return;
     onSend(text.trim());
     setText("");
   }
@@ -68,11 +68,12 @@ export function Composer({
             placeholder={placeholder}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
-              // Enter để gửi, Shift+Enter để xuống dòng. Khi đang gõ tiếng Việt
-              // bằng bộ gõ, Enter là để chọn từ — không được cướp phím đó.
+              // Enter sends, Shift+Enter inserts a newline. While typing with an
+              // IME (e.g. Vietnamese input methods), Enter picks a candidate —
+              // don't hijack that key.
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
-                gui();
+                submit();
               }
             }}
             className={cn(
@@ -85,25 +86,25 @@ export function Composer({
           <div className="flex items-center gap-2 px-2 pb-2 pt-1">
             {toolbar}
 
-            {dangChay ? (
+            {isStreaming ? (
               <button
                 type="button"
                 onClick={onStop}
-                title="Dừng trả lời"
+                title="Stop responding"
                 className={cn(
                   "ml-auto flex size-8 shrink-0 items-center justify-center rounded-full",
                   "border transition hover:bg-[var(--accent)]",
                 )}
               >
                 <Square aria-hidden className="size-3.5 fill-current" />
-                <span className="sr-only">Dừng</span>
+                <span className="sr-only">Stop</span>
               </button>
             ) : (
               <button
                 type="button"
-                onClick={gui}
-                disabled={!guiDuoc}
-                title="Gửi (Enter)"
+                onClick={submit}
+                disabled={!canSend}
+                title="Send (Enter)"
                 className={cn(
                   "ml-auto flex size-8 shrink-0 items-center justify-center rounded-full",
                   "bg-[var(--primary)] text-[var(--primary-foreground)] transition",
@@ -111,14 +112,14 @@ export function Composer({
                 )}
               >
                 <ArrowUp aria-hidden className="size-4" />
-                <span className="sr-only">Gửi</span>
+                <span className="sr-only">Send</span>
               </button>
             )}
           </div>
         </div>
 
         <p className="mt-1.5 px-1 text-center text-[11px] text-[var(--muted-foreground)]">
-          Trợ lý chỉ tra cứu — mọi thay đổi lên cụm đều cần người duyệt.
+          The assistant only looks things up — every change to the cluster needs human approval.
         </p>
       </div>
     </div>

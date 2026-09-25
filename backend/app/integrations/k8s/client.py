@@ -1,1 +1,1 @@
-"""K8s client factory: in-cluster hoac kubeconfig. TODO."""
+"""K8s client factory: in-cluster or kubeconfig. TODO."""

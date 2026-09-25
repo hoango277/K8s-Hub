@@ -1,10 +1,11 @@
-"""Audit log append-only cho moi mutation len cluster.
+"""Append-only audit log for every mutation applied to the cluster.
 
-La VE THU HAI cua observability: Langfuse ghi "LLM nghi gi",
-bang nay ghi "cluster that su doi gi". Noi nhau bang trace_id.
+This is the SECOND HALF of observability: Langfuse records "what the LLM
+thought", this table records "what actually changed in the cluster". The two
+are joined by trace_id.
 
-Moi ban ghi: actor, thread_id, trace_id, action, cluster, namespace,
+Each record: actor, thread_id, trace_id, action, cluster, namespace,
 resource_ref, diff, approved_by, result, timestamp.
 
-TODO: write(), khong cho update/delete, query theo trace_id / resource.
+TODO: write(), disallow update/delete, query by trace_id / resource.
 """

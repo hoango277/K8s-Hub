@@ -1,116 +1,106 @@
-"""Những thứ tầng API dùng chung.
+"""Things shared across the API layer.
 
-Gom vào một chỗ để endpoint chỉ cần khai báo kiểu, không phải tự đi lấy
-phiên CSDL hay tự dựng client.
+Collected in one place so endpoints only need to declare a type, instead of
+fetching a database session or building a client themselves.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
+import uuid
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import on_reload
+from app.core.security import TokenError, decode_token
 from app.db.models.user import User
 from app.db.session import get_session
+from app.services.user_service import get_user
 
 logger = logging.getLogger(__name__)
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
 
 # --------------------------------------------------------------------------
-# Người dùng
+# Users — Bearer token (Authorization: Bearer <access_token>)
 # --------------------------------------------------------------------------
 
-# CHƯA CÓ ĐĂNG NHẬP. Mọi thao tác tạm quy về một tài khoản duy nhất để hội
-# thoại vẫn có chủ sở hữu hợp lệ trong CSDL. Khi làm xong đăng nhập (STT 32),
-# chỉ cần thay ruột `get_current_user` — bảng và khoá ngoại giữ nguyên.
-LOCAL_USER_EMAIL = "local@k8s-hub.dev"
-LOCAL_USER_NAME = "Người dùng cục bộ"
+# `auto_error=False`: we return our own 401 with a clear, actionable message
+# below, instead of FastAPI's generic default "Not authenticated".
+_bearer = HTTPBearer(auto_error=False)
 
 
-# Nhớ sẵn tài khoản cục bộ sau lần tra đầu tiên.
-#
-# Vì sao đáng làm: mỗi lượt đi-về tới Supabase mất 0,6-1 giây (máy chủ đặt ở
-# Sydney). Tra lại tài khoản ở MỌI request là cộng thêm chừng đó vào mọi thao
-# tác, chỉ để đọc một dòng không bao giờ đổi.
-#
-# Đối tượng được tách khỏi phiên (`expunge`) nên dùng lại được ở request sau.
-# Kèm theo đó là một giới hạn: KHÔNG gán nó vào quan hệ của đối tượng khác
-# (`thread.user = user`) — hãy dùng `thread.user_id = user.id`.
-_tai_khoan_cuc_bo: User | None = None
-_khoa_tai_khoan = asyncio.Lock()
+def _unauthorized(message: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=message,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
-@on_reload
-def _quen_tai_khoan() -> None:
-    """Cấu hình đổi thì CSDL có thể đã khác, tài khoản nhớ sẵn không còn đúng."""
-    global _tai_khoan_cuc_bo
-    _tai_khoan_cuc_bo = None
+async def get_current_user(
+    db: DbSession,
+    cred: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> User:
+    """The user behind the access token in the `Authorization` header.
 
-
-async def get_current_user(db: DbSession) -> User:
-    """Tài khoản đang thao tác.
-
-    Tạm thời luôn trả về tài khoản cục bộ, tự tạo ở lần gọi đầu tiên.
+    The access token is SELF-VERIFYING (no database lookup to read the role —
+    the role is already in the JWT), but we still have to load the User once to
+    know whether the account is still `is_active`: a JWT does not invalidate
+    itself when an admin locks someone out mid-session.
     """
-    global _tai_khoan_cuc_bo
-    if _tai_khoan_cuc_bo is not None:
-        return _tai_khoan_cuc_bo
+    if cred is None:
+        raise _unauthorized("Missing access token. Please sign in again.")
 
-    async with _khoa_tai_khoan:
-        # Nhiều request cùng vào lúc khởi động: chỉ cái đầu tiên phải đi tra.
-        if _tai_khoan_cuc_bo is not None:
-            return _tai_khoan_cuc_bo
+    try:
+        payload = decode_token(cred.credentials, expect="access")
+    except TokenError as exc:
+        raise _unauthorized(str(exc)) from exc
 
-        stmt = select(User).where(User.email == LOCAL_USER_EMAIL)
-        user = (await db.execute(stmt)).scalar_one_or_none()
+    try:
+        user_id = uuid.UUID(payload["sub"])
+    except (KeyError, ValueError) as exc:
+        raise _unauthorized("Malformed token: 'sub' is missing or invalid.") from exc
 
-        if user is None:
-            user = User(
-                email=LOCAL_USER_EMAIL,
-                display_name=LOCAL_USER_NAME,
-                role="admin",
-            )
-            db.add(user)
-            try:
-                await db.flush()
-            except Exception:
-                # Một tiến trình khác vừa tạo trước.
-                await db.rollback()
-                user = (await db.execute(stmt)).scalar_one_or_none()
-                if user is None:
-                    raise
-            logger.info("Đã tạo tài khoản cục bộ %s", LOCAL_USER_EMAIL)
+    user = await get_user(db, user_id)
+    if user is None or not user.is_active:
+        raise _unauthorized("This account no longer exists or has been locked.")
 
-        db.expunge(user)
-        _tai_khoan_cuc_bo = user
-        return user
+    return user
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
-def require_role(*roles: str):
-    """Chặn endpoint theo vai trò.
+def has_role(user: User, roles: tuple[str, ...] | list[str]) -> bool:
+    """Whether `user` may do something reserved for `roles`.
 
-    CHƯA DÙNG Ở ĐÂU vì chưa có đăng nhập. Để sẵn cho các endpoint ghi — đổi
-    cấu hình, duyệt thao tác lên cụm — khi làm xong phần đăng nhập.
+    Admin ALWAYS passes, even when not listed. Without this, every future
+    endpoint guarded by `require_role("engineer")` (adding skills, runbooks…)
+    would lock the admin out unless its author remembered to also write
+    "admin" — an easy thing to forget, and the admin is supposed to be able
+    to do everything.
+    """
+    return user.role == "admin" or user.role in roles
+
+
+def require_role(*roles: str):
+    """Guard an endpoint by role. Admin always passes (see `has_role`).
+
+    Use as a dependency:  `user: Annotated[User, Depends(require_role("engineer"))]`
     """
 
-    async def kiem_tra(user: CurrentUser) -> User:
-        if user.role not in roles:
+    async def check_role(user: CurrentUser) -> User:
+        if not has_role(user, roles):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Cần vai trò {' hoặc '.join(roles)}, tài khoản đang là {user.role}",
+                detail=f"Requires role {' or '.join(roles)}; this account is {user.role}",
             )
         return user
 
-    return kiem_tra
+    return check_role
 
 
-__all__ = ["CurrentUser", "DbSession", "get_current_user", "require_role"]
+__all__ = ["CurrentUser", "DbSession", "get_current_user", "has_role", "require_role"]

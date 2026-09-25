@@ -1,18 +1,18 @@
-# Phụ thuộc lúc chạy của backend K8s Hub.
+# Runtime dependencies of the K8s Hub backend.
 #
-# Nguồn sự thật vẫn là [project.dependencies] trong pyproject.toml — file này
-# là bản chép ra để cài nhanh bằng pip khi không có uv:
+# The source of truth is still [project.dependencies] in pyproject.toml — this file
+# is a copy for a quick pip install when uv is not available:
 #
 #     python -m venv .venv
 #     .venv/Scripts/activate        # Windows Git Bash
 #     pip install -r requirements.txt
 #
-# Sửa pyproject.toml thì nhớ sửa cả đây.
+# When you edit pyproject.toml, update this file too.
 
 # --- Web framework ---
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
-pydantic>=2.9.0
+pydantic[email]>=2.9.0
 pydantic-settings>=2.6.0
 sse-starlette>=2.1.3
 python-multipart>=0.0.12
@@ -27,27 +27,36 @@ pgvector>=0.3.6
 redis>=5.2.0
 
 # --- LLM / agent ---
-# Không khai `anthropic`: langchain-anthropic đã kéo nó theo.
 langgraph>=0.2.50
 langgraph-checkpoint-postgres>=2.0.0
 langchain-core>=0.3.20
+# The umbrella `langchain` package is only needed by the Langfuse CallbackHandler: it reads
+# langchain.__version__ to tell v0 from v1. Without it, the import fails.
+langchain>=1.0
 langchain-groq>=0.2.3
 langchain-google-genai>=2.0.8
-langchain-anthropic>=0.3.0
 mcp>=1.1.0
 
-# --- Kubernetes / nguồn dữ liệu quan sát ---
+# --- Kubernetes / observability data sources ---
 kubernetes-asyncio>=31.1.0
 httpx>=0.28.0
 pyyaml>=6.0.2
 
-# --- Quan sát LLM/agent (lớp A) ---
+# --- LLM/agent observability (layer A) ---
+# Langfuse 3+ is built on OpenTelemetry. The two otel packages are declared explicitly
+# because app/modules/observability/ imports them directly, not only via langfuse.
 langfuse>=3.0.0
+opentelemetry-api>=1.33.1
+opentelemetry-sdk>=1.33.1
 
-# --- Tự giám sát chính app này (lớp C) ---
+# --- Self-monitoring of this app (layer C) ---
 prometheus-fastapi-instrumentator>=7.0.0
 structlog>=24.4.0
 
 # --- Auth ---
 python-jose[cryptography]>=3.3.0
-passlib[bcrypt]>=1.7.4
+# Do NOT use passlib: unmaintained since 2020, and newer bcrypt
+# (bcrypt>=4.1) removed the attribute passlib reads to detect the version at
+# startup, so it raises ValueError even for valid passwords. Call the package
+# bcrypt directly (see app/core/security.py).
+bcrypt>=4.0

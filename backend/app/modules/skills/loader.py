@@ -1,1 +1,1 @@
-"""Nap skill tu builtin/ va cac MCP server cau hinh san. TODO."""
+"""Load skills from builtin/ and the preconfigured MCP servers. TODO."""

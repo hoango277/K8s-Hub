@@ -1,11 +1,13 @@
-"""Đọc/ghi hội thoại.
+"""Read/write conversations.
 
-Tầng này chỉ chạm CSDL — không biết gì về LLM, không biết gì về HTTP. Nhờ vậy
-test được mà không cần gọi model, và endpoint nào cũng dùng lại được.
+This layer only touches the database — it knows nothing about the LLM and
+nothing about HTTP. That makes it testable without calling a model, and
+reusable from any endpoint.
 
-Quy ước quan trọng: mọi hàm lấy hội thoại đều nhận `user` và tự lọc theo chủ
-sở hữu. Không có hàm nào lấy hội thoại "bất kỳ theo id" — để không ai vô tình
-viết được endpoint cho phép đọc hội thoại của người khác.
+Important convention: every function that fetches conversations takes `user`
+and filters by owner itself. There is no "fetch any conversation by id"
+function — so nobody can accidentally write an endpoint that lets one user read
+another user's conversations.
 """
 
 from __future__ import annotations
@@ -23,25 +25,25 @@ from app.db.models.message import Message, ToolCall
 from app.db.models.thread import TITLE_MAX, ChatThread
 from app.db.models.user import User
 
-DEFAULT_TITLE = "Hội thoại mới"
+DEFAULT_TITLE = "New conversation"
 
-# Số tin nhắn gần nhất nạp lại làm ngữ cảnh cho lượt hỏi mới. Có giới hạn để
-# hội thoại dài không làm phình prompt và đội chi phí.
+# Number of most recent messages reloaded as context for a new turn. Capped so
+# long conversations do not bloat the prompt and drive up cost.
 HISTORY_LIMIT = 40
 
 
 def title_from(content: str) -> str:
-    """Lấy câu hỏi đầu tiên làm tiêu đề, cắt cho vừa thanh bên."""
-    gon = " ".join(content.split())
-    if not gon:
+    """Use the first question as the title, trimmed to fit the sidebar."""
+    compact = " ".join(content.split())
+    if not compact:
         return DEFAULT_TITLE
-    if len(gon) <= TITLE_MAX:
-        return gon
-    return gon[: TITLE_MAX - 1].rstrip() + "…"
+    if len(compact) <= TITLE_MAX:
+        return compact
+    return compact[: TITLE_MAX - 1].rstrip() + "…"
 
 
 # --------------------------------------------------------------------------
-# Hội thoại
+# Conversations
 # --------------------------------------------------------------------------
 
 
@@ -74,10 +76,10 @@ async def list_threads(
     if not include_archived:
         stmt = stmt.where(ChatThread.archived.is_(False))
 
-    # Hội thoại vừa tạo chưa có tin nhắn nào, vẫn phải nằm trên đầu.
-    thu_tu = func.coalesce(ChatThread.last_message_at, ChatThread.created_at)
+    # A just-created conversation has no messages yet but must still sort to the top.
+    sort_key = func.coalesce(ChatThread.last_message_at, ChatThread.created_at)
 
-    stmt = stmt.order_by(thu_tu.desc()).limit(limit).offset(offset)
+    stmt = stmt.order_by(sort_key.desc()).limit(limit).offset(offset)
     return (await db.execute(stmt)).scalars().all()
 
 
@@ -107,13 +109,13 @@ async def update_thread(
 
 
 async def delete_thread(db: AsyncSession, thread: ChatThread) -> None:
-    """Xoá hẳn. Tin nhắn và tool call đi theo nhờ ON DELETE CASCADE."""
+    """Hard delete. Messages and tool calls go with it thanks to ON DELETE CASCADE."""
     await db.delete(thread)
     await db.flush()
 
 
 # --------------------------------------------------------------------------
-# Tin nhắn
+# Messages
 # --------------------------------------------------------------------------
 
 
@@ -123,11 +125,11 @@ async def list_messages(
     *,
     limit: int | None = None,
 ) -> list[Message]:
-    """Lịch sử theo đúng thứ tự, kèm sẵn tool call.
+    """History in order, with tool calls preloaded.
 
-    `selectinload` là bắt buộc: quan hệ đang để `lazy="raise"` nên đọc
-    `message.tool_calls` mà chưa nạp sẵn sẽ báo lỗi ngay thay vì lặng lẽ bắn
-    thêm truy vấn ở giữa luồng bất đồng bộ.
+    `selectinload` is mandatory: the relationship is set to `lazy="raise"`, so
+    reading `message.tool_calls` without preloading fails immediately instead of
+    silently firing an extra query in the middle of the async flow.
     """
     stmt = (
         select(Message)
@@ -138,7 +140,7 @@ async def list_messages(
     if limit is None:
         return list((await db.execute(stmt.order_by(Message.position))).scalars().all())
 
-    # Muốn N tin nhắn CUỐI, nên lấy ngược rồi đảo lại.
+    # We want the LAST N messages, so fetch in reverse and then flip.
     rows = list(
         (await db.execute(stmt.order_by(Message.position.desc()).limit(limit)))
         .scalars()
@@ -158,19 +160,19 @@ async def next_position(db: AsyncSession, thread_id: uuid.UUID) -> int:
 async def add_user_message(
     db: AsyncSession, thread: ChatThread, content: str
 ) -> Message:
-    """Ghi câu hỏi của người dùng, và đặt tiêu đề nếu đây là câu đầu tiên."""
-    vi_tri = await next_position(db, thread.id)
+    """Store the user's question, and set the title if this is the first one."""
+    position = await next_position(db, thread.id)
 
     message = Message(
         thread_id=thread.id,
         role="user",
         content=content,
-        position=vi_tri,
+        position=position,
         status="complete",
     )
     db.add(message)
 
-    if vi_tri == 1 and thread.title == DEFAULT_TITLE:
+    if position == 1 and thread.title == DEFAULT_TITLE:
         thread.title = title_from(content)
     thread.last_message_at = datetime.now(UTC)
 
@@ -186,10 +188,11 @@ async def start_assistant_message(
     model: str | None = None,
     trace_id: str | None = None,
 ) -> Message:
-    """Tạo sẵn bản ghi trước khi trợ lý bắt đầu nói.
+    """Create the record up front, before the assistant starts talking.
 
-    Có id ngay từ đầu thì gửi kèm được xuống client, và nếu máy chủ chết giữa
-    chừng thì vẫn còn dấu vết ở trạng thái 'streaming' thay vì mất trắng.
+    Having an id from the start means it can be sent down to the client, and if
+    the server dies midway there is still a trace in the 'streaming' state
+    instead of nothing at all.
     """
     message = Message(
         thread_id=thread.id,
@@ -218,13 +221,13 @@ async def finish_assistant_message(
     completion_tokens: int | None = None,
     error: str | None = None,
 ) -> Message:
-    """Chốt câu trả lời và các lần gọi công cụ kèm theo.
+    """Finalize the answer and the tool calls that came with it.
 
-    `tool_calls` là danh sách dict phẳng do tầng streaming gom lại — dùng dict
-    thay vì đối tượng ORM để tầng đó không phải import model.
+    `tool_calls` is a list of flat dicts collected by the streaming layer —
+    dicts rather than ORM objects so that layer does not have to import models.
     """
     message.content = content
-    # Chuỗi rỗng thì để NULL, đỡ tốn chỗ và phân biệt được 'không có' với ''.
+    # Store an empty string as NULL: saves space and distinguishes 'none' from ''.
     message.reasoning = reasoning or None
     message.status = "error" if error else "complete"
     message.error = error

@@ -1,14 +1,14 @@
-"""Môi trường chạy migration của Alembic.
+"""Alembic migration environment.
 
-Điểm khác so với bản mẫu Alembic sinh ra:
+Differences from the template Alembic generates:
 
-  - URL lấy từ `app.core.config`, không viết trong alembic.ini — để mật khẩu
-    chỉ nằm ở .env, không lọt vào file được commit.
-  - Ưu tiên ALEMBIC_DATABASE_URL nếu có. Migration cần khoá tư vấn của
-    Postgres để hai người không chạy đè lên nhau, mà bộ gộp kết nối ở chế độ
-    transaction thì không giữ được khoá đó qua nhiều câu lệnh.
-  - Dùng engine bất đồng bộ vì cả dự án chạy asyncpg; không cài thêm driver
-    đồng bộ chỉ để phục vụ migration.
+  - The URL comes from `app.core.config`, not from alembic.ini — so the
+    password lives only in .env and never ends up in a committed file.
+  - ALEMBIC_DATABASE_URL takes precedence if set. Migrations need a Postgres
+    advisory lock so two people do not run over each other, and a connection
+    pooler in transaction mode cannot hold that lock across statements.
+  - Uses an async engine because the whole project runs on asyncpg; no extra
+    sync driver is installed just for migrations.
 """
 
 from __future__ import annotations
@@ -25,8 +25,8 @@ from app.core.config import get_settings
 from app.db.base import Base
 from app.db.session import connect_args_for
 
-# Import để mọi bảng có mặt trong Base.metadata trước khi so sánh.
-import app.db.models  # noqa: F401  (bắt buộc, xem app/db/models/__init__.py)
+# Imported so every table is present in Base.metadata before comparing.
+import app.db.models  # noqa: F401  (required, see app/db/models/__init__.py)
 
 config = context.config
 
@@ -45,15 +45,15 @@ def _configure(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
-        # Không có hai dòng này thì đổi kiểu cột hay đổi giá trị mặc định
-        # sẽ không được autogenerate phát hiện.
+        # Without these two lines, column type changes and default value
+        # changes are not detected by autogenerate.
         compare_type=True,
         compare_server_default=True,
     )
 
 
 def run_migrations_offline() -> None:
-    """Chỉ sinh câu lệnh SQL ra màn hình, không kết nối. `alembic upgrade --sql`."""
+    """Only print the SQL statements, without connecting. `alembic upgrade --sql`."""
     context.configure(
         url=database_url(),
         target_metadata=target_metadata,
@@ -76,7 +76,7 @@ async def run_migrations_online() -> None:
     engine = async_engine_from_config(
         {"sqlalchemy.url": url},
         prefix="sqlalchemy.",
-        # Migration chạy một lần rồi thoát, không cần giữ pool.
+        # A migration runs once and exits; no need to keep a pool.
         poolclass=pool.NullPool,
         connect_args=connect_args_for(url),
     )

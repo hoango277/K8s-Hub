@@ -1,8 +1,9 @@
-"""Lớp gốc cho mọi bảng dữ liệu.
+"""Base class for every table.
 
-Mọi model kế thừa `Base`. Quy ước đặt tên ràng buộc được cố định ở đây để
-Alembic sinh migration có tên ổn định — nếu không, khoá ngoại và chỉ mục sẽ
-mang tên ngẫu nhiên do Postgres tự đặt, và migration sau này rất khó sửa.
+Every model inherits from `Base`. The constraint naming convention is pinned
+here so Alembic generates migrations with stable names — otherwise foreign keys
+and indexes would get arbitrary names chosen by Postgres, and later migrations
+would be very hard to fix.
 """
 
 from __future__ import annotations
@@ -26,10 +27,11 @@ class Base(DeclarativeBase):
 
 
 class TimestampMixin:
-    """Thêm hai cột thời gian, do máy chủ CSDL tự điền.
+    """Adds two timestamp columns, filled in by the database server.
 
-    Luôn kèm múi giờ. Máy chủ có thể chạy ở múi khác với cụm Kubernetes đang
-    theo dõi, mà đối chiếu mốc thời gian là việc làm suốt trong chẩn đoán sự cố.
+    Always timezone-aware. The server may run in a different timezone from the
+    Kubernetes cluster being monitored, and correlating timestamps is something
+    incident diagnosis does all the time.
     """
 
     created_at: Mapped[datetime] = mapped_column(

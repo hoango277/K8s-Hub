@@ -1,7 +1,7 @@
-"""Prometheus HTTP API client - DOC cum K8s dich.
+"""Prometheus HTTP API client - READS the target K8s cluster.
 
-Vai tro: nguon evidence cho RCA (app/modules/rca/collectors/metrics.py).
-KHONG phai de giam sat chinh app nay - viec do o app/core/telemetry.py.
+Role: evidence source for RCA (app/modules/rca/collectors/metrics.py).
+NOT for monitoring this app itself - that lives in app/core/telemetry.py.
 
 TODO: query(), query_range(), health check, auth (bearer/basic).
 """

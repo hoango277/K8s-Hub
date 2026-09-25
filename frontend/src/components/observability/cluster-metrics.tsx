@@ -1,6 +1,6 @@
-// Bieu do metric cum tu Prometheus.
-// LUU Y: day la lop B (cum K8s dich), chu yeu phuc vu RCA - khong phai
-// giam sat LLM. Co the tach sang trang RCA neu thay lac de. TODO
+// Cluster metric charts from Prometheus.
+// NOTE: this is layer B (the target K8s cluster), mainly serving RCA - not
+// LLM monitoring. May move to the RCA page if it feels off-topic. TODO
 export function ClusterMetrics() {
   return null;
 }

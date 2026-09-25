@@ -1,1 +1,1 @@
-// Fetch + stream tien trinh 1 phien RCA. TODO
+// Fetch + stream the progress of one RCA run. TODO

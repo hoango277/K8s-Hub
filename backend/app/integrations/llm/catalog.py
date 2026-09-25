@@ -1,22 +1,22 @@
-"""Lấy danh sách model trực tiếp từ nhà cung cấp.
+"""List models straight from the provider.
 
-Vì sao không viết sẵn danh sách trong code: các nhà cung cấp cho model nghỉ
-hưu và ra model mới liên tục. Một danh sách viết cứng sẽ sai trong vòng vài
-tháng, và cái sai đó chỉ lộ ra khi người dùng chọn phải một model đã bị gỡ.
+Why not hard-code the list: providers retire models and release new ones all
+the time. A hard-coded list goes stale within months, and the problem only
+shows when a user picks a model that has been removed.
 
-Ba nhà cung cấp trả về ba dạng khác nhau, và xác thực cũng khác nhau. Khác
-biệt đó nằm gọn trong `_DOC` ở dưới; thêm nhà cung cấp mới chỉ cần khai
-`models_url` và `models_style` trong cấu hình.
+Each provider returns a different shape and authenticates differently. That
+difference lives entirely in `_PARSERS` below; adding a provider only needs
+`models_url` and `models_style` in its spec.
 
-LỌC MODEL — đọc kỹ phần này:
+MODEL FILTERING — read this carefully:
 
-Danh sách thô chứa cả những model không dùng để trò chuyện được. Groq trả về
-cả `whisper-large-v3` (nhận dạng giọng nói) lẫn `orpheus-*` (đọc thành tiếng)
-và `llama-prompt-guard-*` (bộ phân loại nội dung). Đưa hết lên giao diện thì
-người dùng sẽ chọn nhầm, và lỗi chỉ hiện ra sau khi đã gửi câu hỏi.
+The raw list also contains models that cannot chat. Groq returns
+`whisper-large-v3` (speech recognition), `orpheus-*` (text to speech) and
+`llama-prompt-guard-*` (content classifiers). Showing all of them lets users
+pick the wrong one, and the error only appears after they send a question.
 
-Việc lọc dựa trên trường DỮ LIỆU nhà cung cấp trả về, không dựa vào tên model:
-lọc theo tên là kiểu vá tạm, model mới ra là hỏng lại.
+Filtering is based on the DATA fields the provider returns, not model names:
+filtering by name is a stopgap that breaks as soon as a new model ships.
 """
 
 from __future__ import annotations
@@ -32,181 +32,155 @@ from app.core.config import ProviderConfig, get_settings, on_reload
 
 logger = logging.getLogger(__name__)
 
-# Danh sách model hiếm khi đổi trong một phiên làm việc. Hỏi lại nhà cung cấp
-# ở mỗi lần mở trang là chậm và tốn hạn mức vô ích.
+# The model list rarely changes during a session. Asking the provider on every
+# page load is slow and wastes quota.
 CACHE_TTL_SECONDS = 600
 
 REQUEST_TIMEOUT = 15.0
 
-# Ngưỡng cửa sổ ngữ cảnh tối thiểu để coi là model trò chuyện được.
+# Minimum context window for a model to count as chat-capable.
 #
-# Đây là một PHỎNG ĐOÁN, và nó tồn tại vì một lý do cụ thể: các bộ phân loại
-# như llama-prompt-guard có cửa sổ 512 token, trong khi riêng lời nhắc hệ thống
-# kèm mô tả công cụ của ta đã ngót 700 token. Chúng không thể dùng để chat, dù
-# vẫn là text vào - text ra nên không lọc được bằng modality.
+# This is a HEURISTIC, and it exists for a specific reason: classifiers like
+# llama-prompt-guard have a 512-token window, while our system prompt plus tool
+# descriptions alone is almost 700 tokens. They cannot be used for chat even
+# though they are text-in/text-out, so modality filtering does not catch them.
 MIN_CONTEXT_WINDOW = 2048
 
 
 class ModelInfo(BaseModel):
-    """Một model dùng được cho khung chat."""
+    """One model usable in the chat."""
 
-    id: str = Field(description="Tên truyền cho API, ví dụ 'openai/gpt-oss-120b'")
-    label: str = Field(description="Tên hiển thị cho người dùng")
+    id: str = Field(description="Name passed to the API, e.g. 'openai/gpt-oss-120b'")
+    label: str = Field(description="Display name")
     context_window: int | None = None
     owned_by: str | None = None
 
 
 class ModelCatalog(BaseModel):
-    """Kết quả tra danh sách model của một nhà cung cấp."""
+    """Result of listing one provider's models."""
 
     provider: str
     models: list[ModelInfo]
-    source: str = Field(description="'api' = lấy từ nhà cung cấp, 'config' = từ cấu hình")
+    source: str = Field(description="'api' = from the provider, 'config' = from the provider spec")
     error: str | None = Field(
         default=None,
-        description="Lý do không lấy được từ API. Có giá trị này thì source='config'.",
+        description="Why the API could not be used. When set, source='config'.",
     )
 
 
 # --------------------------------------------------------------------------
-# Đọc từng dạng trả về
+# Parsers, one per response shape
 # --------------------------------------------------------------------------
 
 
-def _doc_openai(data: dict[str, Any]) -> list[ModelInfo]:
-    """Groq và mọi API tương thích OpenAI.
+def _parse_openai(data: dict[str, Any]) -> list[ModelInfo]:
+    """Groq and every OpenAI-compatible API.
 
-    Lọc theo modality: bỏ model nhận âm thanh (whisper) và model nhả âm thanh
-    (orpheus). Còn lại lọc theo cửa sổ ngữ cảnh để bỏ bộ phân loại.
+    Filters by modality: drops audio-input models (whisper) and audio-output
+    models (orpheus). Then filters by context window to drop classifiers.
     """
-    ra: list[ModelInfo] = []
+    out: list[ModelInfo] = []
     for m in data.get("data") or []:
         if not isinstance(m, dict) or m.get("active") is False:
             continue
 
-        vao = m.get("input_modalities")
-        khoi = m.get("output_modalities")
-        # Không khai báo modality thì cho qua — coi như model chữ bình thường.
-        if isinstance(vao, list) and "text" not in vao:
+        inputs = m.get("input_modalities")
+        outputs = m.get("output_modalities")
+        # No modality declared: let it through — assume a normal text model.
+        if isinstance(inputs, list) and "text" not in inputs:
             continue
-        if isinstance(khoi, list) and "text" not in khoi:
+        if isinstance(outputs, list) and "text" not in outputs:
             continue
 
         ctx = m.get("context_window") or m.get("context_length")
         if isinstance(ctx, int) and ctx < MIN_CONTEXT_WINDOW:
             continue
 
-        ma = m.get("id")
-        if not ma:
+        model_id = m.get("id")
+        if not model_id:
             continue
-        ra.append(
+        out.append(
             ModelInfo(
-                id=str(ma),
-                label=str(m.get("name") or ma),
+                id=str(model_id),
+                label=str(m.get("name") or model_id),
                 context_window=ctx if isinstance(ctx, int) else None,
                 owned_by=m.get("owned_by"),
             )
         )
-    return ra
+    return out
 
 
-# Google KHÔNG có trường nào cho biết model sinh ra thứ gì.
+# Google has NO field saying what a model produces.
 #
-# Groq khai `output_modalities` nên lọc được đàng hoàng. Google thì model sinh
-# ảnh (Nano Banana), đọc thành tiếng (TTS), sinh nhạc (Lyria) và model trò
-# chuyện đều khai y hệt nhau: `generateContent`. Đã kiểm tra trực tiếp trên API
-# — không có `outputModalities`, không có `supportedActions`, không có gì khác.
+# Groq declares `output_modalities`, so it can be filtered properly. On Google,
+# image models (Nano Banana), text to speech (TTS), music (Lyria) and chat
+# models all declare the same thing: `generateContent`. Checked directly
+# against the API — no `outputModalities`, no `supportedActions`, nothing else.
 #
-# Nên chỗ này buộc phải lọc theo TÊN. Đây là cách vá tạm và nó có hạn: Google
-# ra một dòng model kiểu mới với tên lạ thì model đó sẽ lọt vào danh sách. Chọn
-# cách để lọt còn hơn để thiếu — người dùng thấy một mục lạ thì bỏ qua, chứ
-# model dùng được mà bị giấu thì không có đường nào chọn.
-GOOGLE_KHONG_PHAI_CHAT = (
-    "-image",        # sinh ảnh
-    "nano-banana",   # sinh ảnh (tên thương mại)
-    "tts",           # đọc thành tiếng
-    "lyria",         # sinh nhạc
-    "transcribe",    # chuyển giọng nói thành chữ
-    "embedding",     # vector nhúng
+# So this one has to filter by NAME. It is a stopgap with a known limit: if
+# Google ships a new model family with an unusual name, it will slip into the
+# list. Letting it slip is better than hiding it — a user ignores an odd entry,
+# but a usable model that is hidden cannot be picked at all.
+GOOGLE_NON_CHAT_MARKERS = (
+    "-image",        # image generation
+    "nano-banana",   # image generation (brand name)
+    "tts",           # text to speech
+    "lyria",         # music generation
+    "transcribe",    # speech to text
+    "embedding",     # embedding vectors
     "imagen",
-    "veo",           # sinh video
+    "veo",           # video generation
 )
 
 
-def _doc_google(data: dict[str, Any]) -> list[ModelInfo]:
+def _parse_google(data: dict[str, Any]) -> list[ModelInfo]:
     """Google Gemini.
 
-    Tên model về dưới dạng 'models/gemini-2.5-flash' nhưng lúc gọi thì phải bỏ
-    tiền tố 'models/'. Chỉ lấy model có 'generateContent', rồi loại tiếp những
-    model không sinh ra chữ (xem GOOGLE_KHONG_PHAI_CHAT ở trên).
+    Names come back as 'models/gemini-2.5-flash' but calls need the 'models/'
+    prefix removed. Only models with 'generateContent' are kept, then models
+    that do not produce text are dropped (see GOOGLE_NON_CHAT_MARKERS above).
     """
-    ra: list[ModelInfo] = []
+    out: list[ModelInfo] = []
     for m in data.get("models") or []:
         if not isinstance(m, dict):
             continue
         if "generateContent" not in (m.get("supportedGenerationMethods") or []):
             continue
 
-        ten = str(m.get("name") or "")
-        ma = ten.removeprefix("models/")
-        if not ma:
+        name = str(m.get("name") or "")
+        model_id = name.removeprefix("models/")
+        if not model_id:
             continue
-        if any(tu in ma.lower() for tu in GOOGLE_KHONG_PHAI_CHAT):
+        if any(marker in model_id.lower() for marker in GOOGLE_NON_CHAT_MARKERS):
             continue
-        ra.append(
+        out.append(
             ModelInfo(
-                id=ma,
-                label=str(m.get("displayName") or ma),
+                id=model_id,
+                label=str(m.get("displayName") or model_id),
                 context_window=m.get("inputTokenLimit"),
                 owned_by="Google",
             )
         )
-    return ra
+    return out
 
 
-def _doc_anthropic(data: dict[str, Any]) -> list[ModelInfo]:
-    """Anthropic. Mọi model trả về đều là model trò chuyện, không cần lọc."""
-    ra: list[ModelInfo] = []
-    for m in data.get("data") or []:
-        if not isinstance(m, dict):
-            continue
-        ma = m.get("id")
-        if not ma:
-            continue
-        ra.append(
-            ModelInfo(
-                id=str(ma),
-                label=str(m.get("display_name") or ma),
-                owned_by="Anthropic",
-            )
-        )
-    return ra
-
-
-_DOC = {
-    "openai": _doc_openai,
-    "google": _doc_google,
-    "anthropic": _doc_anthropic,
+_PARSERS = {
+    "openai": _parse_openai,
+    "google": _parse_google,
 }
 
 
-def _chuan_bi_request(spec: ProviderConfig, api_key: str) -> tuple[dict, dict]:
-    """Trả về (headers, params) đúng kiểu xác thực của nhà cung cấp."""
+def _build_request(spec: ProviderConfig, api_key: str) -> tuple[dict, dict]:
+    """Return (headers, params) with the provider's auth scheme."""
     if spec.models_style == "google":
-        # Google nhận khoá qua query param chứ không qua header.
+        # Google takes the key as a query param, not a header.
         return {}, {"key": api_key, "pageSize": 200}
-
-    if spec.models_style == "anthropic":
-        return (
-            {"x-api-key": api_key, "anthropic-version": "2023-06-01"},
-            {"limit": 100},
-        )
 
     return {"Authorization": f"Bearer {api_key}"}, {}
 
 
 # --------------------------------------------------------------------------
-# Bộ nhớ đệm
+# Cache
 # --------------------------------------------------------------------------
 
 _cache: dict[str, tuple[float, ModelCatalog]] = {}
@@ -214,86 +188,78 @@ _cache: dict[str, tuple[float, ModelCatalog]] = {}
 
 @on_reload
 def clear_cache() -> None:
-    """Cấu hình đổi (thường là đổi khoá API) thì danh sách cũ không còn đúng."""
+    """A configuration change (usually a new API key) makes the old list stale."""
     _cache.clear()
 
 
-def _tu_cau_hinh(provider: str, spec: ProviderConfig, ly_do: str | None) -> ModelCatalog:
-    """Phương án dự phòng: dùng model đã khai trong cấu hình.
+def _from_spec(provider: str, spec: ProviderConfig, reason: str | None) -> ModelCatalog:
+    """Fallback: use the models declared in the provider spec.
 
-    Luôn có cái gì đó để chọn, kể cả khi mạng hỏng hoặc chưa điền khoá API.
+    There is always something to pick, even when the network is down or no API
+    key is set.
     """
-    thay: list[ModelInfo] = []
-    for ma in (spec.model, spec.fast_model):
-        if ma and all(m.id != ma for m in thay):
-            thay.append(ModelInfo(id=ma, label=ma))
+    fallback: list[ModelInfo] = []
+    for model_id in (spec.model, spec.fast_model):
+        if model_id and all(m.id != model_id for m in fallback):
+            fallback.append(ModelInfo(id=model_id, label=model_id))
     return ModelCatalog(
-        provider=provider, models=thay, source="config", error=ly_do
+        provider=provider, models=fallback, source="config", error=reason
     )
 
 
 async def list_models(provider: str | None = None, *, refresh: bool = False) -> ModelCatalog:
-    """Danh sách model dùng được của một nhà cung cấp.
+    """The usable models of one provider.
 
-    KHÔNG ném ngoại lệ khi nhà cung cấp lỗi. Giao diện chọn model không đáng để
-    làm hỏng cả trang: trả về model trong cấu hình kèm lý do, người dùng vẫn
-    chat được.
+    NEVER raises when the provider fails. The model picker is not worth
+    breaking the whole page for: it returns the declared models plus the
+    reason, and the user can still chat.
     """
     config = get_settings()
-    ten = provider or config.LLM_PROVIDER
-    spec = config.llm_provider(ten)
+    name = provider or config.llm_default_provider()
+    spec = config.llm_provider(name)
 
     if not refresh:
-        dem = _cache.get(ten)
-        if dem and (time.monotonic() - dem[0]) < CACHE_TTL_SECONDS:
-            return dem[1]
+        cached = _cache.get(name)
+        if cached and (time.monotonic() - cached[0]) < CACHE_TTL_SECONDS:
+            return cached[1]
 
     if not spec.models_url:
-        return _tu_cau_hinh(ten, spec, "Nhà cung cấp này chưa khai địa chỉ API liệt kê model")
+        return _from_spec(name, spec, "This provider has no model listing API configured")
 
     api_key = str(getattr(config, spec.api_key_field, "") or "").strip()
     if not api_key:
-        return _tu_cau_hinh(ten, spec, f"Chưa điền {spec.api_key_field}")
+        return _from_spec(name, spec, f"{spec.api_key_field} is not set")
 
-    headers, params = _chuan_bi_request(spec, api_key)
+    headers, params = _build_request(spec, api_key)
 
     try:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
             resp = await client.get(spec.models_url, headers=headers, params=params)
 
         if resp.status_code != 200:
-            # Không đưa nội dung lỗi thô ra ngoài: một số nhà cung cấp vọng lại
-            # cả khoá API trong thông báo lỗi.
-            return _tu_cau_hinh(
-                ten, spec, f"Nhà cung cấp trả về lỗi {resp.status_code}"
+            # Never pass the raw error body on: some providers echo the API key
+            # back in their error messages.
+            return _from_spec(
+                name, spec, f"The provider returned error {resp.status_code}"
             )
 
-        doc = _DOC.get(spec.models_style, _doc_openai)
-        models = doc(resp.json())
+        parse = _PARSERS.get(spec.models_style, _parse_openai)
+        models = parse(resp.json())
 
     except Exception as exc:
-        logger.warning("Không lấy được danh sách model của %s: %s", ten, exc)
-        return _tu_cau_hinh(ten, spec, f"Không gọi được API: {type(exc).__name__}")
+        logger.warning("Could not list models for %s: %s", name, exc)
+        return _from_spec(name, spec, f"Could not reach the API: {type(exc).__name__}")
 
     if not models:
-        return _tu_cau_hinh(ten, spec, "Nhà cung cấp không trả về model nào dùng được")
+        return _from_spec(name, spec, "The provider returned no usable models")
 
-    # Model đang đặt trong cấu hình phải luôn có trong danh sách, kể cả khi nhà
-    # cung cấp không còn liệt kê nó — nếu không, giao diện sẽ hiện ô chọn trống
-    # trong khi hệ thống vẫn đang chạy bằng chính model đó.
-    #
-    # Chỉ làm vậy cho nhà cung cấp ĐANG DÙNG: `LLM_MODEL` trong .env là một tên
-    # duy nhất, gắn với nhà cung cấp đang đặt. Nhét nó vào danh sách của nhà
-    # cung cấp khác là chèn một model không tồn tại ở đó.
-    if ten == config.LLM_PROVIDER:
-        dang_dung = config.llm_model_name(provider=ten)
-        if dang_dung and all(m.id != dang_dung for m in models):
-            models.insert(0, ModelInfo(id=dang_dung, label=f"{dang_dung} (đang dùng)"))
-
+    # Do NOT insert the default model when the provider no longer lists it: it
+    # has been removed, and inserting it would let the user pick something that
+    # fails when called. The frontend falls back to the first model instead.
     models.sort(key=lambda m: m.label.lower())
-    ket_qua = ModelCatalog(provider=ten, models=models, source="api")
-    _cache[ten] = (time.monotonic(), ket_qua)
-    return ket_qua
+    result = ModelCatalog(provider=name, models=models, source="api")
+    _cache[name] = (time.monotonic(), result)
+    return result
 
 
 __all__ = [

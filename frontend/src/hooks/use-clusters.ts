@@ -1,1 +1,1 @@
-// Fetch cluster, namespace, resource. TODO
+// Fetch clusters, namespaces, resources. TODO

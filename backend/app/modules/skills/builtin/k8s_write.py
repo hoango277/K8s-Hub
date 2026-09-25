@@ -1,1 +1,1 @@
-"""Builtin skill: apply / scale / rollout / delete (can approval). TODO."""
+"""Builtin skill: apply / scale / rollout / delete (requires approval). TODO."""
