@@ -75,7 +75,11 @@ def create_engine() -> AsyncEngine:
     pooled = _is_pooled(url)
     return create_async_engine(
         url,
-        echo=config.DEBUG and config.APP_ENV == "local",
+        # NOT `echo=True`: echo attaches SQLAlchemy's own handler to the
+        # `sqlalchemy.engine` logger, and the same record also reaches the root
+        # handler — every statement printed twice. SQL logging is switched on
+        # by level instead, in app/core/logging.py.
+        echo=False,
         # pool_pre_ping sends a "SELECT 1" before EVERY connection checkout.
         # With a database in the same region that is negligible, but here each
         # round trip costs 0.6-1 seconds, so it nearly doubles the time of the
@@ -150,15 +154,24 @@ async def dispose_engine() -> None:
 
 @on_reload
 def _reset_on_config_change() -> None:
-    """When configuration changes, the old engine may point to the wrong place.
+    """Rebuild the engine only when DATABASE_URL itself changed.
+
+    This runs on EVERY configuration change — saving LLM_TEMPERATURE on the
+    Settings page included. Dropping the engine each time threw away a warm
+    connection pool and paid the 0.6-1 s round trip to lab1 again on the next
+    query, for a setting that has nothing to do with the database. DATABASE_URL
+    can only change through "Reload .env", so compare before discarding.
 
     Only drop the reference — we cannot close it here because this function
     runs synchronously. The old connections will be closed by the garbage
     collector.
     """
     global _engine, _sessionmaker
-    if _engine is not None:
-        logger.info("Configuration changed; the database connection will be rebuilt on next use")
+    if _engine is None:
+        return
+    if _engine.url.render_as_string(hide_password=False) == get_settings().DATABASE_URL:
+        return
+    logger.info("DATABASE_URL changed; the database connection will be rebuilt on next use")
     _engine = None
     _sessionmaker = None
 

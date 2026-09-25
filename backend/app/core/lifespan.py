@@ -11,13 +11,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.core.config import get_settings
+from app.core.config import get_settings, load_persisted_overrides
 from app.db.session import check_connection, dispose_engine, get_sessionmaker
 from app.modules.observability.langfuse_client import (
     check_langfuse,
     init_langfuse,
     shutdown_langfuse,
 )
+from app.services.settings_service import load_overrides
 from app.services.user_service import bootstrap_admin
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             except Exception:
                 await session.rollback()
                 logger.exception("Could not bootstrap the admin account")
+
+    # Restore what admins changed on the Settings page in earlier runs. Before
+    # Langfuse/LLM setup, although today none of the persisted fields affect them.
+    if db["ok"]:
+        async with get_sessionmaker()() as session:
+            try:
+                saved = await load_overrides(session)
+                applied = load_persisted_overrides(saved)
+                if saved and not applied:
+                    logger.warning(
+                        "Saved settings are invalid together; running on .env values only"
+                    )
+                elif applied:
+                    logger.info("Restored saved settings: %s", ", ".join(sorted(applied)))
+            except Exception:
+                logger.exception("Could not load saved settings; running on .env values only")
 
     # Build the client and TracerProvider. No network calls at this step.
     init_langfuse()

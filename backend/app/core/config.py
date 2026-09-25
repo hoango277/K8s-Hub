@@ -32,7 +32,7 @@ import threading
 from collections.abc import Callable
 from typing import Any, Literal, Protocol, get_args, get_origin
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ---------------------------------------------------------------------------
@@ -251,10 +251,32 @@ class Settings(BaseSettings):
     LOKI_URL: str = Field(
         default="http://localhost:3100", description="Log store URL, used for diagnosis"
     )
+    # Empty by default, unlike the two above: traces only exist once apps on the
+    # cluster are instrumented (Beyla/OpenTelemetry) and Tempo is deployed, so
+    # "not configured" is a normal state the tools must report plainly.
+    TEMPO_URL: str = Field(
+        default="", description="Trace store (Grafana Tempo) URL, used for diagnosis"
+    )
+
+    # --- Self-monitoring (read at startup only) ---
+    METRICS_ENABLED: bool = Field(
+        default=True, description="Expose Prometheus metrics at /metrics"
+    )
+    LOG_FORMAT: Literal["text", "json"] = Field(
+        default="text",
+        description="Log line format on stdout: text for a console, json when running as a pod",
+    )
 
     # --- Langfuse ---
+    # Accepts both names: the Langfuse SDK renamed LANGFUSE_HOST to
+    # LANGFUSE_BASE_URL, and its docs (and Helm chart output) now use the new
+    # one. Reading only the old name meant a .env copied from those docs was
+    # silently ignored and traces went to localhost. `LANGFUSE_HOST` stays
+    # first so `_compose` can still rebuild Settings by field name.
     LANGFUSE_HOST: str = Field(
-        default="http://localhost:3001", description="LLM tracing server URL"
+        default="http://localhost:3001",
+        validation_alias=AliasChoices("LANGFUSE_HOST", "LANGFUSE_BASE_URL"),
+        description="LLM tracing server URL",
     )
     LANGFUSE_PUBLIC_KEY: str = Field(default="", description="Langfuse public key")
     LANGFUSE_SECRET_KEY: str = Field(default="", description="Langfuse secret key")
@@ -329,7 +351,10 @@ class Settings(BaseSettings):
 #: Can be changed while the system is running, no restart needed.
 RUNTIME_EDITABLE: frozenset[str] = frozenset(
     {
-        "DEBUG",
+        # DEBUG is DELIBERATELY not here: it is only read at startup (FastAPI's
+        # debug flag, log levels, SQL logging in app/core/logging.py), so an
+        # edit in the UI would change nothing until a restart.
+        #
         # LLM — call parameters only; provider/model are picked in the chat
         "LLM_TEMPERATURE",
         "LLM_MAX_TOKENS",
@@ -338,9 +363,10 @@ RUNTIME_EDITABLE: frozenset[str] = frozenset(
         # Kubernetes — editable because it only affects per-operation checks
         "K8S_EXECUTION_MODE",
         "K8S_ALLOWED_NAMESPACES",
-        # Observability data sources
-        "PROMETHEUS_URL",
-        "LOKI_URL",
+        # PROMETHEUS_URL / LOKI_URL / TEMPO_URL are DELIBERATELY not here: infrastructure
+        # addresses on the lab1 cluster, set once in .env and not meant to be
+        # changed from a web page.
+        #
         # LANGFUSE_* is DELIBERATELY not here: the Langfuse SDK keeps a
         # singleton keyed by public key, so rebuilding the client with another
         # host or secret returns the old object and silently ignores the new
@@ -375,10 +401,14 @@ class ConfigUpdateError(ValueError):
 
 
 class OverrideStore(Protocol):
-    """Where the UI-made configuration changes are kept, to survive restarts.
+    """Where the running process keeps the UI-made configuration changes.
 
-    The default keeps them in memory only. Once there is a table for it, write
-    a Postgres-backed class and call `set_override_store()` at startup.
+    Persistence to Postgres does NOT go through this interface: the database
+    layer is async while this module is sync and must stay importable without
+    a database. Instead `app/services/settings_service.py` writes each change
+    to the `settings_overrides` table from the (async) settings endpoints, and
+    at startup the lifespan hands the saved values back via
+    `load_persisted_overrides()`.
     """
 
     def load(self) -> dict[str, Any]: ...
@@ -577,6 +607,20 @@ def set_override_store(store: OverrideStore) -> None:
     _notify()
 
 
+def load_persisted_overrides(values: dict[str, Any]) -> dict[str, Any]:
+    """Start from overrides saved in the database (called once at startup).
+
+    Fields that are no longer editable are dropped silently — a field removed
+    from `ALL_EDITABLE` in a later version must not come back from old rows.
+    Returns what was actually applied; empty if the saved values are invalid
+    together (then the app runs on plain .env rather than refusing to start).
+    """
+    store = MemoryOverrideStore()
+    store.save({name: value for name, value in values.items() if name in ALL_EDITABLE})
+    set_override_store(store)
+    return runtime_overrides(redact_secrets=False)
+
+
 def on_reload(callback: Callable[[], None]) -> Callable[[], None]:
     """Register a function to be called whenever the configuration changes.
 
@@ -707,6 +751,7 @@ settings: Any = _SettingsProxy()
 
 __all__ = [
     "ALL_EDITABLE",
+    "load_persisted_overrides",
     "CANONICAL_LLM_PARAMS",
     "DEFAULT_LLM_PROVIDERS",
     "RUNTIME_EDITABLE",

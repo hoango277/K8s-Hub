@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
 import {
   Boxes,
@@ -61,12 +62,31 @@ const GROUPS: NavGroup[] = [
 
 const COLLAPSED_KEY = "k8shub.nav";
 
+// Below the md breakpoint the full 240px sidebar left a 390px phone with
+// ~150px for the page. There it is always the icon rail, whatever was saved.
+const NARROW_QUERY = "(max-width: 767px)";
+
+function subscribeNarrow(onChange: () => void) {
+  const mq = window.matchMedia(NARROW_QUERY);
+  mq.addEventListener("change", onChange);
+  return () => mq.removeEventListener("change", onChange);
+}
+
+function useIsNarrow() {
+  return useSyncExternalStore(
+    subscribeNarrow,
+    () => window.matchMedia(NARROW_QUERY).matches,
+    () => false,
+  );
+}
+
 export function Sidebar() {
   const pathname = usePathname();
   const { data: user } = useCurrentUser();
 
   const [stored, saveCollapsed] = useLocalStorage(COLLAPSED_KEY);
-  const collapsed = stored === "1";
+  const narrow = useIsNarrow();
+  const collapsed = narrow || stored === "1";
 
   const visibleGroups = GROUPS.map((g) => ({
     ...g,
@@ -95,6 +115,7 @@ export function Sidebar() {
 
         <button
           type="button"
+          hidden={narrow}
           onClick={() => saveCollapsed(collapsed ? "0" : "1")}
           aria-expanded={!collapsed}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}

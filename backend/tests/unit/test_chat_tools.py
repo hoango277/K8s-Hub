@@ -24,10 +24,29 @@ def call(tool, metadata: dict | None = None) -> str:
 # --------------------------------------------------------------------------
 
 
+# Tools with required arguments get a sample value.
+SAMPLE_ARGS: dict[str, dict] = {"get_trace": {"trace_id": "0af7651916cd43dd8448eb211c80319c"}}
+
+
+@pytest.fixture
+def no_tempo(monkeypatch):
+    """Unit tests never reach the network: pretend Tempo is not configured."""
+    from app.core.config import Settings
+    from app.integrations.tempo import client as tempo
+
+    monkeypatch.setattr(tempo, "get_settings", lambda: Settings(_env_file=None, TEMPO_URL=""))
+
+
 @pytest.mark.parametrize("tool", CHAT_TOOLS, ids=lambda t: t.name)
-def test_every_tool_runs(tool):
-    """Really call each tool. Catches 'misread attribute' bugs right here."""
-    result = call(tool)
+async def test_every_tool_runs(tool, no_tempo):
+    """Really call each tool, sync or async, the way LangGraph does. Catches
+    'misread attribute' bugs right here."""
+    args = SAMPLE_ARGS.get(tool.name, {})
+    config = {"metadata": {}}
+    if tool.coroutine is not None:
+        result = await tool.ainvoke(args, config=config)
+    else:
+        result = tool.invoke(args, config=config)
 
     assert isinstance(result, str)
     assert result.strip()

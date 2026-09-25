@@ -53,9 +53,8 @@ dependencies = [
     "opentelemetry-api>=1.33.1",
     "opentelemetry-sdk>=1.33.1",
 
-    # --- Self-monitoring of this app (metrics + structured logs) ---
+    # --- Self-monitoring of this app (metrics; logs use the stdlib, see app/core/logging.py) ---
     "prometheus-fastapi-instrumentator>=7.0.0",
-    "structlog>=24.4.0",
 
     # --- Auth ---
     "python-jose[cryptography]>=3.3.0",

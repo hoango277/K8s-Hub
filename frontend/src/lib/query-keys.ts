@@ -22,7 +22,12 @@ export const qk = {
     providers: ["chat", "providers"] as const,
     models: (provider: string) => ["chat", "models", provider] as const,
   },
-  settings: ["settings"] as const,
+  settings: {
+    all: ["settings"] as const,
+    view: ["settings", "view"] as const,
+    history: ["settings", "history"] as const,
+    status: ["settings", "status"] as const,
+  },
   auth: {
     me: ["auth", "me"] as const,
   },

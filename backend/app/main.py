@@ -10,6 +10,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.lifespan import lifespan
+from app.core.logging import setup_logging
+from app.core.telemetry import setup_metrics
+
+# Before anything else logs: uvicorn has already configured its own loggers by
+# the time it imports this module, so adding our handlers here is safe.
+setup_logging()
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -29,3 +35,6 @@ app.add_middleware(
 )
 
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+
+if settings.METRICS_ENABLED:
+    setup_metrics(app)

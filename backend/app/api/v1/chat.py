@@ -43,6 +43,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.api.deps import CurrentUser, DbSession
 from app.core.config import get_settings
+from app.core.telemetry import CHAT_STREAMS_ACTIVE, record_chat_turn
 from app.db.models.thread import ChatThread
 from app.db.session import get_sessionmaker
 from app.integrations.llm.catalog import ModelCatalog
@@ -298,6 +299,9 @@ async def stream_reply(
         collector = StreamCollector()
         started = time.perf_counter()
         cancelled = False
+        # Decremented on EVERY exit path below; a gauge that only climbs
+        # would falsely report leaking streams.
+        CHAT_STREAMS_ACTIVE.inc()
 
         # With Langfuse disabled this list is empty and the graph runs as usual.
         handler = get_callback_handler(trace_id=trace_id)
@@ -314,6 +318,11 @@ async def stream_reply(
             )
             await _save_result(
                 assistant_id, collector, latency_ms=0, error=str(exc)
+            )
+            CHAT_STREAMS_ACTIVE.dec()
+            record_chat_turn(
+                provider=provider_name, model=model_name, outcome="error",
+                seconds=time.perf_counter() - started,
             )
             yield stream.emit(DoneEvent(message_id=str(assistant_id), trace_id=trace_id))
             return
@@ -336,6 +345,12 @@ async def stream_reply(
                         # model ACTUALLY running, not the global configuration.
                         "llm_provider": provider_name,
                         "llm_model": model_name,
+                        # Read by the Langfuse CallbackHandler: without them the
+                        # trace's userId/sessionId stay empty, and Langfuse can't
+                        # group usage and cost per person or per conversation.
+                        "langfuse_user_id": user.email,
+                        "langfuse_session_id": str(thread_id),
+                        "langfuse_tags": [provider_name],
                     },
                 },
             ):
@@ -350,6 +365,14 @@ async def stream_reply(
             raise
 
         finally:
+            CHAT_STREAMS_ACTIVE.dec()
+            record_chat_turn(
+                provider=provider_name,
+                model=model_name,
+                outcome="cancelled" if cancelled else ("error" if collector.error else "ok"),
+                seconds=time.perf_counter() - started,
+            )
+
             # Runs even when cancelled: what the assistant said must be saved.
             #
             # The save MUST run in its OWN task, protected by `shield`. When the

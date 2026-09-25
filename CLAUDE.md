@@ -133,6 +133,23 @@ Ba vai trò: `admin` (toàn quyền), `engineer` (sau này thêm/sửa/xoá skil
 - Quyền thật luôn chặn ở backend; frontend chỉ ẩn những gì vai trò hiện tại không
   dùng được.
 
+## Giám sát: mỗi thứ đúng một chỗ
+
+- **Langfuse = mọi thứ về con AI**: token, chi phí, lời gọi công cụ, độ trễ từng
+  bước, theo người dùng/hội thoại. **Không chép sang Prometheus** — hai nguồn sẽ
+  lệch nhau.
+- **Prometheus (`/metrics`, `core/telemetry.py`) = chỉ sức khoẻ dịch vụ**: số
+  request, lỗi, độ trễ, luồng SSE đang mở. Label ít giá trị, không bao giờ gắn
+  theo người dùng/hội thoại/trace.
+- **Trace của ứng dụng trên cụm = Tempo** (`TEMPO_URL`, đọc qua
+  `integrations/tempo/client.py`), khác Langfuse (trace của chính con AI). LLM
+  không bao giờ nhận TraceQL thô hay trace JSON thô: truy vấn dựng từ tham số đã
+  kiểm, trace được tóm tắt trước (`summarize_trace`).
+- **Log chỉ ra stdout** (`LOG_FORMAT=text|json`). App **không tự đẩy log lên
+  Loki**: trên cụm, Alloy đã gom stdout của mọi pod.
+- Không cấu hình cho Prometheus scrape máy dev. Khi backend chạy thành pod thì
+  thêm ServiceMonitor cùng Deployment.
+
 ## Quy ước viết mã
 
 Comment và docstring giải thích **vì sao** chứ không chỉ **làm gì** — kho này đã

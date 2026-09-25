@@ -25,7 +25,7 @@ what the LLM intended          what actually changed on the cluster
 | `audit.py` | Append-only audit log: actor, action, resource, diff, result, `trace_id` |
 | `impact.py` | Join trace ↔ audit: which resources/namespaces the LLM touched, blast radius |
 | `evaluation.py` | Dataset + scoring: NL→command accuracy, RCA quality (LLM-as-judge) |
-| `metrics.py` | AI operations metrics: approval rate, reject rate, dry-run fail rate, tokens/cost per user |
+| `metrics.py` | AI operations rates Langfuse can't compute: approval rate, reject rate, dry-run fail rate |
 
 ## Metrics worth tracking (for the thesis evaluation chapter)
 

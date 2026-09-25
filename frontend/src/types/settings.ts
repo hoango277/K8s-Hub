@@ -49,20 +49,34 @@ export interface SettingsPatch {
   replace?: boolean;
 }
 
-/** Display group in the UI, derived from the field name prefix. */
-export type SettingGroup = "LLM" | "Kubernetes" | "Observability" | "General";
-
-export function groupOf(name: string): SettingGroup {
-  if (name.startsWith("LLM_") || name.endsWith("_API_KEY")) return "LLM";
-  if (name.startsWith("K8S_")) return "Kubernetes";
-  if (name.startsWith("LANGFUSE_") || name.startsWith("PROMETHEUS_") || name.startsWith("LOKI_"))
-    return "Observability";
-  return "General";
+/** One row of the append-only change history. */
+export interface SettingChange {
+  id: string;
+  changed_at: string;
+  actor_email: string;
+  action: "update" | "restore" | "reset_all" | "reload_env";
+  field: string | null;
+  /** Always null for secrets — keys are never logged. */
+  old_value: unknown;
+  new_value: unknown;
+  secret: boolean;
 }
 
-export const GROUP_ORDER: SettingGroup[] = ["LLM", "Kubernetes", "Observability", "General"];
+export interface SettingChangePage {
+  items: SettingChange[];
+  total: number;
+}
 
-/** Options that need a warning because they are high-risk. */
-export const DANGEROUS_OPTIONS: Record<string, string[]> = {
-  K8S_EXECUTION_MODE: ["auto"],
-};
+/** Reachability of one service the backend talks to. */
+export interface ConnectionStatus {
+  id: string;
+  name: string;
+  purpose: string;
+  /** Address checked — never includes credentials. */
+  target: string;
+  /** null = not enabled, so not checked. */
+  ok: boolean | null;
+  version: string | null;
+  detail: string | null;
+  latency_ms: number | null;
+}

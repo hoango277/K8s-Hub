@@ -219,6 +219,22 @@ def test_legacy_llm_fields_are_no_longer_editable_on_web() -> None:
         assert name not in Settings.model_fields, name
 
 
+def test_startup_only_fields_are_not_editable_on_web() -> None:
+    """These are read once at startup (log levels, SQL logging, Langfuse client,
+    /metrics). Offering them on the Settings page would promise a change that
+    only happens after a restart."""
+    for name in (
+        "DEBUG",
+        "LOG_FORMAT",
+        "METRICS_ENABLED",
+        "LANGFUSE_HOST",
+        "LANGFUSE_ENABLED",
+        "PROMETHEUS_URL",
+        "LOKI_URL",
+    ):
+        assert name not in C.ALL_EDITABLE, name
+
+
 # ---------------------------------------------------------------------------
 # Changing configuration at runtime (from the web UI)
 # ---------------------------------------------------------------------------

@@ -15,17 +15,18 @@ bộ khung thư mục cho cả 4**, nhưng mới **một use case chạy thật*
 | Khung trò chuyện có streaming + gọi công cụ | **Chạy được đầu-cuối**, có test |
 | Tầng cấu hình (đa nhà cung cấp LLM, đổi nóng) | **Chạy được**, có test, khá hoàn chỉnh |
 | Lưu hội thoại vào PostgreSQL + migration | **Chạy được** |
-| Trang Cấu hình trên web | **Chạy được** |
+| Trang Cấu hình trên web | **Chạy được** — lưu xuống Postgres, có lịch sử thay đổi và trạng thái kết nối |
 | Kết nối Kubernetes | Chưa có dòng mã nào |
+| Đọc trace ứng dụng trên cụm (Grafana Tempo) | **Chạy được đầu-cuối**: 3 công cụ cho trợ lý, đã thử với Tempo thật trên lab1 |
 | RCA | Chỉ có khung file |
 | Skills / MCP / runbook | Chỉ có khung file |
-| Tracing: OTel + Langfuse | **Đã nối**, chờ máy chủ Langfuse v3 để chạy thật |
+| Tracing: OTel + Langfuse | **Chạy thật** với Langfuse trên `lab1:30400`, đã kiểm trace đầu-cuối |
 | Audit log, đo lường chất lượng | Chỉ có khung file |
 | Đăng nhập, phân quyền (JWT, 3 vai trò) | **Chạy được đầu-cuối** (backend + frontend), đã kiểm qua HTTP thật |
 | Quản trị người dùng (trang `/users`) | **Chạy được**, đã kiểm bằng trình duyệt thật |
 
 Về khối lượng: backend có ~5.300 dòng Python, nhưng **57 file chỉ chứa một dòng docstring
-kèm `TODO`** (không tính `__init__.py`). Frontend có 29 component/hook/type ở dạng khung rỗng — nhưng
+kèm `TODO`** (không tính `__init__.py`). Frontend có 26 component/hook/type ở dạng khung rỗng — nhưng
 không còn **trang** nào trắng: trang chưa có tính năng hiện mô tả những gì nó sẽ làm. Nghĩa là cấu
 trúc dự án đã được nghĩ xong và đóng cọc sẵn; phần thịt mới đắp vào một nhánh.
 
@@ -54,8 +55,8 @@ K8s-Hub/
 │   ├── app/modules/  nl_command (một phần) · observability (tracing xong) · rca, skills (khung)
 │   ├── app/schemas/  events.py, chat.py, auth.py (xong) + 5 file khung
 │   ├── app/services/ thread, auth, user service (xong) + 2 file khung
-│   ├── migrations/   3 revision Alembic
-│   └── tests/unit/   9 file test (132 test, đều xanh)
+│   ├── migrations/   4 revision Alembic
+│   └── tests/unit/   12 file test (170 test, đều xanh)
 ├── frontend/         Next.js 16 + React 19 + Tailwind v4 + TanStack Query
 │   └── src/          đăng nhập, chat, người dùng, cấu hình làm thật; 4 trang còn lại là "sắp có"
 │       └── components/ui/  bộ component nền theo quy chuẩn UI/UX trong CLAUDE.md
@@ -125,7 +126,17 @@ pipeline duyệt thao tác chưa làm.
    xem mục 3.7 để biết vì sao Langfuse phải là cấu hình khởi động.
 3. **Kiểm tra trước khi áp**: sai một trường thì cả lô bị từ chối và cấu hình đang chạy giữ nguyên.
 4. **Cơ chế `on_reload()`**: module nào có bộ nhớ đệm dựng từ cấu hình thì đăng ký hàm dọn đệm.
-   Hiện có 4 nơi dùng: bộ đệm model LLM, engine CSDL, danh mục model, tài khoản cục bộ.
+   Hiện có 4 nơi dùng: bộ đệm model LLM, engine CSDL, danh mục model, tài khoản cục bộ. Engine CSDL
+   chỉ dựng lại khi `DATABASE_URL` thật sự đổi — trước đây mỗi lần lưu bất kỳ trường nào (kể cả
+   temperature) đều vứt pool kết nối và trả lại 0,6–1 giây đi-về tới lab1 ở truy vấn kế tiếp.
+5. **Lưu bền xuống Postgres** (`services/settings_service.py`). `config.py` vẫn đồng bộ và giữ cấu
+   hình đang chạy trong bộ nhớ; endpoint Settings (async) áp thay đổi rồi ghi bảng
+   `settings_overrides` + một dòng `settings_changes` cho mỗi trường đổi. Ghi CSDL lỗi thì **trả bộ
+   nhớ về như cũ** và báo 503 — trang không bao giờ hiện một thay đổi mà restart sẽ làm mất. Lúc
+   khởi động, `lifespan` nạp lại qua `load_persisted_overrides()`. Khoá API lưu **mã hoá** (Fernet,
+   khoá dẫn xuất từ `JWT_SECRET`): bản dump CSDL không còn lộ khoá dùng được; đổi `JWT_SECRET` thì
+   khoá đã lưu bị bỏ qua kèm cảnh báo, phải nhập lại. Lịch sử không bao giờ chứa giá trị khoá.
+   Đã kiểm thật: đổi `LLM_MAX_RETRIES`, khởi động lại backend, giá trị vẫn còn.
 
 Hệ thống chỉ hỗ trợ **hai nhà cung cấp: Groq và Google (Gemini)**. Anthropic đã được gỡ hẳn — đặc tả,
 khoá API, bộ đọc danh sách model và gói `langchain-anthropic`.
@@ -152,7 +163,7 @@ cứng một danh sách sẽ sai trong vài tháng. Phần lọc model không-ph
 
 ### 3.3 Lưu trữ
 
-Bốn bảng đã có model và migration:
+Các bảng đã có model và migration:
 
 | Bảng | Vai trò |
 |---|---|
@@ -161,6 +172,8 @@ Bốn bảng đã có model và migration:
 | `chat_threads` | Một hội thoại. `last_message_at` tách khỏi `updated_at` để sửa tiêu đề không làm hội thoại nhảy lên đầu |
 | `messages` | Có `reasoning`, `trace_id`, `provider`, `model`, `prompt_tokens`, `completion_tokens`, `latency_ms` |
 | `tool_calls` | Bảng riêng chứ không nhét JSON vào `messages`, để thống kê "công cụ nào hay lỗi nhất" chỉ cần một câu truy vấn |
+| `settings_overrides` | Giá trị đổi trên trang Cấu hình (JSONB; khoá API lưu dạng `{"enc": ...}`), `updated_by` |
+| `settings_changes` | Lịch sử chỉ-ghi-thêm: ai, lúc nào, trường nào, từ gì sang gì (khoá API chỉ ghi "đã đổi") |
 
 Mọi quan hệ đặt `lazy="raise"` — đọc quan hệ chưa nạp sẵn sẽ báo lỗi ngay thay vì lặng lẽ bắn thêm
 truy vấn giữa luồng bất đồng bộ. Quy ước đặt tên ràng buộc cố định trong `db/base.py` để Alembic
@@ -191,9 +204,21 @@ prop nguy hiểm của `ConfirmDialog` là `destructive`.
 - `model-picker.tsx` + `use-models.ts` — chọn nhà cung cấp và model cho riêng một lượt chat; lựa
   chọn được gửi kèm request và công cụ `system_info` đọc lại từ metadata để trợ lý khai đúng về
   chính nó.
-- `settings-form.tsx` + `field-input.tsx` — dựng form tự động từ mô tả trường do backend trả về
-  (`GET /settings`), phân biệt trường bí mật, hiện giá trị gốc trong `.env` và trạng thái "đang bị
-  ghi đè".
+- `settings/settings-page.tsx` — trang Cấu hình kiểu trang cài đặt thật: mục lục bên trái (trên
+  điện thoại thành hàng tab cuộn ngang), mục đang mở nằm trong URL hash (`#keys`, `#history`…) nên
+  tải lại/chia sẻ link/nút Back đều đúng. Bảy mục: **AI model**, **API keys**, **Cluster access**,
+  **Connections**, **Change history**, **Advanced** (+ "Other" tự hiện nếu backend có trường mới
+  chưa khai nhãn). `meta.ts` đổi tên biến `.env` thành nhãn dễ đọc kèm đơn vị; tên biến chỉ còn là
+  chữ nhỏ bên dưới. Ô nhập đúng kiểu (`controls.tsx`): temperature là thanh trượt + ô số, chế độ
+  thực thi là ba thẻ chọn có mô tả (Automatic có cảnh báo đỏ), namespace nhập dạng chip có kiểm
+  tra tên DNS-1123. Kiểm tra giới hạn ngay dưới ô trước khi gửi. Thanh lưu chỉ hiện khi có thay đổi
+  chưa lưu (đếm số thay đổi, chấm vàng trên mục chứa nó), rời/tải lại trang lúc chưa lưu thì trình
+  duyệt hỏi lại. Mỗi trường có "Reset to default" hiện giá trị mặc định từ `.env`.
+  `api-key-card.tsx`: trạng thái khoá (có/chưa, lấy từ `.env` hay đặt ở trang này), "Replace key",
+  "Use .env key", và **Test** — gọi danh sách model của nhà cung cấp bằng khoá đã lưu ("The key
+  works — 28 models available"). `connections-panel.tsx`: Database/Langfuse/Prometheus/Loki/Tempo có trả
+  lời không, phiên bản, độ trễ, tự kiểm lại mỗi 30 giây. `history-panel.tsx`: "Changed Temperature
+  from 0 to 0.4 — admin@… 5 minutes ago", tải thêm từng 20 dòng.
 - `login-form.tsx` / `register-form.tsx` + `auth-shell.tsx` — trang xác thực hai cột, bên trái giới
   thiệu sản phẩm (ẩn trên màn hình hẹp). `auth-gate.tsx`, `role-gate.tsx`, `header.tsx` — xem mục 3.8.
 - `users/user-admin.tsx` + `create-user-dialog.tsx` + `edit-user-dialog.tsx` +
@@ -215,17 +240,35 @@ những gì trang sẽ làm, không còn trang trắng.
 
 ### 3.5 Công cụ trợ lý đang có
 
-Đúng **hai** công cụ, cả hai đều chỉ đọc:
+Năm công cụ, tất cả chỉ đọc:
 
-- `system_info` — hệ thống đang chạy model nào, chế độ thực thi nào, namespace nào được phép.
+- `system_info` — hệ thống đang chạy model nào, chế độ thực thi nào, namespace nào được phép, các
+  nguồn dữ liệu (Prometheus, Loki, Tempo).
 - `current_time` — thời điểm hiện tại UTC.
+- `list_traced_services`, `search_traces`, `get_trace` — **trace của ứng dụng chạy trên cụm**, đọc từ
+  Grafana Tempo (`TEMPO_URL`, lab1: `http://lab1:30200`). Không phải Langfuse: Langfuse là trace của
+  chính con AI. `integrations/tempo/client.py` giữ hai nguyên tắc: (1) mô hình **không bao giờ gửi
+  TraceQL thô** — `search_traces` nhận tham số rời (service, namespace, chỉ lỗi, ngưỡng thời gian,
+  khoảng thời gian), mỗi giá trị được kiểm bằng biểu thức chặt trước khi ghép thành TraceQL;
+  (2) mô hình **không bao giờ nhận trace JSON thô** (hàng trăm span tràn ngữ cảnh) —
+  `summarize_trace()` rút gọn thành đường chậm nhất, các span lỗi (lỗi sâu nhất đứng đầu, vì lỗi
+  ngoài thường chỉ là lan ra), và thời gian riêng của từng service. Khi `K8S_ALLOWED_NAMESPACES` có
+  giá trị, tìm kiếm tự lọc theo danh sách đó và `get_trace` giấu các span ngoài danh sách. Để trống
+  `TEMPO_URL` thì công cụ trả lời "chưa cấu hình nguồn trace" thay vì lỗi.
+
+  Đã kiểm đầu-cuối: gửi một trace mẫu có đánh dấu (service `k8s-hub-selftest-*`, namespace
+  `k8s-hub-selftest`) vào Tempo qua OTLP, rồi hỏi trợ lý bằng tiếng Việt "service … có request nào
+  lỗi không, nguyên nhân gốc là gì" — trợ lý tự gọi `search_traces` rồi `get_trace` và chỉ ra đúng
+  "payment timeout khi gọi DB → frontend trả 500". **Tempo hiện chưa có trace thật**: cần bật Beyla
+  (component `beyla.ebpf` của Alloy) hoặc gắn OpenTelemetry cho app, và cho Alloy chuyển OTLP sang
+  Tempo. `rca/collectors/traces.py` mới là khung, ghi rõ phải dùng lại client này.
 
 `tools.py` ghi rõ ba ranh giới an toàn cho người thêm công cụ sau này: chỉ được đọc, không nhận chuỗi
 lệnh thô (`run_kubectl(cmd)` bị cấm), và mô tả công cụ phải rõ vì đó là thứ mô hình đọc để quyết định.
 
 ### 3.6 Kiểm thử
 
-9 file test đơn vị (138 test), không cần mạng và không cần CSDL:
+12 file test đơn vị (170 test), không cần mạng và không cần CSDL:
 
 | File | Kiểm gì |
 |---|---|
@@ -238,6 +281,9 @@ lệnh thô (`run_kubectl(cmd)` bị cấm), và mô tả công cụ phải rõ 
 | `test_auth_security.py` | Băm mật khẩu (bcrypt), JWT access/refresh, từ chối token sai loại |
 | `test_user_guard.py` | Chặn admin tự hạ quyền/tự khoá, chặn mất admin cuối cùng, admin qua mọi kiểm tra vai trò |
 | `test_password_change.py` | Tự đổi mật khẩu, admin đặt lại mật khẩu, cả hai đều thu hồi phiên cũ |
+| `test_settings_persistence.py` | Lưu cấu hình: khoá API mã hoá khi lưu, lịch sử không bao giờ chứa khoá, restore ghi đúng giá trị .env, khoá không giải mã được (đổi JWT_SECRET) thì bỏ qua chứ không làm sập app |
+| `test_tempo.py` | TraceQL dựng từ tham số có kiểm (chặn chèn toán tử qua tên service/namespace), tóm tắt trace (đường chậm nhất, lỗi sâu nhất đứng đầu, thời gian theo service), công cụ trace tôn trọng `K8S_ALLOWED_NAMESPACES` |
+| `test_telemetry.py` | Dòng log JSON (kèm exception, trace_id) và `/metrics` có các metric của chat |
 
 `tests/conftest.py` mới là một dòng `TODO`, `tests/integration/` rỗng — nghĩa là **chưa có test nào
 chạm cơ sở dữ liệu hay tầng HTTP thật**.
@@ -271,7 +317,22 @@ ghi một cảnh báo lúc khởi động — đã thử: lượt chat vẫn xon
 khác thì nó trả về đối tượng cũ và **lặng lẽ bỏ qua host mới**. Cho sửa trên giao diện là hứa một
 thứ không xảy ra, mà lại không có lỗi nào để lần ra. Đổi trong `.env` rồi khởi động lại backend.
 
-Chưa chạy được thật vì chưa có máy chủ Langfuse v3 (xem mục 5).
+**Đã chạy thật** với Langfuse 4.38 trên `lab1:30400` (25/09/2026): mỗi lượt chat lên Langfuse sau
+khoảng 5 giây, đủ cây LangGraph → `assistant` → `ChatGroq` → công cụ, kèm token (vào/ra), độ trễ,
+`userId` = email người hỏi và `sessionId` = id hội thoại (khoá `langfuse_user_id`,
+`langfuse_session_id`, `langfuse_tags` trong metadata của config đồ thị ở `chat.py`) — nhờ vậy
+Langfuse gom được theo người và theo hội thoại. **Chi phí (cost) còn trống**: Langfuse chưa có bảng
+giá cho model Groq/Gemini đang dùng; thêm ở mục Models của dự án trên giao diện Langfuse.
+
+Hai cái bẫy đã vấp khi bật:
+- **Có khoá chưa đủ, phải có `LANGFUSE_ENABLED=true`** (mặc định `false`). Thiếu dòng này thì
+  backend lặng lẽ chạy không trace.
+- **`LANGFUSE_BASE_URL` từng bị bỏ qua.** SDK mới đổi tên `LANGFUSE_HOST` → `LANGFUSE_BASE_URL`, còn
+  mã chỉ đọc tên cũ nên trace bị gửi về `localhost:3001`. Nay `config.py` nhận cả hai tên.
+
+Máy chủ chạy **Langfuse v4 ở chế độ `events_only`**: các API đọc cũ (`/api/public/traces`,
+`/observations`, `/metrics/daily`, `/sessions`) trả 404. Muốn đọc dữ liệu bằng API (ví dụ cho
+`impact.py` sau này) phải dùng `/api/public/v2/observations?traceId=...`.
 
 ---
 
@@ -338,6 +399,51 @@ khẩu mới đăng nhập được, admin đặt lại bằng mật khẩu ng�
 đủ cho "ai được gọi endpoint nào", nhưng "namespace nào được sửa, thao tác nào bị chặn tuyệt đối"
 vẫn cần `permissions.py` khi làm tới pipeline duyệt thao tác.
 
+### 3.9 Tự giám sát: `/metrics` cho Prometheus, log ra stdout
+
+**`/metrics`** (`core/telemetry.py`, gắn ở gốc app chứ không dưới `/api/v1` — proxy Next.js chỉ chuyển
+tiếp `/api/v1` nên trình duyệt không với tới được). Gồm:
+
+- Số liệu HTTP theo endpoint từ `prometheus-fastapi-instrumentator` (`http_requests_total`, độ trễ,
+  số request đang xử lý). Bỏ qua `/metrics` và health để hai thứ này không lấn át biểu đồ.
+- Số liệu riêng của chat, ghi trong `chat.py`: `k8shub_chat_streams_active` (số SSE đang mở — chỉ tăng
+  mà không giảm tức là rò rỉ), `k8shub_chat_turns_total{provider,model,outcome}` (ok/error/cancelled),
+  `k8shub_chat_turn_duration_seconds`. Label cố tình ít giá trị — không bao giờ gắn theo người
+  dùng/hội thoại, vì mỗi giá trị là một time series mới trong Prometheus.
+
+**Chỉ đo sức khoẻ dịch vụ, không đo con AI làm gì — có chủ ý.** Token, chi phí, lời gọi công cụ, theo
+người và theo hội thoại đã có trong Langfuse, chi tiết hơn (từng lượt, từng bước). Chép sang
+Prometheus là hai nguồn có thể lệch nhau. Prometheus giữ thứ Langfuse không có: luồng có rò rỉ không,
+tỉ lệ lỗi, độ trễ — nền cho dashboard Grafana và cảnh báo Alertmanager. (Từng thêm
+`k8shub_llm_tokens_total`/`k8shub_tool_calls_total` rồi bỏ vì trùng Langfuse.)
+
+Đã kiểm bằng một lượt chat thật: bộ đếm lượt và độ trễ tăng đúng.
+
+**Log** (`core/logging.py`). Trước đây không ai cấu hình root logger nên mọi `logger.info` của `app.*`
+bị nuốt mất — kể cả dòng báo Langfuse bật/tắt. Nay mọi log (của app lẫn uvicorn) ra **stdout**,
+`LOG_FORMAT=text` (mặc định, dễ đọc ở console) hoặc `json` (mỗi dòng một object, dùng khi chạy thành
+pod để Grafana lọc bằng `| json`). Access log của `/metrics` và health bị lọc bỏ vì chỉ là nhiễu.
+
+**App không tự đẩy log lên Loki — có chủ ý.** Trên lab1, Alloy (`loki.source.kubernetes.pods`) đã đọc
+stdout của mọi pod và đẩy vào Loki kèm label `namespace`/`pod`/`container`. Tự đẩy từ app sẽ mất log
+đang đệm khi pod chết, mất log khi Loki gián đoạn, thiếu label k8s và trùng với Alloy. Hệ quả: lúc
+backend còn chạy trên máy dev thì log chỉ có ở console, chưa vào Loki; lên cụm thì tự có.
+
+**Mức log.** Root luôn ở INFO; `DEBUG=true` chỉ nâng log của `app.*` lên DEBUG — nâng cả root thì mọi
+thư viện đều xả log debug (riêng sse-starlette in một dòng cho mỗi token). **Câu SQL chỉ in khi
+`DEBUG=true` và `APP_ENV=local`**, bật bằng mức log của `sqlalchemy.engine` chứ không bằng `echo=True`
+— `echo` gắn handler riêng của SQLAlchemy nên mỗi câu bị in hai lần. Không bao giờ in SQL ngoài máy
+dev: tham số chứa nội dung tin nhắn và phần suy luận của trợ lý, không được lọt vào Loki.
+Vì mức log chỉ đặt lúc khởi động, **`DEBUG` đã bị bỏ khỏi trang Cấu hình** (không còn trong
+`RUNTIME_EDITABLE`) — sửa trên web mà không có tác dụng gì là hứa suông. `PROMETHEUS_URL` và
+`LOKI_URL` cũng bị bỏ khỏi trang: địa chỉ hạ tầng trên lab1, đặt một lần trong `.env`. Trang Cấu hình
+giờ chỉ còn hai nhóm LLM và Kubernetes (frontend bỏ nhóm "Observability"). Có test giữ các trường
+chỉ-đọc-lúc-khởi-động này không lọt lại lên web.
+
+`METRICS_ENABLED`, `LOG_FORMAT` chỉ đọc lúc khởi động.
+
+---
+
 ## 4. Những gì mới là khung
 
 57 file Python (không tính `__init__.py`) và 29 file TypeScript (component, hook, type cho RCA,
@@ -367,10 +473,9 @@ dựng sẵn. Gói `mcp>=1.1.0` đã khai trong `pyproject.toml` nhưng chưa d�
 dry-run fail rate). Trong đó `audit.py` là thứ đáng làm sớm nhất — Langfuse chỉ biết LLM *định*
 làm gì, còn *cluster thực sự đổi gì* thì không ai ghi lại cả.
 
-**Observability lớp C.** `core/telemetry.py` mới là docstring: chưa có `/metrics`, chưa có structlog.
 
 **Hạ tầng chung.** `core/security.py` đã xong (mục 3.8). Còn rỗng: `core/permissions.py`
-(RBAC mịn theo namespace/verb — khác `require_role`, xem mục 3.8), `core/logging.py`,
+(RBAC mịn theo namespace/verb — khác `require_role`, xem mục 3.8),
 `core/exceptions.py`, `workers/{queue,tasks}.py`, `services/{approval,cluster}_service.py`.
 
 **5 router API rỗng**: `clusters`, `approvals`, `rca`, `skills`, `observability`. Chúng đã được mount
@@ -396,14 +501,15 @@ Những gì cụm `lab1` đang có, và chỗ nào còn hụt:
 | PostgreSQL (CloudNativePG) | `database/pg-nodeport` | **Có** — `lab1:30432`, đã chạy thật, PG 18.4 |
 | Prometheus (kube-prometheus-stack) | `monitoring/.../prometheus` | **Có** — `http://lab1:30090`, đã thử trả 200 |
 | Grafana | `monitoring/kps-grafana` | Có — `http://lab1:30300` |
-| Loki | `loki/loki`, `loki/loki-gateway` | **Không** — chỉ ClusterIP, chưa expose ra ngoài |
-| Langfuse | *chưa triển khai* | — |
+| Tempo v3.0.3 | `tempo/tempo-nodeport` | **Có** — truy vấn `http://lab1:30200`, nhận OTLP ở `30317` (gRPC) / `30318` (HTTP). Chưa có app nào gửi trace thật |
+| Loki 3.7.8 | `loki/loki-gateway-nodeport` | **Có** — `http://lab1:31100` (API dưới `/loki/api/v1/...`; `/ready` không qua gateway nên trả 404). Alloy đã gom log mọi pod |
+| Langfuse | đã triển khai (v4.38) | **Có** — `http://lab1:30400`, đã nhận trace thật |
 | Redis | *chưa có* (cái đang chạy là của Argo CD) | — |
 
-Hai chỗ hụt đều chưa chặn việc gì, vì `integrations/loki/client.py` và cả module observability lớp A
-đều còn là khung. Nhưng khi làm tới thì phải xử lý: Loki cần thêm NodePort/Ingress cho
-`loki-gateway` (hoặc `kubectl port-forward` lúc phát triển), còn Langfuse thì phải dựng mới — và
-phải là bản 3 trở lên.
+Prometheus trên lab1 **tắt cả remote write lẫn OTLP receiver** (`/api/v1/status/flags`), nên không
+đẩy số liệu vào được — nó phải tự scrape. **Có chủ ý không cho Prometheus scrape máy dev** (sẽ phải mở
+backend ra mạng); lúc dev xem thẳng `/metrics`. Khi backend chạy thành pod thì thêm một ServiceMonitor
+cùng lúc với Deployment — đến lúc đó Prometheus mới có số liệu của app.
 
 Cụm còn sẵn Argo CD (`30080`), Jenkins (`30081`), Alertmanager (`30093`) và Alloy (`31245`) — Alloy
 là thứ đang gom log đẩy vào Loki, nên khi cần nguồn log cho RCA thì đường ống đã có sẵn.
@@ -440,8 +546,9 @@ Sắp theo mức độ nên xử lý sớm.
 - **Race giữa tạo hội thoại và gọi stream.** Từ FastAPI 0.106, phần sau `yield` của dependency chạy
   *sau khi* response đã gửi, nên client nhận 201 trước lúc commit và request kế tiếp gặp 404. Đã
   `commit()` tường minh trong ba endpoint ghi của `chat.py`.
-- **Langfuse chưa được nối.** Nay đã nối (mục 3.7). Rủi ro còn lại chuyển thành vấn đề phiên bản
-  máy chủ, ghi ở mục 5.
+- **Langfuse chưa được nối.** Nay đã nối và chạy thật với máy chủ trên `lab1` (mục 3.7). Trước đó
+  backend không gửi trace nào vì `.env` thiếu `LANGFUSE_ENABLED=true` và mã không đọc
+  `LANGFUSE_BASE_URL` — cả hai đã sửa.
 - **Endpoint cấu hình không có xác thực.** `PATCH /api/v1/settings` từng ghi được cả khoá API mà
   không kiểm tra quyền. Đã khoá bằng `require_role("admin")` (mục 3.8); GET vẫn mở cho mọi vai trò
   đã đăng nhập.
@@ -470,6 +577,17 @@ Sắp theo mức độ nên xử lý sớm.
   `llm_rate_limit`, ...) và tên trường trong hợp đồng sự kiện giữ nguyên. Đã kiểm: 132 test pass,
   ruff sạch, `tsc`/`eslint`/`next build` sạch, chụp màn hình Chrome thật không còn chữ tiếng Việt
   nào do mã sinh ra.
+- **File thừa.** Đã xoá: hai `prompts/system.md` chỉ có `<!-- TODO -->` (prompt thật ở
+  `nl_command/prompts/__init__.py` — hai nơi dễ khiến người sau sửa nhầm file), và khung
+  `trace-list`/`trace-detail`/`usage-chart` ở frontend cùng TODO proxy trace/token trong
+  `api/v1/observability.py` — những thứ đó làm lại màn hình của Langfuse. Trang Giám sát AI giờ chỉ
+  dự kiến phần Langfuse không biết: thay đổi thật trên cụm, tỉ lệ duyệt/từ chối, chấm điểm.
+  Gỡ luôn phụ thuộc `structlog` (khai trong `requirements.txt`/`pyproject.toml` nhưng không file
+  nào dùng; log JSON chỉ cần thư viện chuẩn, xem mục 3.9).
+- **Cấu hình đổi trên web mất sau khi khởi động lại.** Nay lưu xuống Postgres (mục 3.2), có lịch sử
+  thay đổi và trang Cấu hình làm lại hoàn toàn (mục 3.4).
+- **Sidebar chiếm gần hết màn hình điện thoại.** Dưới 768px sidebar luôn thu gọn thành cột icon 56px
+  (trước đây 240px trên màn 390px, còn khoảng 150px cho nội dung).
 
 ### Còn tồn tại
 
@@ -482,23 +600,14 @@ phục vụ (gửi liên kết qua email) cần hạ tầng gửi mail, hiện c
 **3. Không xác minh email lúc đăng ký.** Ai cũng đăng ký được với bất kỳ email nào gõ đúng định
 dạng, kể cả email không thuộc về mình.
 
-**4. Cấu hình đổi trên web mất sau khi khởi động lại.** `MemoryOverrideStore` chỉ giữ trong bộ nhớ,
-và `set_override_store()` chưa được gọi ở `lifespan`. Người dùng nhập khoá API trên giao diện,
-restart backend là mất. Cần một lớp lưu xuống Postgres — chỗ cắm đã có sẵn (`OverrideStore` Protocol).
-
-**5. Hai nguồn sự thật cho system prompt.** Prompt thật nằm trong
-`app/modules/nl_command/prompts/__init__.py`, trong khi `prompts/system.md` và
-`rca/prompts/system.md` chỉ chứa `<!-- TODO -->`. Nên xoá hoặc hợp nhất trước khi có người sửa nhầm
-file `.md` rồi tưởng đã đổi prompt.
-
-**6. `require_tool_calling()` viết xong nhưng chưa gọi.** Chính docstring của nó ghi "CHƯA ĐƯỢC GỌI".
+**4. `require_tool_calling()` viết xong nhưng chưa gọi.** Chính docstring của nó ghi "CHƯA ĐƯỢC GỌI".
 Chọn một model Groq nhỏ không hỗ trợ gọi công cụ thì lỗi chỉ lộ ra khi người dùng đã chat.
 
-**7. Không có test tích hợp.** Auth đã kiểm bằng tay qua HTTP thật (mục 3.8) trong lúc phát triển,
+**5. Không có test tích hợp.** Auth đã kiểm bằng tay qua HTTP thật (mục 3.8) trong lúc phát triển,
 nhưng đó là việc làm một lần, không lặp lại được. `conftest.py` rỗng nên toàn bộ tầng HTTP, tầng CSDL
 và các endpoint hội thoại/đăng nhập chưa có test tự động nào chạm tới.
 
-**8. `history_to_messages()` bỏ hết tool call của lượt trước.** Đây là lựa chọn có chủ ý và đã ghi rõ
+**6. `history_to_messages()` bỏ hết tool call của lượt trước.** Đây là lựa chọn có chủ ý và đã ghi rõ
 lý do (gửi thiếu vế là nhà cung cấp trả lỗi; kết quả cũ thường đã lỗi thời), nhưng hệ quả là trợ lý
 không nhớ nó đã tra gì ở lượt trước. Khi công cụ tra cụm xuất hiện, cần xem lại quyết định này.
 
@@ -514,27 +623,25 @@ dùng / Tài khoản, hoặc xoá hội thoại cũ, nếu muốn giao diện s�
 
 Xếp theo mức độ mở khoá cho phần còn lại:
 
-1. **`integrations/k8s/client.py` + vài công cụ chỉ đọc** (`list_pods`, `describe`, `logs`) gắn vào
-   `get_tools()`. Đây là nút thắt: xong bước này thì khung chat lập tức có giá trị thật, và RCA có
-   nguồn evidence.
-2. **Lớp lưu override xuống Postgres**. Chỗ cắm đã có sẵn (`OverrideStore` Protocol) — rủi ro về
-   xác thực của endpoint này đã gỡ (mục 3.8), chỉ còn vấn đề mất cấu hình lúc restart.
-3. **Một máy chủ Langfuse v3** (Cloud là nhanh nhất) để phần tracing vừa viết chạy thật. Mã đã
-   xong, chỉ thiếu chỗ nhận dữ liệu.
-4. **`audit.py`** — bảng append-only. Cần có trước khi có bất kỳ thao tác ghi nào lên cụm, và là
+1. **`integrations/k8s/client.py` + vài công cụ chỉ đọc** (`list_pods`, `describe`, `logs`,
+   `query_metrics`) gắn vào `get_tools()`, theo đúng khuôn của công cụ trace đã có (client → tóm tắt
+   → tool, tham số có kiểm, tôn trọng namespace được phép). Đây là nút thắt: xong bước này thì khung
+   chat lập tức có giá trị thật, và RCA có nguồn evidence. Song song phía hạ tầng: bật Beyla để Tempo
+   có trace thật.
+2. **Bảng giá model trong Langfuse** để có cột chi phí — tracing đã chạy thật, chỉ còn thiếu giá cho
+   model Groq/Gemini (khai trên giao diện Langfuse, không cần sửa mã).
+3. **`audit.py`** — bảng append-only. Cần có trước khi có bất kỳ thao tác ghi nào lên cụm, và là
    thứ Langfuse không bao giờ thay được: nó chỉ biết LLM *định* làm gì.
-5. **Pipeline duyệt** (`planner` → `guardrails` → `dry_run` → approval gate → `executor` → `verifier`).
+4. **Pipeline duyệt** (`planner` → `guardrails` → `dry_run` → approval gate → `executor` → `verifier`).
    Hợp đồng sự kiện SSE cho phần này đã định nghĩa xong, nên frontend sẽ lắp vào nhanh. Guardrail nên
    dùng `require_role` đã có sẵn để chặn `user` khỏi bước duyệt — chỉ `admin`/`engineer` mới được.
-6. **RCA**, dùng lại các collector đã có từ bước 1.
-7. **Rate limit cho `/auth/login` và `/auth/register`** (rủi ro số 1 ở mục 6) — việc nhỏ, đáng làm
+5. **RCA**, dùng lại các collector đã có từ bước 1.
+6. **Rate limit cho `/auth/login` và `/auth/register`** (rủi ro số 1 ở mục 6) — việc nhỏ, đáng làm
    sớm trước khi có ai đó thử vét cạn mật khẩu.
 
-Lớp C (tự giám sát bằng Prometheus) cố tình **hoãn lại**: agent mới có hai công cụ tầm thường nên
-chưa có gì đáng đo. Khi nào deploy thật thì ba dòng `prometheus-fastapi-instrumentator` là gần như
-đủ — không bắc cầu số liệu từ Langfuse sang Prometheus, vì thứ chuyển được (token, cost) thì Langfuse
-hiển thị tốt hơn, còn thứ thật sự cần (app còn sống không, SSE có rò rỉ không) thì Langfuse không có
-dữ liệu để mà chuyển.
+Lớp C (tự giám sát) **đã làm** (mục 3.9); việc còn lại là thêm ServiceMonitor khi backend chạy thành
+pod. Không bắc cầu số liệu từ Langfuse sang
+Prometheus: thứ chuyển được (token, cost) thì Langfuse hiển thị tốt hơn.
 
 ---
 
