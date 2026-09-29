@@ -20,47 +20,39 @@ with a warning and must be entered again (the .env value applies meanwhile).
 from __future__ import annotations
 
 import asyncio
-import base64
-import hashlib
 import logging
 import time
 from collections.abc import Sequence
 from typing import Any
 
 import httpx
-from cryptography.fernet import Fernet, InvalidToken
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import delete, func, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import RUNTIME_EDITABLE_SECRETS, Settings, get_settings
+from app.core.crypto import InvalidToken, decrypt_secret, encrypt_secret
 from app.db.models.setting import SettingChange, SettingOverride
 from app.db.models.user import User
 
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------
-# Encryption of secret values
+# Encryption of secret values (app/core/crypto.py)
 # --------------------------------------------------------------------------
-
-
-def _fernet() -> Fernet:
-    # Domain-separated so this key is not simply "the JWT signing key".
-    digest = hashlib.sha256(b"k8s-hub/settings/v1:" + get_settings().JWT_SECRET.encode()).digest()
-    return Fernet(base64.urlsafe_b64encode(digest))
 
 
 def _encode(name: str, value: Any) -> Any:
     if name in RUNTIME_EDITABLE_SECRETS:
-        return {"enc": _fernet().encrypt(str(value).encode()).decode()}
+        return {"enc": encrypt_secret(str(value))}
     return jsonable_encoder(value)
 
 
 def _decode(row: SettingOverride) -> Any:
     if row.secret:
         token = (row.value or {}).get("enc", "")
-        return _fernet().decrypt(token.encode()).decode()
+        return decrypt_secret(token)
     return row.value
 
 

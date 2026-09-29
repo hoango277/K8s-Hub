@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import uuid
 
+from app.core import crypto
 from app.core.config import Settings
 from app.db.models.setting import SettingChange, SettingOverride
 from app.db.models.user import User
@@ -59,7 +60,7 @@ def _cfg(**over) -> Settings:
 
 
 async def test_api_key_is_encrypted_at_rest(monkeypatch):
-    monkeypatch.setattr(svc, "get_settings", lambda: _cfg())
+    monkeypatch.setattr(crypto, "get_settings", lambda: _cfg())
     db = FakeSession()
     await svc.persist_changes(
         db,
@@ -78,7 +79,7 @@ async def test_api_key_is_encrypted_at_rest(monkeypatch):
 
 
 async def test_history_never_contains_the_key(monkeypatch):
-    monkeypatch.setattr(svc, "get_settings", lambda: _cfg())
+    monkeypatch.setattr(crypto, "get_settings", lambda: _cfg())
     db = FakeSession()
     await svc.persist_changes(
         db,
@@ -97,7 +98,7 @@ async def test_history_never_contains_the_key(monkeypatch):
 
 async def test_history_records_effective_values_and_restore(monkeypatch):
     """Dropping an override is logged as 'restore', old value -> the .env value."""
-    monkeypatch.setattr(svc, "get_settings", lambda: _cfg())
+    monkeypatch.setattr(crypto, "get_settings", lambda: _cfg())
     db = FakeSession()
     changed = await svc.persist_changes(
         db,
@@ -115,7 +116,7 @@ async def test_history_records_effective_values_and_restore(monkeypatch):
 
 
 async def test_unchanged_fields_are_not_logged(monkeypatch):
-    monkeypatch.setattr(svc, "get_settings", lambda: _cfg())
+    monkeypatch.setattr(crypto, "get_settings", lambda: _cfg())
     db = FakeSession()
     changed = await svc.persist_changes(
         db,
@@ -131,7 +132,7 @@ async def test_unchanged_fields_are_not_logged(monkeypatch):
 
 async def test_key_saved_under_another_jwt_secret_is_skipped(monkeypatch):
     """Rotating JWT_SECRET must not stop the app — the key is ignored, not fatal."""
-    monkeypatch.setattr(svc, "get_settings", lambda: _cfg(JWT_SECRET="old-secret"))
+    monkeypatch.setattr(crypto, "get_settings", lambda: _cfg(JWT_SECRET="old-secret"))
     db = FakeSession()
     await svc.persist_changes(
         db,
@@ -142,5 +143,5 @@ async def test_key_saved_under_another_jwt_secret_is_skipped(monkeypatch):
         before=_cfg(),
         after=_cfg(GROQ_API_KEY=KEY, LLM_MAX_RETRIES=4),
     )
-    monkeypatch.setattr(svc, "get_settings", lambda: _cfg(JWT_SECRET="new-secret"))
+    monkeypatch.setattr(crypto, "get_settings", lambda: _cfg(JWT_SECRET="new-secret"))
     assert await svc.load_overrides(db) == {"LLM_MAX_RETRIES": 4}

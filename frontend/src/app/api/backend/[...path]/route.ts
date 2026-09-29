@@ -60,7 +60,9 @@ async function forward(
       headers,
       // Read the whole request body before sending. Our requests are all
       // small, and this avoids having to enable fetch's duplex mode.
-      body: hasBody ? await req.text() : undefined,
+      // Raw bytes, NOT req.text(): a skill import is a multipart .zip, and
+      // decoding it as UTF-8 would silently corrupt the archive.
+      body: hasBody ? await req.arrayBuffer() : undefined,
       cache: "no-store",
       // If the user closes the tab, cancel the backend call too.
       signal: req.signal,

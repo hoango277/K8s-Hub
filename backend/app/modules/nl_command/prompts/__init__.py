@@ -54,16 +54,26 @@ NO_TOOLS = (
 )
 
 
-def build_system_prompt(tools: list) -> str:
-    """Combine the system prompt with the currently available tools."""
-    if not tools:
-        return SYSTEM_PROMPT.format(tools=NO_TOOLS)
+def build_system_prompt(tools: list, skills: str | None = None) -> str:
+    """Combine the system prompt with the tools available now and, when any skill
+    is enabled, the list of skills (name + description only — the model loads a
+    skill's full instructions with load_skill when it needs them)."""
+    if skills is None:
+        from app.modules.skills.agent_tools import skills_prompt
 
-    lines = [TOOLS_HEADER]
-    for t in tools:
-        description = (getattr(t, "description", "") or "").strip().splitlines()
-        lines.append(f"- {t.name}: {description[0] if description else ''}")
-    return SYSTEM_PROMPT.format(tools="\n".join(lines))
+        skills = skills_prompt()
+
+    if not tools:
+        section = NO_TOOLS
+    else:
+        lines = [TOOLS_HEADER]
+        for t in tools:
+            description = (getattr(t, "description", "") or "").strip().splitlines()
+            lines.append(f"- {t.name}: {description[0] if description else ''}")
+        section = "\n".join(lines)
+    if skills:
+        section = f"{section}\n\n{skills}"
+    return SYSTEM_PROMPT.format(tools=section)
 
 
 __all__ = ["SYSTEM_PROMPT", "build_system_prompt"]

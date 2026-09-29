@@ -6,7 +6,8 @@ import pytest
 
 from app.core.config import Settings
 from app.integrations.tempo import client as tempo
-from app.modules.nl_command import tools
+from app.modules.tools import guard
+from app.modules.tools.builtin import traces as tools
 
 # --------------------------------------------------------------------------
 # TraceQL is assembled from checked fields, never from raw model text
@@ -149,7 +150,7 @@ def test_exception_event_becomes_the_error_message():
 @pytest.fixture
 def allowed_shop(monkeypatch):
     monkeypatch.setattr(
-        tools, "get_settings", lambda: Settings(_env_file=None, K8S_ALLOWED_NAMESPACES=["shop"])
+        guard, "get_settings", lambda: Settings(_env_file=None, K8S_ALLOWED_NAMESPACES=["shop"])
     )
 
 

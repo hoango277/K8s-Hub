@@ -12,6 +12,7 @@ from app.api.v1 import (
     rca,
     settings,
     skills,
+    tools,
     users,
 )
 
@@ -25,5 +26,6 @@ api_router.include_router(clusters.router, prefix="/clusters", tags=["clusters"]
 api_router.include_router(approvals.router, prefix="/approvals", tags=["approvals"])
 api_router.include_router(rca.router, prefix="/rca", tags=["rca"])
 api_router.include_router(skills.router, prefix="/skills", tags=["skills"])
+api_router.include_router(tools.router, prefix="/tools", tags=["tools"])
 api_router.include_router(observability.router, prefix="/observability", tags=["observability"])
 api_router.include_router(settings.router, prefix="/settings", tags=["settings"])

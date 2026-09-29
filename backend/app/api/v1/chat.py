@@ -54,7 +54,7 @@ from app.modules.nl_command.agent import (
     build_chat_graph,
     history_to_messages,
 )
-from app.modules.nl_command.tools import CHAT_TOOLS
+from app.modules.nl_command.tools import get_tools
 from app.modules.observability.langfuse_client import get_callback_handler
 from app.modules.observability.tracing import new_trace_id
 from app.schemas.chat import (
@@ -239,7 +239,7 @@ async def list_tools() -> dict[str, Any]:
                 "name": t.name,
                 "description": (t.description or "").strip().split("\n")[0],
             }
-            for t in CHAT_TOOLS
+            for t in get_tools()
         ]
     }
 

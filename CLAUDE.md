@@ -133,6 +133,28 @@ Ba vai trò: `admin` (toàn quyền), `engineer` (sau này thêm/sửa/xoá skil
 - Quyền thật luôn chặn ở backend; frontend chỉ ẩn những gì vai trò hiện tại không
   dùng được.
 
+## Skill và Tool: hai tầng khác nhau
+
+- **Skill = chuẩn Agent Skills**: mỗi skill là một thư mục chứa `SKILL.md` (YAML
+  front matter có ít nhất `name`, `description`; phần dưới là hướng dẫn) cùng các
+  thư mục tuỳ chọn `scripts/`, `references/`, `assets/`. Code ở
+  `app/modules/skills/`. **Skill KHÔNG phải công cụ LangChain** — đừng gọi công cụ
+  là "skill" trong mã hay giao diện.
+- **Tool = code LLM gọi được**: đọc pod, metrics, log, trace, công cụ từ MCP
+  server. Code ở `app/modules/tools/`. Skill hướng dẫn agent dùng tool nào.
+- Nạp skill theo **progressive disclosure**: chỉ `name` + `description` vào system
+  prompt; thân SKILL.md qua `load_skill`, file phụ qua `read_skill_file`, script
+  qua `run_skill_script`.
+- Skill mẫu nằm trong repo (`backend/skills/<name>/`, chỉ đọc trên web); skill tạo
+  hoặc import trên web lưu CSDL, có Import/Export `.zip` đúng chuẩn.
+- **Script chạy thẳng trên backend — quyết định có chủ ý.** Ai sửa được skill là
+  chạy được mã trên server, nên chỉ engineer+ tạo/sửa skill. Giữ các hàng rào trong
+  `scripts.py`: không qua shell, môi trường tối giản (không khoá API/DB/JWT), thư
+  mục tạm, giới hạn thời gian, ghi lịch sử mọi lần chạy.
+- Tool đọc cụm: chỉ tool **read** đã bật mới tới chat; LLM không viết
+  PromQL/LogQL/TraceQL, kết quả luôn được tóm tắt. Tool từ MCP server mặc định
+  **tắt và "write"** tới khi engineer duyệt — không tin `readOnlyHint` của server.
+
 ## Giám sát: mỗi thứ đúng một chỗ
 
 - **Langfuse = mọi thứ về con AI**: token, chi phí, lời gọi công cụ, độ trễ từng

@@ -18,6 +18,7 @@ from app.modules.observability.langfuse_client import (
     init_langfuse,
     shutdown_langfuse,
 )
+from app.services import skill_service, tool_service
 from app.services.settings_service import load_overrides
 from app.services.user_service import bootstrap_admin
 
@@ -73,6 +74,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     logger.info("Restored saved settings: %s", ", ".join(sorted(applied)))
             except Exception:
                 logger.exception("Could not load saved settings; running on .env values only")
+
+    # Tool catalog state + MCP tools, and the Agent Skills (built-in folders +
+    # custom skills from the database). Without a database the built-in tools
+    # and skills still work with their defaults.
+    if db["ok"]:
+        async with get_sessionmaker()() as session:
+            try:
+                await tool_service.load_into_registry(session)
+                await skill_service.load_into_store(session)
+            except Exception:
+                logger.exception("Could not load tools/skills state; using defaults")
 
     # Build the client and TracerProvider. No network calls at this step.
     init_langfuse()

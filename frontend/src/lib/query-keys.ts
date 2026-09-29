@@ -34,4 +34,20 @@ export const qk = {
   users: {
     all: ["users"] as const,
   },
+  skills: {
+    all: ["skills"] as const,
+    list: ["skills", "list"] as const,
+    /** Also the prefix of every file of that skill, so invalidating it refreshes those too. */
+    detail: (name: string) => ["skills", "detail", name] as const,
+    file: (name: string, path: string) => ["skills", "detail", name, "file", path] as const,
+    /** Every run list, whatever the filter. */
+    runsAll: ["skills", "runs"] as const,
+    runs: (skill: string | null) => ["skills", "runs", skill] as const,
+  },
+  tools: {
+    all: ["tools"] as const,
+    list: ["tools", "list"] as const,
+    runs: ["tools", "runs"] as const,
+    servers: ["tools", "servers"] as const,
+  },
 } as const;

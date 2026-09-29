@@ -52,9 +52,25 @@ function extractMessage(body: unknown, fallback: string): string {
   return fallback;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/** Parse a response body: JSON when it is JSON, the raw text otherwise, null when empty (204). */
+async function readBody(res: Response): Promise<unknown> {
+  const text = await res.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+/** Send a request with the session token attached; throws ApiError on any non-2xx. */
+async function send(path: string, init?: RequestInit): Promise<Response> {
+  // FormData must NOT get a JSON content type: the browser has to write its
+  // own `multipart/form-data; boundary=…` header, or the server can't split
+  // the parts apart.
+  const isForm = typeof FormData !== "undefined" && init?.body instanceof FormData;
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    ...(isForm ? {} : { "Content-Type": "application/json" }),
     ...(init?.headers as Record<string, string> | undefined),
   };
 
@@ -72,17 +88,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(0, "Can't reach the server. Is the backend running?");
   }
 
-  const text = await res.text();
-  let body: unknown = null;
-  if (text) {
-    try {
-      body = JSON.parse(text);
-    } catch {
-      body = text;
-    }
-  }
-
   if (!res.ok) {
+    const body = await readBody(res);
     // A 401 here means the access token was already refreshed (if it could be)
     // and was still rejected — the account is locked, or the refresh token has
     // expired too. Nothing left to salvage: clear the session so AuthProvider
@@ -93,14 +100,55 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new ApiError(res.status, extractMessage(body, `Error ${res.status}`), body);
   }
-  return body as T;
+  return res;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await send(path, init);
+  return (await readBody(res)) as T;
+}
+
+/** File name from `Content-Disposition: attachment; filename="x.zip"`, if any. */
+function filenameFrom(res: Response): string | null {
+  const header = res.headers.get("content-disposition") ?? "";
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+/**
+ * Download a file from an authenticated endpoint.
+ *
+ * A plain `<a href>` can't carry the Bearer token, so fetch it as a blob and
+ * hand the browser a temporary object URL to save instead.
+ */
+async function download(path: string, fallbackName: string): Promise<void> {
+  const res = await send(path);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filenameFrom(res) ?? fallbackName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    // Revoke on the next tick: some browsers start the download
+    // asynchronously and would find the URL already gone.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
 }
 
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, data?: unknown) =>
     request<T>(path, { method: "POST", body: data === undefined ? undefined : JSON.stringify(data) }),
+  put: <T>(path: string, data: unknown) =>
+    request<T>(path, { method: "PUT", body: JSON.stringify(data) }),
   patch: <T>(path: string, data: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(data) }),
   del: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  /** POST a multipart form (file uploads). */
+  upload: <T>(path: string, form: FormData) => request<T>(path, { method: "POST", body: form }),
+  download,
 };

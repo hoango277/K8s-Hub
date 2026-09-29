@@ -1,21 +1,18 @@
-import { Wrench } from "lucide-react";
+import { SkillDetail } from "@/components/skills/skill-detail";
 
-import { ComingSoon } from "@/components/layout/coming-soon";
+interface Props {
+  params: Promise<{ name: string }>;
+}
 
-export const metadata = { title: "Skill details · K8s Hub" };
+export async function generateMetadata({ params }: Props) {
+  const { name } = await params;
+  return { title: `${decodeURIComponent(name)} · Skills · K8s Hub` };
+}
 
-export default function SkillDetailPage() {
-  return (
-    <ComingSoon
-      icon={Wrench}
-      title="Skill details"
-      description="A skill's description, input parameters, risk level and run history."
-      feature={[
-        "Description and risk level (safe / caution / dangerous)",
-        "Trial-run form generated from the input schema",
-        "Step-by-step run progress, updated live",
-        "Recent run history",
-      ]}
-    />
-  );
+export default async function SkillDetailPage({ params }: Props) {
+  const { name } = await params;
+  // Keyed by name: moving between two skills starts from a fresh page state
+  // (selected file, open dialogs) instead of carrying the last one over.
+  const skill = decodeURIComponent(name);
+  return <SkillDetail key={skill} name={skill} />;
 }

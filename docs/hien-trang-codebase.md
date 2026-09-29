@@ -16,17 +16,17 @@ bộ khung thư mục cho cả 4**, nhưng mới **một use case chạy thật*
 | Tầng cấu hình (đa nhà cung cấp LLM, đổi nóng) | **Chạy được**, có test, khá hoàn chỉnh |
 | Lưu hội thoại vào PostgreSQL + migration | **Chạy được** |
 | Trang Cấu hình trên web | **Chạy được** — lưu xuống Postgres, có lịch sử thay đổi và trạng thái kết nối |
-| Kết nối Kubernetes | Chưa có dòng mã nào |
+| Kết nối Kubernetes | Client + 5 tool đọc **viết xong**, chưa chạy thật (thiếu `KUBECONFIG` của lab1) |
 | Đọc trace ứng dụng trên cụm (Grafana Tempo) | **Chạy được đầu-cuối**: 3 công cụ cho trợ lý, đã thử với Tempo thật trên lab1 |
 | RCA | Chỉ có khung file |
-| Skills / MCP / runbook | Chỉ có khung file |
+| Skills (chuẩn Agent Skills) + Tools + MCP | **Backend chạy được đầu-cuối** (skill mẫu, tool metrics/logs/traces chạy thật trên lab1, kết nối MCP server) và **giao diện chạy được**, đã kiểm bằng trình duyệt thật |
 | Tracing: OTel + Langfuse | **Chạy thật** với Langfuse trên `lab1:30400`, đã kiểm trace đầu-cuối |
 | Audit log, đo lường chất lượng | Chỉ có khung file |
 | Đăng nhập, phân quyền (JWT, 3 vai trò) | **Chạy được đầu-cuối** (backend + frontend), đã kiểm qua HTTP thật |
 | Quản trị người dùng (trang `/users`) | **Chạy được**, đã kiểm bằng trình duyệt thật |
 
 Về khối lượng: backend có ~5.300 dòng Python, nhưng **57 file chỉ chứa một dòng docstring
-kèm `TODO`** (không tính `__init__.py`). Frontend có 26 component/hook/type ở dạng khung rỗng — nhưng
+kèm `TODO`** (không tính `__init__.py`). Frontend có 19 component/hook/type ở dạng khung rỗng — nhưng
 không còn **trang** nào trắng: trang chưa có tính năng hiện mô tả những gì nó sẽ làm. Nghĩa là cấu
 trúc dự án đã được nghĩ xong và đóng cọc sẵn; phần thịt mới đắp vào một nhánh.
 
@@ -55,8 +55,8 @@ K8s-Hub/
 │   ├── app/modules/  nl_command (một phần) · observability (tracing xong) · rca, skills (khung)
 │   ├── app/schemas/  events.py, chat.py, auth.py (xong) + 5 file khung
 │   ├── app/services/ thread, auth, user service (xong) + 2 file khung
-│   ├── migrations/   4 revision Alembic
-│   └── tests/unit/   12 file test (170 test, đều xanh)
+│   ├── migrations/   5 revision Alembic
+│   └── tests/unit/   14 file test (226 test, đều xanh)
 ├── frontend/         Next.js 16 + React 19 + Tailwind v4 + TanStack Query
 │   └── src/          đăng nhập, chat, người dùng, cấu hình làm thật; 4 trang còn lại là "sắp có"
 │       └── components/ui/  bộ component nền theo quy chuẩn UI/UX trong CLAUDE.md
@@ -174,6 +174,11 @@ Các bảng đã có model và migration:
 | `tool_calls` | Bảng riêng chứ không nhét JSON vào `messages`, để thống kê "công cụ nào hay lỗi nhất" chỉ cần một câu truy vấn |
 | `settings_overrides` | Giá trị đổi trên trang Cấu hình (JSONB; khoá API lưu dạng `{"enc": ...}`), `updated_by` |
 | `settings_changes` | Lịch sử chỉ-ghi-thêm: ai, lúc nào, trường nào, từ gì sang gì (khoá API chỉ ghi "đã đổi") |
+| `tool_settings` | Bật/tắt từng tool, mức nguy hiểm engineer gán cho tool MCP |
+| `mcp_servers`, `mcp_tools` | MCP server đã kết nối (token **mã hoá**) và danh sách tool nó báo lần gần nhất — catalog vẫn hiện khi server tạm chết |
+| `tool_runs` | Lần chạy tool từ trang Skills (tab Tools) |
+| `skills`, `skill_files` | Skill tạo/import trên web (file lưu dạng bytes, đúng bố cục thư mục chuẩn) + trạng thái bật/tắt của cả skill có sẵn |
+| `skill_runs` | Mọi lần chạy script của skill (từ chat hay từ web): ai, script, tham số, exit code, output |
 
 Mọi quan hệ đặt `lazy="raise"` — đọc quan hệ chưa nạp sẵn sẽ báo lỗi ngay thay vì lặng lẽ bắn thêm
 truy vấn giữa luồng bất đồng bộ. Quy ước đặt tên ràng buộc cố định trong `db/base.py` để Alembic
@@ -230,45 +235,80 @@ prop nguy hiểm của `ConfirmDialog` là `destructive`.
 - `account/account-page.tsx` — trang Tài khoản (bấm tên trên header để mở): hồ sơ, **tự sửa tên hiển
   thị** (mọi vai trò, qua `PATCH /auth/me` — schema chỉ nhận `display_name`, gửi kèm `role` bị 422)
   và form đổi mật khẩu với ô nhập lại, kiểm trước độ dài và khớp nhau ngay dưới từng ô.
+- `skills/*` — trang **Skills** (`/skills`), bốn mục theo URL hash: **Skills** (thẻ skill, bật/tắt,
+  "New skill", "Import .zip"), **Tools** (theo nhóm, mức nguy hiểm có chữ, trạng thái "In chat /
+  Disabled / Unavailable: lý do", bật/tắt, chọn mức nguy hiểm cho tool MCP, **"Try it"** dựng form từ
+  JSON schema của tool rồi chạy thật), **MCP servers** (thêm/làm mới/bật-tắt/gỡ), **Run history**
+  (script của skill và tool chạy tay). Trang chi tiết `/skills/[name]`: cây file (SKILL.md, scripts/,
+  references/, assets/), xem Markdown hoặc sửa (skill tuỳ chỉnh, engineer+), thêm/xoá file, **chạy
+  script** kèm tham số và xem output, Export `.zip`, xoá skill. Thành phần UI mới dùng chung:
+  `ui/switch.tsx`, `ui/dialog.tsx` (kèm chỗ mở danh sách cho Radix Select bên trong dialog),
+  `ui/toast.tsx`. Đã kiểm trên Chrome thật (1440px và 390px): chạy thử `pod_metrics` ra số liệu thật
+  của lab1, chạy `explain_exit_code.py 137 OOMKilled`, tạo skill → thêm file → xoá, không lỗi
+  console, không tràn ngang. Lỗi phát hiện khi kiểm và đã sửa: hai phần tử cùng key React ở trang chi
+  tiết; xoá skill làm trang tải lại skill vừa xoá (404).
+- `app/api/backend/[...path]/route.ts` (proxy tới backend) từng chuyển tiếp body bằng `req.text()`,
+  giải mã thành UTF-8 nên **file .zip upload bị hỏng**; nay dùng `req.arrayBuffer()`.
 - Khung chat khi trống hiện bốn câu hỏi gợi ý, bấm là gửi. Chỉ gợi ý những câu trợ lý trả lời được
   với công cụ hiện có — không gợi ý "pod nào đang lỗi?" khi chưa có công cụ tra cụm.
 
 Thanh điều hướng chia hai nhóm "Vận hành" và "Quản trị"; nhóm Quản trị (Người dùng, Cấu hình) chỉ
 `admin` thấy. Gõ thẳng URL thì `RoleGate` hiện trang "không có quyền" thay vì form sẽ lỗi 403.
-Bốn trang Chẩn đoán, Kỹ năng, Chờ duyệt, Giám sát AI chưa có tính năng — hiện `ComingSoon` liệt kê
+Ba trang Chẩn đoán, Chờ duyệt, Giám sát AI chưa có tính năng — hiện `ComingSoon` liệt kê
 những gì trang sẽ làm, không còn trang trắng.
 
-### 3.5 Công cụ trợ lý đang có
+### 3.5 Tool và Skill của trợ lý
 
-Năm công cụ, tất cả chỉ đọc:
+Hai tầng tách bạch (quy tắc ở mục "Skill và Tool" trong `CLAUDE.md`):
 
-- `system_info` — hệ thống đang chạy model nào, chế độ thực thi nào, namespace nào được phép, các
-  nguồn dữ liệu (Prometheus, Loki, Tempo).
-- `current_time` — thời điểm hiện tại UTC.
-- `list_traced_services`, `search_traces`, `get_trace` — **trace của ứng dụng chạy trên cụm**, đọc từ
-  Grafana Tempo (`TEMPO_URL`, lab1: `http://lab1:30200`). Không phải Langfuse: Langfuse là trace của
-  chính con AI. `integrations/tempo/client.py` giữ hai nguyên tắc: (1) mô hình **không bao giờ gửi
-  TraceQL thô** — `search_traces` nhận tham số rời (service, namespace, chỉ lỗi, ngưỡng thời gian,
-  khoảng thời gian), mỗi giá trị được kiểm bằng biểu thức chặt trước khi ghép thành TraceQL;
-  (2) mô hình **không bao giờ nhận trace JSON thô** (hàng trăm span tràn ngữ cảnh) —
-  `summarize_trace()` rút gọn thành đường chậm nhất, các span lỗi (lỗi sâu nhất đứng đầu, vì lỗi
-  ngoài thường chỉ là lan ra), và thời gian riêng của từng service. Khi `K8S_ALLOWED_NAMESPACES` có
-  giá trị, tìm kiếm tự lọc theo danh sách đó và `get_trace` giấu các span ngoài danh sách. Để trống
-  `TEMPO_URL` thì công cụ trả lời "chưa cấu hình nguồn trace" thay vì lỗi.
+**Tool — code trợ lý gọi được** (`app/modules/tools/`). Mọi tool đều chỉ đọc; chỉ tool đã bật, dùng
+được, mức `read` mới tới chat (`registry.chat_tools()`, hỏi lại mỗi lượt).
 
-  Đã kiểm đầu-cuối: gửi một trace mẫu có đánh dấu (service `k8s-hub-selftest-*`, namespace
-  `k8s-hub-selftest`) vào Tempo qua OTLP, rồi hỏi trợ lý bằng tiếng Việt "service … có request nào
-  lỗi không, nguyên nhân gốc là gì" — trợ lý tự gọi `search_traces` rồi `get_trace` và chỉ ra đúng
-  "payment timeout khi gọi DB → frontend trả 500". **Tempo hiện chưa có trace thật**: cần bật Beyla
-  (component `beyla.ebpf` của Alloy) hoặc gắn OpenTelemetry cho app, và cho Alloy chuyển OTLP sang
-  Tempo. `rca/collectors/traces.py` mới là khung, ghi rõ phải dùng lại client này.
+| Nhóm | Tool | Nguồn | Trạng thái |
+|---|---|---|---|
+| Hệ thống | `system_info`, `current_time` | — | luôn có |
+| Kubernetes | `list_pods`, `describe_pod`, `get_pod_logs`, `list_events`, `list_deployments` | Kubernetes API (`kubernetes_asyncio`) | **viết xong, chưa chạy thật**: cần `KUBECONFIG` của lab1 (kubeconfig trên máy dev đang trỏ tới cụm k3d khác) hoặc `K8S_IN_CLUSTER=true` |
+| Metrics | `pod_metrics` (cpu, memory, restarts, throttling, kèm % so với limit) | Prometheus | **chạy thật trên lab1** |
+| Logs | `search_logs` | Loki | **chạy thật trên lab1** |
+| Traces | `list_traced_services`, `search_traces`, `get_trace` | Tempo | chạy thật (đã kiểm bằng trace mẫu); Tempo chưa có trace thật |
+| Ngoài | công cụ của MCP server kết nối thêm | MCP (Streamable HTTP, gói `mcp` 2.x) | mặc định **tắt và "write"** tới khi engineer duyệt |
 
-`tools.py` ghi rõ ba ranh giới an toàn cho người thêm công cụ sau này: chỉ được đọc, không nhận chuỗi
-lệnh thô (`run_kubectl(cmd)` bị cấm), và mô tả công cụ phải rõ vì đó là thứ mô hình đọc để quyết định.
+Nguyên tắc chung cho tool đọc cụm: LLM **không bao giờ viết PromQL/LogQL/TraceQL** — truy vấn dựng từ
+mẫu cố định hoặc tham số đã kiểm (tên namespace/pod theo DNS-1123, chuỗi tìm trong LogQL được escape
+thành literal); **kết quả luôn được tóm tắt và giới hạn độ dài** (pod lỗi lên đầu, metrics thành
+now/min/max/% limit, log cắt dòng, trace thành đường chậm nhất + span lỗi); **`K8S_ALLOWED_NAMESPACES`
+được áp ở một chỗ** (`tools/guard.py`). Đã chạy thật trên lab1: bộ nhớ `langfuse-web` so với limit
+(peak 46 %), restart của `langfuse-worker` (+5 trong 24 giờ), log lỗi của `langfuse-web`.
+
+**Skill — chuẩn Agent Skills** (`app/modules/skills/`): thư mục có `SKILL.md` (front matter
+`name`, `description` + hướng dẫn) và tuỳ chọn `scripts/`, `references/`, `assets/`. Nạp theo
+progressive disclosure: chỉ tên + mô tả vào system prompt (mục AVAILABLE SKILLS); thân SKILL.md qua
+`load_skill`, file phụ qua `read_skill_file`, script qua `run_skill_script`. Ba skill mẫu trong
+`backend/skills/`: `diagnose-crashloop` (có `scripts/explain_exit_code.py` và hai tài liệu tham
+khảo), `investigate-slow-requests`, `namespace-health-check` (có mẫu báo cáo trong `assets/`). Skill
+tạo/import trên web lưu Postgres (`skills`, `skill_files`), Import/Export `.zip` đúng chuẩn.
+
+**Script chạy thẳng trên backend** — quyết định của người dùng, thay cho sandbox. Hàng rào
+(`skills/scripts.py`): chỉ file trong `scripts/`, chỉ `.py` (Python của venv) và `.sh` (bash),
+không qua shell, môi trường tối giản (không mang khoá API, DATABASE_URL, JWT_SECRET), chạy trong thư
+mục tạm, giới hạn 60 giây và 10.000 ký tự output, ghi `skill_runs` cho mọi lần chạy (từ chat hay
+từ web). Đây **không phải cô lập**: script vẫn đọc được file backend đọc được — vì vậy chỉ engineer+
+được tạo/sửa skill.
+
+Đã kiểm đầu-cuối bằng LLM thật: hỏi "request tới k8s-hub-selftest-frontend chậm và lỗi 500, điều tra
+giúp" → trợ lý tự gọi `load_skill("investigate-slow-requests")` rồi làm đúng các bước trong đó
+(trace → giải thích trace → metrics → log), kết luận đúng "payment timeout khi gọi DB". Lần đầu nó
+thử lại metrics liên tục tới giới hạn vòng lặp khi không có dữ liệu, và đoán một script không tồn
+tại — đã sửa bằng hướng dẫn trong SKILL.md ("mỗi tool một lần, không có dữ liệu cũng là kết quả") và
+mô tả của `run_skill_script`; chạy lại thì gọn.
+
+API: `/api/v1/tools` (catalog, bật/tắt, chạy thử, MCP servers, lịch sử) và `/api/v1/skills` (danh
+sách, xem/sửa file, tạo, import/export, chạy script, lịch sử). Xem/chạy tool: mọi vai trò; bật/tắt,
+thêm MCP server, tạo/sửa skill, chạy script từ web: engineer+.
 
 ### 3.6 Kiểm thử
 
-12 file test đơn vị (170 test), không cần mạng và không cần CSDL:
+14 file test đơn vị (226 test), không cần mạng và không cần CSDL:
 
 | File | Kiểm gì |
 |---|---|
@@ -283,6 +323,8 @@ lệnh thô (`run_kubectl(cmd)` bị cấm), và mô tả công cụ phải rõ 
 | `test_password_change.py` | Tự đổi mật khẩu, admin đặt lại mật khẩu, cả hai đều thu hồi phiên cũ |
 | `test_settings_persistence.py` | Lưu cấu hình: khoá API mã hoá khi lưu, lịch sử không bao giờ chứa khoá, restore ghi đúng giá trị .env, khoá không giải mã được (đổi JWT_SECRET) thì bỏ qua chứ không làm sập app |
 | `test_tempo.py` | TraceQL dựng từ tham số có kiểm (chặn chèn toán tử qua tên service/namespace), tóm tắt trace (đường chậm nhất, lỗi sâu nhất đứng đầu, thời gian theo service), công cụ trace tôn trọng `K8S_ALLOWED_NAMESPACES` |
+| `test_skills.py` | SKILL.md đúng chuẩn (name, description, từ khoá cấm, tên trùng thư mục), chặn đường dẫn thoát ra ngoài, export→import zip không mất dữ liệu, script nhận tham số và **không thấy biến môi trường bí mật**, chỉ chạy `.py`/`.sh`, progressive disclosure (prompt chỉ có tên + mô tả) |
+| `test_tools_registry.py` | MCP qua server chạy trong bộ nhớ (list/call, lỗi tool), tool MCP mặc định tắt + write dù server tự nhận read-only, không hạ mức nguy hiểm của tool có sẵn, LogQL escape đúng |
 | `test_telemetry.py` | Dòng log JSON (kèm exception, trace_id) và `/metrics` có các metric của chat |
 
 `tests/conftest.py` mới là một dòng `TODO`, `tests/integration/` rỗng — nghĩa là **chưa có test nào
@@ -450,9 +492,10 @@ chỉ-đọc-lúc-khởi-động này không lọt lại lên web.
 skills, approvals, observability) hiện chỉ có một dòng mô tả trách nhiệm kèm `TODO`.
 Chúng không vô dụng: mỗi file là một quyết định thiết kế đã chốt về việc "cái gì nằm ở đâu".
 
-**Kubernetes — chưa có gì.** `integrations/k8s/{client,resources,diff,rbac}.py` đều rỗng. Hệ quả dây
-chuyền: trợ lý không có công cụ nào tra được cụm, `nl_command` không có gì để lập kế hoạch, RCA
-không có nguồn evidence. Đây là nút thắt lớn nhất.
+**Kubernetes — mới có phần đọc.** `integrations/k8s/client.py` đã viết (kubeconfig hoặc in-cluster)
+cùng 5 tool đọc (mục 3.5), nhưng chưa chạy thật vì chưa có kubeconfig của lab1 — nên cấp một
+ServiceAccount gắn ClusterRole `view`. `resources.py`, `diff.py`, `rbac.py` vẫn rỗng; phần ghi lên
+cụm (apply/scale/rollout) chưa có và phải đi qua pipeline duyệt.
 
 **Pipeline nl_command.** Mới có `agent.py` (đồ thị chat đơn giản), `state.py`, `tools.py`, `prompts/`.
 Sáu file còn lại — `intent.py`, `planner.py`, `guardrails.py`, `dry_run.py`, `executor.py`,
@@ -464,8 +507,9 @@ rồi chạy tiếp.
 **RCA.** 15 file rỗng: 1 agent, 5 collector (k8s events, logs, metrics, pod state, rollout history),
 5 analyzer (CrashLoop, OOM, ImagePull, probe, scheduling), correlator, hypothesis, reporter, triggers.
 
-**Skills / MCP.** 11 file rỗng: schema, registry, loader, executor, mcp_client, runbook và 5 skill
-dựng sẵn. Gói `mcp>=1.1.0` đã khai trong `pyproject.toml` nhưng chưa dùng.
+**Skills / Tools / MCP.** Đã làm (mục 3.5). Các file khung cũ `executor.py`, `loader.py`,
+`runbook.py`, `builtin/diagnose.py`, `builtin/k8s_write.py` đã xoá: runbook nay chính là một skill
+theo chuẩn Agent Skills, còn thao tác ghi sẽ thuộc pipeline duyệt.
 
 **Observability lớp A — còn 5 file rỗng.** `langfuse_client.py` và `tracing.py` đã viết xong
 (xem mục 3.7). Còn rỗng: `prompts` (prompt có version), `audit` (audit log append-only),
@@ -623,11 +667,9 @@ dùng / Tài khoản, hoặc xoá hội thoại cũ, nếu muốn giao diện s�
 
 Xếp theo mức độ mở khoá cho phần còn lại:
 
-1. **`integrations/k8s/client.py` + vài công cụ chỉ đọc** (`list_pods`, `describe`, `logs`,
-   `query_metrics`) gắn vào `get_tools()`, theo đúng khuôn của công cụ trace đã có (client → tóm tắt
-   → tool, tham số có kiểm, tôn trọng namespace được phép). Đây là nút thắt: xong bước này thì khung
-   chat lập tức có giá trị thật, và RCA có nguồn evidence. Song song phía hạ tầng: bật Beyla để Tempo
-   có trace thật.
+1. **Cấp kubeconfig chỉ-đọc của lab1** (ServiceAccount + ClusterRole `view`) rồi đặt `KUBECONFIG`
+   — 5 tool Kubernetes đã viết sẵn chỉ chờ bước này; khi đó skill `diagnose-crashloop` và
+   `namespace-health-check` chạy trọn. Song song phía hạ tầng: bật Beyla để Tempo có trace thật.
 2. **Bảng giá model trong Langfuse** để có cột chi phí — tracing đã chạy thật, chỉ còn thiếu giá cho
    model Groq/Gemini (khai trên giao diện Langfuse, không cần sửa mã).
 3. **`audit.py`** — bảng append-only. Cần có trước khi có bất kỳ thao tác ghi nào lên cụm, và là
