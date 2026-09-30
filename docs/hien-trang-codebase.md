@@ -565,6 +565,16 @@ không có trace nào.
 `frontend/Dockerfile` có; **backend chưa có Dockerfile**. `deploy/helm/` vẫn là thư mục rỗng — chưa
 có manifest nào để tự triển khai K8s-Hub lên cụm, dù hạ tầng quanh nó thì đã ở đó rồi.
 
+**Môi trường dev trên lab1** (`deploy/dev-workspace/`, viết xong, **chưa apply lên cụm**): một pod
+code-server (VS Code trên trình duyệt, NodePort 30880) để code ngay trong cụm. Pod dùng ServiceAccount
+của chính nó thay cho file kubeconfig: `view` toàn cụm (không đọc Secret) + `edit` chỉ trong
+namespace `k8s-hub` (nơi sẽ deploy app sau). Home là PVC 20Gi; lần chạy đầu tự cài uv + Python 3.12,
+Node 22, kubectl, helm vào home (không cần root, không phải build image riêng). App chạy trong
+workspace mở ra ngoài qua NodePort 30830 (frontend) và 30808 (backend); `env.cluster.example` là
+`.env` dùng DNS nội bộ của các service (`pg-rw.database.svc`, `…prometheus.monitoring.svc:9090`,
+`loki-gateway.loki.svc`, `tempo.tempo.svc:3200`, `langfuse-web.langfuse.svc:3000`) và
+`K8S_IN_CLUSTER=true`. Build image + CI/CD (Jenkins, Argo CD, Docker Hub/GHCR) là bước sau.
+
 Ba phụ thuộc đã khai trong `pyproject.toml` nhưng chưa dùng dòng nào: `redis`, `pgvector`,
 `langgraph-checkpoint-postgres`. Chúng là chỗ đặt trước cho background job, tìm kiếm ngữ nghĩa và
 checkpointer của bước duyệt.

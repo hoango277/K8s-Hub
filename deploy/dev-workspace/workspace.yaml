@@ -1,0 +1,197 @@
+# K8s-Hub development workspace on the lab1 cluster.
+#
+# One pod running code-server (VS Code in the browser). You code INSIDE the
+# cluster, so:
+#   - no kubeconfig file: kubectl and the backend (K8S_IN_CLUSTER=true) use the
+#     pod's ServiceAccount token, mounted automatically;
+#   - every service is reachable by its cluster DNS name (Postgres, Prometheus,
+#     Loki, Tempo, Langfuse) — see env.cluster.example;
+#   - the app you run in the workspace (uvicorn :8000, next dev :3000) is
+#     reachable from your browser through the NodePorts below.
+#
+# Apply (on lab1, as cluster admin):
+#   kubectl apply -f workspace.yaml
+#   kubectl -n k8s-hub-dev create secret generic workspace-auth \
+#     --from-literal=password='<choose a strong password>'
+#
+# Open: http://<lab1>:30880   app: http://<lab1>:30830 (frontend), :30808 (backend)
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: k8s-hub-dev
+---
+# Where the finished app will be deployed later (build & deploy step).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: k8s-hub
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: workspace
+  namespace: k8s-hub-dev
+---
+# Read the whole cluster — what K8s-Hub's tools need. The built-in `view` role
+# does NOT include Secrets.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8s-hub-dev-workspace-view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: workspace
+    namespace: k8s-hub-dev
+---
+# Deploy the app into namespace k8s-hub from the workspace (helm install …).
+# Scoped to that namespace only: the workspace can't change anything else.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: workspace-edit
+  namespace: k8s-hub
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: edit
+subjects:
+  - kind: ServiceAccount
+    name: workspace
+    namespace: k8s-hub-dev
+---
+# Home directory: code, virtualenvs, node_modules, VS Code extensions and the
+# tools installed by bootstrap.sh all survive pod restarts.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: workspace-home
+  namespace: k8s-hub-dev
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+  # storageClassName: local-path   # set if lab1 has no default StorageClass
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workspace-bootstrap
+  namespace: k8s-hub-dev
+data:
+  bootstrap.sh: |
+    #!/usr/bin/env bash
+    # Installs the toolchain into $HOME (the PVC), without root, only once.
+    # Runs in the background at every start; re-runs are no-ops. Log: ~/bootstrap.log
+    set -euo pipefail
+    BIN="$HOME/.local/bin"; mkdir -p "$BIN"
+    export PATH="$BIN:$HOME/.local/share/fnm:$PATH"
+
+    # Python via uv (the project's floor is 3.11; 3.12 matches the backend image).
+    command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+    uv python find 3.12 >/dev/null 2>&1 || uv python install 3.12
+
+    # Node.js 22 via fnm.
+    if [ ! -x "$HOME/.local/share/fnm/fnm" ]; then
+      curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir "$HOME/.local/share/fnm" --skip-shell
+    fi
+    fnm list | grep -q v22 || fnm install 22
+    fnm default 22
+
+    # kubectl + helm (in-cluster auth works without a kubeconfig).
+    if [ ! -x "$BIN/kubectl" ]; then
+      v=$(curl -Ls https://dl.k8s.io/release/stable.txt)
+      curl -Lo "$BIN/kubectl" "https://dl.k8s.io/release/$v/bin/linux/amd64/kubectl"
+      chmod +x "$BIN/kubectl"
+    fi
+    if [ ! -x "$BIN/helm" ]; then
+      curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 \
+        | HELM_INSTALL_DIR="$BIN" USE_SUDO=false bash
+    fi
+
+    # Shell setup, once.
+    if ! grep -q "k8s-hub workspace" "$HOME/.bashrc" 2>/dev/null; then
+      cat >> "$HOME/.bashrc" <<'EOF'
+    # --- k8s-hub workspace ---
+    export PATH="$HOME/.local/bin:$HOME/.local/share/fnm:$PATH"
+    eval "$(fnm env --use-on-cd)"
+    export PYTHONUTF8=1
+    EOF
+    fi
+    echo "bootstrap done $(date -Is)"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workspace
+  namespace: k8s-hub-dev
+  labels: { app: workspace }
+spec:
+  replicas: 1
+  # RWO volume: never run two pods on it at once.
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: workspace }
+  template:
+    metadata:
+      labels: { app: workspace }
+    spec:
+      serviceAccountName: workspace
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: code-server
+          # Pin a version once it works (e.g. codercom/code-server:4.x.y).
+          image: codercom/code-server:latest
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              (bash /bootstrap/bootstrap.sh > "$HOME/bootstrap.log" 2>&1 &)
+              exec /usr/bin/entrypoint.sh --bind-addr 0.0.0.0:8080 "$HOME/K8s-Hub"
+          env:
+            - name: PASSWORD
+              valueFrom:
+                secretKeyRef: { name: workspace-auth, key: password }
+          ports:
+            - { name: ide, containerPort: 8080 }
+            - { name: frontend, containerPort: 3000 }
+            - { name: backend, containerPort: 8000 }
+          volumeMounts:
+            - { name: home, mountPath: /home/coder }
+            - { name: bootstrap, mountPath: /bootstrap }
+          resources:
+            # lab1 is a single, already busy node: requests are what the
+            # scheduler must RESERVE, so keep them small (1 CPU didn't fit —
+            # "Insufficient cpu"). Limits stay generous: next dev + uvicorn
+            # --reload + VS Code extensions can burst when the node has room.
+            requests: { cpu: 200m, memory: 1Gi }
+            limits: { cpu: "4", memory: 6Gi }
+          readinessProbe:
+            httpGet: { path: /healthz, port: ide }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: home
+          persistentVolumeClaim: { claimName: workspace-home }
+        - name: bootstrap
+          configMap: { name: workspace-bootstrap }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: workspace
+  namespace: k8s-hub-dev
+spec:
+  type: NodePort
+  selector: { app: workspace }
+  ports:
+    - { name: ide, port: 8080, targetPort: ide, nodePort: 30880 }
+    - { name: frontend, port: 3000, targetPort: frontend, nodePort: 30830 }
+    - { name: backend, port: 8000, targetPort: backend, nodePort: 30808 }

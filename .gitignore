@@ -1,0 +1,3 @@
+
+# Cluster credentials (kubeconfig for K8s-Hub) — never commit
+backend/secrets/
