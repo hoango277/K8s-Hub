@@ -41,7 +41,7 @@ Call each of these at most once. "No data" is a finding, not a failure: note it
 ("no metrics or error logs for this workload") and move on — don't retry with other
 metrics or wider windows hoping for something to appear.
 
-See `references/common-bottlenecks.md` for patterns and what each one points to.
+Patterns and what each points to: `read_skill_file(name="investigate-slow-requests", path="references/common-bottlenecks.md")`.
 
 ## 5. Answer
 

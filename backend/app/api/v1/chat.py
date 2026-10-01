@@ -55,7 +55,7 @@ from app.modules.nl_command.agent import (
     history_to_messages,
 )
 from app.modules.nl_command.tools import get_tools
-from app.modules.observability.langfuse_client import get_callback_handler
+from app.modules.observability.langfuse_client import get_callback_handler, trace_attributes
 from app.modules.observability.tracing import new_trace_id
 from app.schemas.chat import (
     ChatRequest,
@@ -328,37 +328,49 @@ async def stream_reply(
             return
 
         try:
-            async for frame in stream_graph_events(
-                graph,
-                {"messages": messages},
-                stream=stream,
-                collector=collector,
-                config={
-                    "recursion_limit": RECURSION_LIMIT,
-                    "run_id": uuid.UUID(trace_id),
-                    "callbacks": callbacks,
-                    "metadata": {
-                        "thread_id": str(thread_id),
-                        "message_id": str(assistant_id),
-                        "user": user.email,
-                        # Tools read these two values to report the provider and
-                        # model ACTUALLY running, not the global configuration.
-                        "llm_provider": provider_name,
-                        "llm_model": model_name,
-                        # Read by the Langfuse CallbackHandler: without them the
-                        # trace's userId/sessionId stay empty, and Langfuse can't
-                        # group usage and cost per person or per conversation.
-                        "langfuse_user_id": user.email,
-                        "langfuse_session_id": str(thread_id),
-                        "langfuse_tags": [provider_name],
-                    },
-                },
+            # Every span of this turn — model calls, tool calls — carries the user,
+            # the conversation and the provider. Langfuse v4 aggregates (cost per
+            # user, a session's turns) only over observations that HAVE these; the
+            # metadata below only reached the root span, so generations showed
+            # userId/sessionId empty (seen on lab1, 01/10/2026).
+            with trace_attributes(
+                user_id=user.email, session_id=str(thread_id), tags=[provider_name]
             ):
-                # The client left: stop early, do not keep paying for the model.
-                if await request.is_disconnected():
-                    cancelled = True
-                    break
-                yield frame
+                async for frame in stream_graph_events(
+                    graph,
+                    {"messages": messages},
+                    stream=stream,
+                    collector=collector,
+                    config={
+                        "recursion_limit": RECURSION_LIMIT,
+                        "run_id": uuid.UUID(trace_id),
+                        "callbacks": callbacks,
+                        "metadata": {
+                            "thread_id": str(thread_id),
+                            "message_id": str(assistant_id),
+                            "user": user.email,
+                            # Write tools record who proposed a change, and auto
+                            # mode only skips approval for engineers and admins.
+                            "user_id": str(user.id),
+                            "user_role": user.role,
+                            # Tools read these two values to report the provider and
+                            # model ACTUALLY running, not the global configuration.
+                            "llm_provider": provider_name,
+                            "llm_model": model_name,
+                            # Read by the Langfuse CallbackHandler: without them the
+                            # trace's userId/sessionId stay empty, and Langfuse can't
+                            # group usage and cost per person or per conversation.
+                            "langfuse_user_id": user.email,
+                            "langfuse_session_id": str(thread_id),
+                            "langfuse_tags": [provider_name],
+                        },
+                    },
+                ):
+                    # The client left: stop early, do not keep paying for the model.
+                    if await request.is_disconnected():
+                        cancelled = True
+                        break
+                    yield frame
 
         except asyncio.CancelledError:
             cancelled = True
@@ -434,6 +446,7 @@ async def _save_result(
                 message,
                 content=collector.content,
                 reasoning=collector.reasoning,
+                reasoning_steps=collector.reasoning_steps,
                 tool_calls=collector.tool_calls_as_dicts(),
                 latency_ms=latency_ms,
                 prompt_tokens=collector.prompt_tokens,

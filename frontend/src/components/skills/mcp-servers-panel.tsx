@@ -96,7 +96,7 @@ export function McpServersPanel({ canEdit, description }: { canEdit: boolean; de
             <>
               An MCP server is an external service that offers tools over the Model Context Protocol — for example a
               ticketing system or a cloud API. Once connected, its tools appear under <strong>Tools</strong>,
-              disabled, until an engineer reviews and enables them.
+              disabled and needing approval for every call, until an engineer reviews them.
             </>
           }
         >

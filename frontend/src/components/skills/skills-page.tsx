@@ -34,13 +34,14 @@ const SECTIONS: Section[] = [
     label: "Tools",
     icon: Wrench,
     description:
-      "Code the assistant can call — built-in Kubernetes, metrics, logs and trace tools, plus tools from MCP servers.",
+      "What the assistant can call: built-in Kubernetes, metrics, logs and trace tools, change proposals, your own CLI tools, and tools from MCP servers.",
   },
   {
     id: "mcp",
     label: "MCP servers",
     icon: Plug,
-    description: "External servers that add their own tools to the catalog over the Model Context Protocol.",
+    description:
+      "External servers that add tools over the Model Context Protocol. Engineers connect them and decide, per tool, whether each call needs approval.",
   },
   {
     id: "history",

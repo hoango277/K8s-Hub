@@ -98,7 +98,23 @@ def build_params(
         kwargs[real_name] = value
 
     kwargs.update(spec.extra)
+    kwargs.update(_reasoning_params(spec.module, str(canonical["model"])))
     return kwargs
+
+
+def _reasoning_params(module: str, model: str) -> dict[str, Any]:
+    """Make models that can think actually think — and return their thoughts.
+
+    Qwen 3.x on Groq answers WITHOUT reasoning unless asked (checked
+    30/09/2026 on qwen/qwen3.8-27b: default and reasoning_effort="default"
+    gave 0 reasoning tokens; "high" gave ~2,300 characters of reasoning), and
+    `reasoning_format="parsed"` puts it in its own field instead of `<think>`
+    tags inside the answer. Without this the chat's activity block stayed
+    empty for Qwen while gpt-oss showed its thinking.
+    """
+    if module == "langchain_groq" and model.lower().startswith("qwen/"):
+        return {"reasoning_format": "parsed", "reasoning_effort": "high"}
+    return {}
 
 
 def create_chat_model(

@@ -1,6 +1,6 @@
 """Work that runs when the application starts up and shuts down.
 
-TODO: initialize Redis, the K8s client, the MCP skill catalog.
+TODO: initialize Redis.
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             except Exception:
                 logger.exception("Could not load saved settings; running on .env values only")
 
-    # Tool catalog state + MCP tools, and the Agent Skills (built-in folders +
+    # Tool catalog state + custom tools, and the Agent Skills (built-in folders +
     # custom skills from the database). Without a database the built-in tools
     # and skills still work with their defaults.
     if db["ok"]:

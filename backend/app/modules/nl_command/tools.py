@@ -6,20 +6,21 @@ streaming layer.
 
 Safety boundaries — read carefully before adding one:
 
-  1. Tools in this file are READ-ONLY. No tool creates/edits/deletes resources
-     on the cluster. Mutations go through a separate path: the assistant
-     proposes a structured description, the system dry-runs it, a human
-     approves, and only then is it executed.
-  2. No raw command strings. There is no tool like `run_kubectl(cmd)` —
-     parameters must be discrete fields so they can be checked before running.
+  1. No tool here or in app/modules/tools/ changes the cluster directly.
+     Write tools PROPOSE: they build a plan, the API server dry-runs it, and
+     it waits in the approval queue for an engineer (approval_service.py).
+  2. Built-in tools take discrete fields, never a raw command string, so
+     they can be checked before running. Custom CLI tools take an argument
+     string, but run without a shell and are classified read/change by the
+     engineer's read-only prefixes (app/modules/tools/custom.py).
   3. The tool description is what the model reads to decide whether to call
      it. Write a vague description and the model will call it at the wrong
      time, and that bug is very hard to track down.
 
-Cluster lookups (pods, events, logs, metrics, traces) are SKILLS, not tools
-defined here: they live in app/modules/tools/ so they appear in the Skills
-catalog and can be switched off. This file keeps the two core tools that only
-describe the system itself.
+Cluster tools (pods, any resource, metrics, logs, traces, write tools, custom
+tools) live in app/modules/tools/ so they appear on the Tools tab and can be
+switched off. This file keeps the two core tools that only describe the
+system itself.
 """
 
 from __future__ import annotations

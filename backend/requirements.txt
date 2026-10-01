@@ -35,7 +35,8 @@ langchain-core>=0.3.20
 langchain>=1.0
 langchain-groq>=0.2.3
 langchain-google-genai>=2.0.8
-mcp>=1.1.0
+# MCP client for external tool servers (added by engineers, see app/modules/tools/mcp_client.py)
+mcp>=2.2
 
 # --- Kubernetes / observability data sources ---
 kubernetes-asyncio>=31.1.0

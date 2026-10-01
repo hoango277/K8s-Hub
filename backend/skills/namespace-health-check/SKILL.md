@@ -5,12 +5,15 @@ description: Give a quick health report of one namespace — unhealthy pods, dep
 
 # Namespace health check
 
-Collect, then report in the fixed format of `assets/report-template.md`.
+Collect, then report in the fixed format of `assets/report-template.md` — read it with
+`read_skill_file(name="namespace-health-check", path="assets/report-template.md")`.
 
 ## Collect
 
 1. `list_deployments(namespace)` — any `ready` below desired, or a rollout condition not True.
-2. `list_pods(namespace)` — pods with problems are listed first; note restarts.
+2. `list_pods(namespace)` — pods come grouped. Only FAILING NOW goes under "Needs attention";
+   RUNNING NOW BUT RESTARTED EARLIER are healthy at the moment — report them as past
+   restarts, never as CrashLoopBackOff. COMPLETED pods are finished jobs, not a problem.
 3. `list_events(namespace, warnings_only=True, since_minutes=60)` — group repeated warnings.
 4. For each deployment with problems (at most three):
    `pod_metrics(namespace, <deployment>, "memory", 60)` — flag peaks above 80 % of the limit.
@@ -20,6 +23,6 @@ Call each tool once per object; "no data" goes in the report as such.
 
 ## Report
 
-Read `assets/report-template.md` and fill it in. Keep the "All good" section short;
+Fill in the template you read with `read_skill_file`. Keep the "All good" section short;
 spend the words on what needs attention. If something needs a deeper look, name the
 skill for it (e.g. `diagnose-crashloop` for a crash-looping pod).

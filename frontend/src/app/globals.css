@@ -19,6 +19,10 @@
   --accent-foreground: oklch(0.21 0.006 285.885);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.985 0 0);
+  /* Status colors for text/backgrounds that must read as "good" / "careful"
+     (diff additions, approval states). Pair them with words, never color alone. */
+  --success: oklch(0.527 0.154 150.069);
+  --warning: oklch(0.555 0.163 48.998);
   --border: oklch(0.92 0.004 286.32);
   --input: oklch(0.92 0.004 286.32);
   --ring: oklch(0.705 0.015 286.067);
@@ -42,6 +46,8 @@
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
   --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.765 0.177 163.223);
+  --warning: oklch(0.828 0.189 84.429);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.552 0.016 285.938);
@@ -64,6 +70,8 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -221,6 +229,75 @@
 
 @media (prefers-reduced-motion: reduce) {
   .k8s-typing > :last-child::after {
+    animation: none;
+  }
+}
+
+/* Waiting for the assistant: a dot sending out rings, and skeleton lines
+   where the answer will appear. Slow and low-contrast on purpose — it runs for
+   as long as the model takes (a minute with some models) and must not nag. */
+@keyframes k8s-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+.k8s-orb {
+  position: relative;
+  display: inline-flex;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background-color: var(--primary);
+}
+
+.k8s-orb::before,
+.k8s-orb::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: var(--primary);
+  animation: k8s-ring 1.8s ease-out infinite;
+}
+
+.k8s-orb::after {
+  animation-delay: 0.9s;
+}
+
+@keyframes k8s-skeleton {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+.k8s-skeleton {
+  border-radius: 0.375rem;
+  background: linear-gradient(
+    90deg,
+    var(--muted) 0%,
+    var(--accent) 50%,
+    var(--muted) 100%
+  );
+  background-size: 200% 100%;
+  animation: k8s-skeleton 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .k8s-orb::before,
+  .k8s-orb::after {
+    animation: none;
+    opacity: 0;
+  }
+  .k8s-skeleton {
     animation: none;
   }
 }

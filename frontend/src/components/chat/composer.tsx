@@ -119,7 +119,7 @@ export function Composer({
         </div>
 
         <p className="mt-1.5 px-1 text-center text-[11px] text-[var(--muted-foreground)]">
-          The assistant only looks things up — every change to the cluster needs human approval.
+          The assistant can look things up and propose changes — nothing changes on the cluster until an engineer approves.
         </p>
       </div>
     </div>

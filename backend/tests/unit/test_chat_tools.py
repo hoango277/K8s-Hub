@@ -42,6 +42,19 @@ SAMPLE_ARGS: dict[str, dict] = {
     "list_deployments": {"namespace": "default"},
     "pod_metrics": {"namespace": "default", "pod": "web", "metric": "cpu"},
     "search_logs": {"namespace": "default"},
+    "get_resources": {"kind": "service"},
+    "describe_resource": {"kind": "service", "name": "web", "namespace": "default"},
+    "scale_workload": {"kind": "deployment", "namespace": "default", "name": "web", "replicas": 2},
+    "restart_workload": {"kind": "deployment", "namespace": "default", "name": "web"},
+    "set_image": {
+        "kind": "deployment", "namespace": "default", "name": "web",
+        "container": "web", "image": "nginx:1.27",
+    },
+    "delete_pod": {"namespace": "default", "name": "web-1"},
+    "delete_resource": {"kind": "configmap", "name": "web", "namespace": "default"},
+    "apply_manifest": {
+        "manifest": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata: {a: b}\n"
+    },
 }
 
 
@@ -54,9 +67,13 @@ def offline(monkeypatch):
     from app.integrations.prometheus import client as prom
     from app.integrations.tempo import client as tempo
 
-    empty = Settings(_env_file=None, TEMPO_URL="", PROMETHEUS_URL="", LOKI_URL="", KUBECONFIG=None)
-    for module in (tempo, prom, loki, k8s):
+    empty = Settings(_env_file=None, TEMPO_URL="", PROMETHEUS_URL="", LOKI_URL="")
+    for module in (tempo, prom, loki):
         monkeypatch.setattr(module, "get_settings", lambda: empty)
+    # No pod, no kubeconfig: the Kubernetes tools must see no credentials.
+    monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+    monkeypatch.setattr(k8s, "_kubeconfig_files", lambda: [])
+    assert k8s.config_problem() is not None
 
 
 @pytest.mark.parametrize("tool", ALL_TOOLS, ids=lambda t: t.name)

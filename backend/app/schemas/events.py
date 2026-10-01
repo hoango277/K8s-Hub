@@ -131,15 +131,22 @@ class PlanEvent(BaseEvent):
 
 
 class ApprovalRequiredEvent(BaseEvent):
-    """The stream pauses to wait for human approval.
+    """The assistant proposed a cluster change; it waits for a human decision.
 
-    After this event the SSE stream does NOT end but hangs waiting. The client
-    calls POST /approvals/{approval_id}/approve|reject in a separate request.
+    Sent while the proposing tool call runs (between its tool_call_start and
+    tool_call_end, same `tool_call_id`). The stream does NOT pause: the turn
+    ends normally and the decision is made later, in a separate request —
+    POST /approvals/{approval_id}/approve|reject — by any engineer or admin.
+    The client shows an approval card under the tool call and reads the live
+    status from GET /approvals/{approval_id}.
     """
 
     type: Literal["approval_required"] = "approval_required"
     approval_id: str
-    summary: str = Field(description="E.g. 'Scale api replicas from 1 to 3'")
+    tool_call_id: str | None = Field(
+        default=None, description="The tool call that proposed it (tool_call_start.id)"
+    )
+    summary: str = Field(description="E.g. 'Scale deployment shop/api from 1 to 3 replicas'")
     diff: str = Field(description="Before/after comparison, as a unified YAML diff")
     danger_level: DangerLevel = "caution"
     dry_run_output: str | None = Field(
@@ -148,7 +155,8 @@ class ApprovalRequiredEvent(BaseEvent):
 
 
 class ApprovalResolvedEvent(BaseEvent):
-    """The user has decided. Sent right before the stream resumes."""
+    """Reserved: a decision pushed over a live stream. Not sent today — the
+    decision happens outside the stream and is read from GET /approvals/{id}."""
 
     type: Literal["approval_resolved"] = "approval_resolved"
     approval_id: str
@@ -158,7 +166,8 @@ class ApprovalResolvedEvent(BaseEvent):
 
 
 class VerifyResultEvent(BaseEvent):
-    """Result of re-checking after an action has been applied to the cluster."""
+    """Reserved: verification pushed over a live stream. Not sent today — see
+    `verify_ok` / `verify_message` on GET /approvals/{id}."""
 
     type: Literal["verify_result"] = "verify_result"
     ok: bool

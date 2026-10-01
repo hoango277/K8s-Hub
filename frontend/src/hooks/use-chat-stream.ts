@@ -17,16 +17,22 @@ export interface LiveToolCall {
   result?: string | null;
   error?: string | null;
   durationMs?: number | null;
+  /** Set when this call proposed a cluster change: the chat shows its approval card. */
+  approvalId?: string | null;
 }
 
 /** The turn currently streaming — not yet in the database. */
 export interface LiveTurn {
   /** The question just sent, shown right away so the user gets instant feedback. */
   question: string;
+  /** When it was sent (ms), for the waiting indicator's elapsed-time counter. */
+  startedAt: number;
   content: string;
 
   /** The model's own reasoning. Empty if the provider doesn't expose it. */
   thinking: string;
+  /** The same reasoning split where tool calls happened: `atTool` = calls before it. */
+  thinkingSteps: { text: string; atTool: number }[];
   /** Total time spent thinking, in milliseconds. */
   thinkingMs: number;
   /**
@@ -44,8 +50,10 @@ export interface LiveTurn {
 function startTurn(question: string): LiveTurn {
   return {
     question,
+    startedAt: Date.now(),
     content: "",
     thinking: "",
+    thinkingSteps: [],
     thinkingMs: 0,
     thinkingSince: null,
     toolCalls: [],
@@ -79,12 +87,22 @@ function finalizeThinking(t: LiveTurn): LiveTurn {
  */
 function applyEvent(t: LiveTurn, ev: AgentEvent): LiveTurn {
   switch (ev.type) {
-    case "thinking":
+    case "thinking": {
+      // Same rule as the backend's StreamCollector.add_reasoning, so the live
+      // view and the reloaded message show the same order.
+      const at = t.toolCalls.length;
+      const last = t.thinkingSteps[t.thinkingSteps.length - 1];
+      const thinkingSteps =
+        last && last.atTool === at
+          ? [...t.thinkingSteps.slice(0, -1), { ...last, text: last.text + ev.content }]
+          : [...t.thinkingSteps, { text: ev.content, atTool: at }];
       return {
         ...t,
+        thinkingSteps,
         thinking: t.thinking + ev.content,
         thinkingSince: t.thinkingSince ?? Date.now(),
       };
+    }
 
     case "token":
       return { ...finalizeThinking(t), content: t.content + ev.content };
@@ -114,6 +132,18 @@ function applyEvent(t: LiveTurn, ev: AgentEvent): LiveTurn {
         ),
       };
 
+    case "approval_required": {
+      // Attach to the proposing call; fall back to the last one still running.
+      const target =
+        t.toolCalls.find((tc) => tc.id === ev.tool_call_id) ??
+        [...t.toolCalls].reverse().find((tc) => tc.status === "running");
+      if (!target) return t;
+      return {
+        ...t,
+        toolCalls: t.toolCalls.map((tc) => (tc === target ? { ...tc, approvalId: ev.approval_id } : tc)),
+      };
+    }
+
     case "error":
       return {
         ...finalizeThinking(t),
@@ -131,7 +161,7 @@ function applyEvent(t: LiveTurn, ev: AgentEvent): LiveTurn {
       };
 
     default:
-      // heartbeat, step, plan, approval_*: not used by the chat panel yet.
+      // heartbeat, step, plan, approval_resolved, verify_result: not used by the chat panel.
       return t;
   }
 }

@@ -57,7 +57,7 @@ function AddForm({ add, onClose }: { add: ReturnType<typeof useAddMcpServer>; on
               ? { kind: "error", message: `Added ${s.name}, but it didn't answer: ${s.last_error}` }
               : {
                   kind: "ok",
-                  message: `Connected ${s.name}. Its ${s.tool_count} ${s.tool_count === 1 ? "tool is" : "tools are"} under Tools, disabled until reviewed.`,
+                  message: `Connected ${s.name}. Its ${s.tool_count} ${s.tool_count === 1 ? "tool is" : "tools are"} under Tools, disabled and needing approval until reviewed.`,
                 },
           );
           onClose();
@@ -72,7 +72,7 @@ function AddForm({ add, onClose }: { add: ReturnType<typeof useAddMcpServer>; on
         id={TITLE_ID}
         icon={Plug}
         title="Add MCP server"
-        subtitle="Its tools are read right away and start disabled."
+        subtitle="Its tools are read right away; they start disabled and needing approval."
         onClose={onClose}
         closeDisabled={busy}
       />

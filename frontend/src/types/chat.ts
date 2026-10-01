@@ -31,6 +31,14 @@ export interface ToolCall {
   error: string | null;
   duration_ms: number | null;
   started_at: string;
+  /** The approval this call proposed, if any: the chat shows its card. */
+  approval_id?: string | null;
+}
+
+/** One stretch of reasoning; `at_tool` = how many tool calls came before it. */
+export interface ReasoningStep {
+  text: string;
+  at_tool: number;
 }
 
 export interface Message {
@@ -41,6 +49,8 @@ export interface Message {
 
   /** The model's own reasoning. null if the provider doesn't expose it. */
   reasoning: string | null;
+  /** The reasoning split around tool calls, in order. Null for older messages. */
+  reasoning_steps?: ReasoningStep[] | null;
 
   position: number;
   status: MessageStatus;

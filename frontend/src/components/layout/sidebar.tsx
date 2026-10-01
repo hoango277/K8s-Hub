@@ -17,6 +17,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { useApprovalSummary } from "@/hooks/use-approvals";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { useLocalStorage } from "@/hooks/use-local-storage";
 import { hasRole } from "@/lib/roles";
@@ -88,6 +89,11 @@ export function Sidebar() {
   const narrow = useIsNarrow();
   const collapsed = narrow || stored === "1";
 
+  // Engineers and admins decide approvals: show them how many are waiting.
+  const canDecide = user ? hasRole(user.role, ["engineer"]) : false;
+  const { data: summary } = useApprovalSummary(canDecide);
+  const pending = canDecide ? (summary?.pending ?? 0) : 0;
+
   const visibleGroups = GROUPS.map((g) => ({
     ...g,
     items: g.items.filter((m) => !m.roles || (user && hasRole(user.role, m.roles))),
@@ -144,6 +150,8 @@ export function Sidebar() {
               {group.items.map((m) => {
                 const isActive = pathname === m.href || pathname.startsWith(`${m.href}/`);
                 const Icon = m.icon;
+                const count = m.href === "/approvals" ? pending : 0;
+                const label = count ? `${m.label}, ${count} waiting` : m.label;
                 return (
                   <li key={m.href}>
                     <Link
@@ -151,8 +159,8 @@ export function Sidebar() {
                       // When collapsed the text disappears, leaving only the
                       // icon — `title` and `aria-label` are all that's left to
                       // tell which link is which.
-                      title={collapsed ? m.label : undefined}
-                      aria-label={collapsed ? m.label : undefined}
+                      title={collapsed ? label : undefined}
+                      aria-label={collapsed || count ? label : undefined}
                       aria-current={isActive ? "page" : undefined}
                       className={cn(
                         "relative flex h-9 items-center gap-2.5 rounded-md text-sm outline-none transition",
@@ -171,6 +179,20 @@ export function Sidebar() {
                       )}
                       <Icon aria-hidden className="size-4 shrink-0" />
                       {!collapsed && <span className="truncate">{m.label}</span>}
+                      {count > 0 &&
+                        (collapsed ? (
+                          <span
+                            aria-hidden
+                            className="absolute right-1.5 top-1.5 size-2 rounded-full bg-[var(--destructive)]"
+                          />
+                        ) : (
+                          <span
+                            aria-hidden
+                            className="ml-auto rounded-full bg-[var(--destructive)] px-1.5 text-[11px] font-semibold leading-5 text-[var(--destructive-foreground)]"
+                          >
+                            {count > 99 ? "99+" : count}
+                          </span>
+                        ))}
                     </Link>
                   </li>
                 );

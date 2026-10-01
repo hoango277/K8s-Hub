@@ -39,7 +39,7 @@ dependencies = [
     # LLM providers — install only the ones in use
     "langchain-groq>=0.2.3",
     "langchain-google-genai>=2.0.8",
-    "mcp>=1.1.0",
+    "mcp>=2.2",
 
     # --- Kubernetes / observability sources ---
     "kubernetes-asyncio>=31.1.0",

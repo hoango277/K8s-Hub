@@ -7,36 +7,42 @@ import {
   Eye,
   Info,
   PenLine,
+  Pencil,
   Play,
   Plug,
+  Plus,
   ScrollText,
   Search,
   SearchX,
+  Terminal,
+  Trash2,
   TriangleAlert,
   Waypoints,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
 
+import { CustomToolDialog } from "@/components/skills/custom-tool-dialog";
 import { ErrorPanel, LoadingRow, SectionHeader, errorMessage } from "@/components/skills/shared";
 import { ToolTryDialog } from "@/components/skills/tool-try-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { inputClass } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/toast";
-import { useTools, useUpdateTool } from "@/hooks/use-tools";
+import { useDeleteCustomTool, useTools, useUpdateTool } from "@/hooks/use-tools";
 import { cn } from "@/lib/utils";
-import type { Tool, ToolCategory, ToolDanger } from "@/types/tool";
+import type { CustomTool, Tool, ToolCategory, ToolDanger } from "@/types/tool";
 
 const CATEGORIES: { id: ToolCategory; label: string; icon: LucideIcon }[] = [
   { id: "kubernetes", label: "Kubernetes", icon: Boxes },
   { id: "metrics", label: "Metrics", icon: Activity },
   { id: "logs", label: "Logs", icon: ScrollText },
   { id: "traces", label: "Traces", icon: Waypoints },
-  { id: "external", label: "External (MCP)", icon: Plug },
+  { id: "custom", label: "Custom tools", icon: Terminal },
+  { id: "mcp", label: "External (MCP)", icon: Plug },
 ];
 
 export const DANGER: Record<
@@ -47,19 +53,19 @@ export const DANGER: Record<
     label: "Read",
     tone: "success",
     icon: Eye,
-    description: "Only reads data. Can be used in chat.",
+    description: "Only reads data. Runs as soon as it's called.",
   },
   write: {
     label: "Write",
     tone: "warning",
     icon: PenLine,
-    description: "Changes something. Kept out of chat until approvals exist.",
+    description: "Proposes a change. Nothing runs until an engineer approves it.",
   },
   destructive: {
     label: "Destructive",
     tone: "danger",
     icon: TriangleAlert,
-    description: "Deletes or breaks things. Kept out of chat.",
+    description: "Proposes a change that is hard to undo. Nothing runs until an engineer approves it.",
   },
 };
 
@@ -73,20 +79,29 @@ export function DangerBadge({ danger }: { danger: ToolDanger }) {
   );
 }
 
-function isMcp(tool: Tool): boolean {
-  return tool.source.startsWith("mcp:");
+function sourceLabel(tool: Tool): string {
+  if (tool.mcp) return `MCP · ${tool.mcp.server}`;
+  return tool.custom ? `Custom · ${tool.custom.command}` : "Built-in";
 }
 
-function sourceLabel(tool: Tool): string {
-  return isMcp(tool) ? `MCP · ${tool.source.slice(4)}` : "Built-in";
+function hintText(hint: boolean | null): string {
+  if (hint === true) return "The server says this tool only reads. Check the description before trusting that.";
+  if (hint === false) return "The server says this tool can make changes.";
+  return "The server doesn't say whether this tool changes anything.";
 }
 
 export function ToolsPanel({ canEdit, description }: { canEdit: boolean; description: string }) {
   const { data: tools, isLoading, error, refetch } = useTools();
   const update = useUpdateTool();
+  const remove = useDeleteCustomTool();
   const toast = useToast();
   const [query, setQuery] = useState("");
   const [trying, setTrying] = useState<Tool | null>(null);
+  // `undefined` = dialog closed, `null` = creating, a tool = editing it.
+  const [editing, setEditing] = useState<CustomTool | null | undefined>(undefined);
+  const [deleting, setDeleting] = useState<Tool | null>(null);
+  // Turning approval OFF lets an external tool act on its own: confirm first.
+  const [unguarding, setUnguarding] = useState<Tool | null>(null);
 
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -98,25 +113,24 @@ export function ToolsPanel({ canEdit, description }: { canEdit: boolean; descrip
         t.description.toLowerCase().includes(q),
     );
     return CATEGORIES.map((c) => ({ ...c, tools: list.filter((t) => t.category === c.id) })).filter(
-      (g) => g.tools.length > 0,
+      // The custom group stays visible to engineers even when empty: it's
+      // where they learn they can add their own tools.
+      (g) => g.tools.length > 0 || (g.id === "custom" && canEdit && !q),
     );
-  }, [tools, query]);
+  }, [tools, query, canEdit]);
 
   const inChatCount = (tools ?? []).filter((t) => t.in_chat).length;
 
-  function patch(tool: Tool, change: { enabled?: boolean; danger?: ToolDanger }) {
+  function toggle(tool: Tool, enabled: boolean) {
     update.mutate(
-      { name: tool.name, patch: change },
+      { name: tool.name, patch: { enabled } },
       {
         onSuccess: (t) => {
-          const message =
-            change.enabled !== undefined
-              ? t.in_chat
-                ? `${t.title} is enabled and available in chat.`
-                : change.enabled
-                  ? `${t.title} is enabled${t.unavailable_reason ? `, but can't run yet: ${t.unavailable_reason}` : "."}`
-                  : `${t.title} is disabled.`
-              : `${t.title} is now marked ${DANGER[t.danger].label}.${t.in_chat ? " It's available in chat." : ""}`;
+          const message = t.in_chat
+            ? `${t.title} is enabled and available in chat.`
+            : enabled
+              ? `${t.title} is enabled${t.unavailable_reason ? `, but can't run yet: ${t.unavailable_reason}` : "."}`
+              : `${t.title} is disabled.`;
           toast({ kind: "ok", message });
         },
         onError: (err) => toast({ kind: "error", message: errorMessage(err, `Couldn't update ${tool.title}. Try again.`) }),
@@ -124,9 +138,46 @@ export function ToolsPanel({ canEdit, description }: { canEdit: boolean; descrip
     );
   }
 
+  function setApproval(tool: Tool, requiresApproval: boolean) {
+    update.mutate(
+      { name: tool.name, patch: { requires_approval: requiresApproval } },
+      {
+        onSuccess: (t) =>
+          toast({
+            kind: "ok",
+            message: requiresApproval
+              ? `Every call to ${t.title} now waits for approval.`
+              : `${t.title} now runs without approval.`,
+          }),
+        onError: (err) => toast({ kind: "error", message: errorMessage(err, `Couldn't update ${tool.title}. Try again.`) }),
+      },
+    );
+  }
+
+  function confirmDelete() {
+    const t = deleting;
+    setDeleting(null);
+    if (!t) return;
+    remove.mutate(t.name, {
+      onSuccess: () => toast({ kind: "ok", message: `${t.title} deleted.` }),
+      onError: (err) => toast({ kind: "error", message: errorMessage(err, `Couldn't delete ${t.title}. Try again.`) }),
+    });
+  }
+
   return (
     <>
-      <SectionHeader title="Tools" description={description} />
+      <SectionHeader
+        title="Tools"
+        description={description}
+        actions={
+          canEdit && (
+            <Button onClick={() => setEditing(null)}>
+              <Plus aria-hidden />
+              New tool
+            </Button>
+          )
+        }
+      />
 
       {isLoading ? (
         <LoadingRow label="Loading tools…" />
@@ -136,7 +187,7 @@ export function ToolsPanel({ canEdit, description }: { canEdit: boolean; descrip
         <EmptyState
           icon={Wrench}
           title="No tools registered"
-          description="The backend didn't report any tools. Check its logs, or connect an MCP server to add external tools."
+          description="The backend didn't report any tools. Check its logs; engineers can also add a custom CLI tool."
         />
       ) : (
         <div className="space-y-8">
@@ -182,31 +233,88 @@ export function ToolsPanel({ canEdit, description }: { canEdit: boolean; descrip
                 {g.label}
                 <span className="font-normal text-[var(--muted-foreground)]">({g.tools.length})</span>
               </h3>
-              {g.id === "external" && (
+              {g.id === "custom" && (
                 <p className="mb-3 flex items-start gap-2 rounded-md border bg-[var(--muted)]/50 px-3 py-2.5 text-xs leading-relaxed text-[var(--muted-foreground)]">
                   <Info aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-                  New MCP tools start disabled and marked Write. An engineer reviews each one, marks it Read if it
-                  only reads data, and enables it — only then can the assistant use it.
+                  A command-line tool the assistant can use, like kubectl-ai&apos;s custom tools. It writes only the
+                  arguments; read-only subcommands run at once in the sandbox, anything else waits for an
+                  engineer&apos;s approval.
                 </p>
               )}
-              <ul className="divide-y rounded-lg border">
-                {g.tools.map((t) => (
-                  <ToolRow
-                    key={t.name}
-                    tool={t}
-                    canEdit={canEdit}
-                    pending={update.isPending && update.variables?.name === t.name}
-                    onPatch={(change) => patch(t, change)}
-                    onTry={() => setTrying(t)}
-                  />
-                ))}
-              </ul>
+              {g.id === "mcp" && (
+                <p className="mb-3 flex items-start gap-2 rounded-md border bg-[var(--muted)]/50 px-3 py-2.5 text-xs leading-relaxed text-[var(--muted-foreground)]">
+                  <Info aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+                  Tools from connected MCP servers start disabled, and every call waits for approval. An engineer
+                  decides per tool: enable it, and let it run without approval only if it can&apos;t change anything
+                  that matters — the server&apos;s own &quot;read-only&quot; claim is shown but not trusted.
+                </p>
+              )}
+              {g.tools.length === 0 ? (
+                <EmptyState
+                  icon={Terminal}
+                  title="No custom tools yet"
+                  description="Start from the kubectl or helm template, or wrap any CLI installed in the sandbox."
+                >
+                  <Button variant="outline" size="sm" onClick={() => setEditing(null)}>
+                    <Plus aria-hidden />
+                    New tool
+                  </Button>
+                </EmptyState>
+              ) : (
+                <ul className="divide-y rounded-lg border">
+                  {g.tools.map((t) => (
+                    <ToolRow
+                      key={t.name}
+                      tool={t}
+                      canEdit={canEdit}
+                      pending={update.isPending && update.variables?.name === t.name}
+                      onToggle={(enabled) => toggle(t, enabled)}
+                      onTry={() => setTrying(t)}
+                      onApproval={
+                        t.mcp
+                          ? (v) => (v ? setApproval(t, true) : setUnguarding(t))
+                          : undefined
+                      }
+                      onEdit={t.custom ? () => setEditing(t.custom) : undefined}
+                      onDelete={t.custom ? () => setDeleting(t) : undefined}
+                    />
+                  ))}
+                </ul>
+              )}
             </section>
           ))}
         </div>
       )}
 
       <ToolTryDialog tool={trying} onClose={() => setTrying(null)} />
+      <CustomToolDialog
+        open={editing !== undefined}
+        editing={editing ?? null}
+        takenNames={(tools ?? []).map((t) => t.name)}
+        onClose={() => setEditing(undefined)}
+      />
+      <ConfirmDialog
+        open={deleting !== null}
+        title={`Delete ${deleting?.title ?? "this tool"}?`}
+        description="The assistant can no longer use it. Its past runs and approvals stay in the history. This can't be undone."
+        confirmLabel="Delete tool"
+        destructive
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleting(null)}
+      />
+      <ConfirmDialog
+        open={unguarding !== null}
+        title={`Let ${unguarding?.title ?? "this tool"} run without approval?`}
+        description="The assistant will call it directly, with arguments it writes itself, and nobody reviews the call first. Do this only for tools that can't change anything important."
+        confirmLabel="Run without approval"
+        destructive
+        onConfirm={() => {
+          const t = unguarding;
+          setUnguarding(null);
+          if (t) setApproval(t, false);
+        }}
+        onCancel={() => setUnguarding(null)}
+      />
     </>
   );
 }
@@ -217,28 +325,25 @@ function StatusBadge({ tool }: { tool: Tool }) {
   return <Badge tone="warning">Unavailable</Badge>;
 }
 
-function hintText(hint: boolean | null): string {
-  if (hint === true) return "The server says this tool only reads. Check the description before trusting that.";
-  if (hint === false) return "The server says this tool can make changes.";
-  return "The server doesn't say whether this tool changes anything.";
-}
-
 function ToolRow({
   tool,
   canEdit,
   pending,
-  onPatch,
+  onToggle,
   onTry,
+  onApproval,
+  onEdit,
+  onDelete,
 }: {
   tool: Tool;
   canEdit: boolean;
   pending: boolean;
-  onPatch: (change: { enabled?: boolean; danger?: ToolDanger }) => void;
+  onToggle: (enabled: boolean) => void;
   onTry: () => void;
+  onApproval?: (requiresApproval: boolean) => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
 }) {
-  const mcp = isMcp(tool);
-  const dangerId = `danger-${tool.name}`;
-
   return (
     <li className="grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
       <div className="min-w-0">
@@ -246,12 +351,38 @@ function ToolRow({
           <p className="text-sm font-medium">{tool.title}</p>
           <code className="break-all text-xs text-[var(--muted-foreground)]">{tool.name}</code>
         </div>
-        <p className="mt-1 text-sm leading-relaxed text-[var(--muted-foreground)]">{tool.description}</p>
+        <p className="mt-1 text-sm leading-relaxed text-[var(--muted-foreground)]">
+          {tool.custom ? tool.custom.description : tool.description}
+        </p>
+        {tool.custom && tool.custom.read_only_prefixes.length > 0 && (
+          <p className="mt-1.5 text-xs leading-relaxed text-[var(--muted-foreground)]">
+            Runs at once:{" "}
+            {tool.custom.read_only_prefixes.map((p) => (
+              <code key={p} className="mr-1 inline-block rounded bg-[var(--muted)] px-1 py-0.5">
+                {p}
+              </code>
+            ))}
+          </p>
+        )}
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          <DangerBadge danger={tool.danger} />
-          <Badge tone={mcp ? "info" : "neutral"}>{sourceLabel(tool)}</Badge>
+          {tool.mcp ? (
+            tool.mcp.requires_approval ? (
+              <Badge tone="warning">
+                <PenLine aria-hidden className="size-3" />
+                Needs approval
+              </Badge>
+            ) : (
+              <Badge tone="info">Runs directly</Badge>
+            )
+          ) : (
+            <DangerBadge danger={tool.danger} />
+          )}
+          <Badge tone={tool.custom ? "info" : "neutral"}>{sourceLabel(tool)}</Badge>
           <StatusBadge tool={tool} />
         </div>
+        {tool.mcp && (
+          <p className="mt-2 text-xs leading-relaxed text-[var(--muted-foreground)]">{hintText(tool.mcp.read_only_hint)}</p>
+        )}
         {!tool.in_chat && tool.enabled && tool.unavailable_reason && (
           <p className="mt-2 text-xs leading-relaxed text-[var(--muted-foreground)]">
             <span className="font-medium text-[var(--foreground)]">Unavailable:</span> {tool.unavailable_reason}
@@ -259,42 +390,41 @@ function ToolRow({
         )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 sm:justify-end">
-        {canEdit && mcp && (
-          <div className="w-full space-y-1 sm:w-56">
-            <label htmlFor={dangerId} className="sr-only">
-              Danger level for {tool.title}
-            </label>
-            <Select
-              value={tool.danger}
-              onValueChange={(v) => onPatch({ danger: v as ToolDanger })}
-              disabled={pending}
-            >
-              <SelectTrigger id={dangerId} className="h-8 w-full justify-between rounded-md">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(Object.keys(DANGER) as ToolDanger[]).map((d) => (
-                  <SelectItem key={d} value={d} description={DANGER[d].description}>
-                    {DANGER[d].label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-[11px] leading-snug text-[var(--muted-foreground)]">{hintText(tool.read_only_hint)}</p>
-          </div>
-        )}
+      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
         {tool.in_chat && (
           <Button variant="outline" size="sm" onClick={onTry}>
             <Play aria-hidden />
             Try it
           </Button>
         )}
+        {canEdit && onApproval && tool.mcp && (
+          // Boxed, label first: next to the row's Enable switch, a bare
+          // "Requires approval" between two switches read as either one's.
+          <label className="flex min-h-8 items-center gap-2 rounded-md border px-2 text-xs text-[var(--muted-foreground)]">
+            Requires approval
+            <Switch
+              checked={tool.mcp.requires_approval}
+              pending={pending}
+              onCheckedChange={onApproval}
+              aria-label={`Require approval for each call to ${tool.title}`}
+            />
+          </label>
+        )}
+        {canEdit && onEdit && (
+          <Button variant="ghost" size="icon" aria-label={`Edit ${tool.title}`} onClick={onEdit}>
+            <Pencil aria-hidden />
+          </Button>
+        )}
+        {canEdit && onDelete && (
+          <Button variant="ghost" size="icon" aria-label={`Delete ${tool.title}`} onClick={onDelete}>
+            <Trash2 aria-hidden />
+          </Button>
+        )}
         {canEdit && (
           <Switch
             checked={tool.enabled}
             pending={pending}
-            onCheckedChange={(enabled) => onPatch({ enabled })}
+            onCheckedChange={onToggle}
             aria-label={`${tool.enabled ? "Disable" : "Enable"} ${tool.title}`}
           />
         )}

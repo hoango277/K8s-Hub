@@ -27,7 +27,7 @@ Call `describe_pod(namespace, name)` and note, for the failing container:
 
 Run `run_skill_script(name="diagnose-crashloop", script="scripts/explain_exit_code.py", arguments=[<code>, <reason>])`
 — for example `["137", "OOMKilled"]`. It prints what the code means and what to check
-next. For the full table read `references/exit-codes.md`.
+next. For the full table: `read_skill_file(name="diagnose-crashloop", path="references/exit-codes.md")`.
 
 ## 4. Follow the branch that matches
 
@@ -36,7 +36,7 @@ next. For the full table read `references/exit-codes.md`.
 | `OOMKilled` (exit 137) | `pod_metrics(namespace, <prefix>, "memory", 60)` | peak vs limit; a steady climb means a leak, a spike means a burst |
 | exit 1 / 2 / other app code | `get_pod_logs(namespace, name, previous=True)` | the last error before the crash — the CURRENT instance has just started |
 | the same, but restarts over hours | `search_logs(namespace, pod=<prefix>, errors_only=True, since_minutes=360)` | whether it is always the same error |
-| `Liveness probe failed` in events | read `references/probe-failures.md` | probe too strict vs app really hung |
+| `Liveness probe failed` in events | `read_skill_file(..., path="references/probe-failures.md")` | probe too strict vs app really hung |
 | `CreateContainerConfigError` | events in `describe_pod` | a missing Secret or ConfigMap key |
 | exit 137 WITHOUT OOMKilled | events | killed by a failing liveness probe or by eviction |
 

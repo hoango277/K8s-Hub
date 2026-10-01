@@ -92,14 +92,17 @@ export interface PlanEvent extends BaseEvent {
 }
 
 /**
- * The stream pauses waiting for a human to approve.
- * After this event the SSE stream does NOT end; it hangs waiting.
- * The client calls POST /approvals/{approval_id}/approve|reject in a separate request.
+ * The assistant proposed a cluster change; it waits for a human decision.
+ * Sent while the proposing tool call runs (same `tool_call_id`). The stream
+ * does NOT pause: the decision happens later via POST /approvals/{id}/approve
+ * or /reject, and the card reads the live status from GET /approvals/{id}.
  */
 export interface ApprovalRequiredEvent extends BaseEvent {
   type: "approval_required";
   approval_id: string;
-  /** E.g. "Scale api from 1 to 3 replicas" */
+  /** The tool call that proposed it (tool_call_start.id) */
+  tool_call_id?: string;
+  /** E.g. "Scale deployment shop/api from 1 to 3 replicas" */
   summary: string;
   /** Before/after comparison, as a unified YAML diff */
   diff: string;
@@ -108,7 +111,7 @@ export interface ApprovalRequiredEvent extends BaseEvent {
   dry_run_output?: string;
 }
 
-/** The user has decided. Sent right before the stream continues. */
+/** Reserved: a decision pushed over a live stream. Not sent today. */
 export interface ApprovalResolvedEvent extends BaseEvent {
   type: "approval_resolved";
   approval_id: string;
@@ -118,7 +121,7 @@ export interface ApprovalResolvedEvent extends BaseEvent {
   reason?: string;
 }
 
-/** Result of re-checking after an action was applied to the cluster. */
+/** Reserved: verification pushed over a live stream. Not sent today — see GET /approvals/{id}. */
 export interface VerifyResultEvent extends BaseEvent {
   type: "verify_result";
   ok: boolean;

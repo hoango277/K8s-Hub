@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -26,6 +27,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.schemas.events import (
+    ApprovalRequiredEvent,
     ErrorEvent,
     EventStream,
     ThinkingEvent,
@@ -55,6 +57,8 @@ class ToolCallRecord:
     status: str = "running"
     error: str | None = None
     duration_ms: int | None = None
+    # Set when the call proposed a cluster change (approval flow).
+    approval_id: str | None = None
 
     # Used to compute the duration; the system clock can be adjusted, so we
     # don't take the difference of two datetime stamps.
@@ -70,6 +74,7 @@ class ToolCallRecord:
             "error": self.error,
             "duration_ms": self.duration_ms,
             "started_at": self.started_at,
+            "approval_id": self.approval_id,
         }
 
 
@@ -81,6 +86,18 @@ class StreamCollector:
 
     # The model's own thinking. Empty when the provider doesn't expose reasoning.
     reasoning: str = ""
+    # The same reasoning split where tool calls happened, in order:
+    # [{"text": ..., "at_tool": k}] = this thought came after the first k tool
+    # calls. Lets the chat show "thought → tool → thought → tool" after a reload
+    # instead of one blob of reasoning above every call.
+    reasoning_steps: list[dict[str, Any]] = field(default_factory=list)
+
+    def add_reasoning(self, text: str) -> None:
+        at = len(self.tool_calls)
+        if self.reasoning_steps and self.reasoning_steps[-1]["at_tool"] == at:
+            self.reasoning_steps[-1]["text"] += text
+        else:
+            self.reasoning_steps.append({"text": text, "at_tool": at})
 
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
     prompt_tokens: int | None = None
@@ -123,9 +140,12 @@ def _text_of(content: Any) -> str:
 def _reasoning_of(chunk: Any) -> str:
     """Extract the REASONING from a message chunk, if the provider sent any.
 
-    It lives in two different places depending on the provider:
+    It lives in different places depending on the provider and library version:
       - Groq / OpenAI-compatible APIs: additional_kwargs['reasoning_content']
-      - Google Gemini: content blocks with type='text' plus thought=True
+      - Gemini, langchain-google-genai 4.x: blocks {"type": "thinking", "thinking": ...}
+        (missed until 01/10/2026: Gemini thought, the chat showed nothing)
+      - LangChain standard blocks: {"type": "reasoning", "reasoning": ...}
+      - Gemini, older library versions: blocks with type='text' plus thought=True
 
     If there is none, return an empty string — the caller takes that to mean
     this model doesn't expose reasoning, and simply sends no event.
@@ -141,7 +161,10 @@ def _reasoning_of(chunk: Any) -> str:
         for block in content:
             if not isinstance(block, dict):
                 continue
-            if block.get("thought") and block.get("type") == "text":
+            kind = block.get("type")
+            if kind in ("thinking", "reasoning"):
+                parts.append(str(block.get(kind) or ""))
+            elif block.get("thought") and kind == "text":
                 parts.append(str(block.get("text", "")))
         return "".join(parts)
     return ""
@@ -185,6 +208,9 @@ async def stream_graph_events(
     happened.
     """
     running: dict[str, ToolCallRecord] = {}
+    # call_id -> the tool run's parent run ids, to find which call a custom
+    # event (dispatched from inside the tool) belongs to.
+    parents: dict[str, list[str]] = {}
     text_parts: list[str] = []
     reasoning_parts: list[str] = []
 
@@ -201,6 +227,7 @@ async def stream_graph_events(
                 reasoning = _reasoning_of(chunk)
                 if reasoning:
                     reasoning_parts.append(reasoning)
+                    collector.add_reasoning(reasoning)
                     yield stream.emit(ThinkingEvent(content=reasoning))
 
                 text = _text_of(getattr(chunk, "content", ""))
@@ -235,6 +262,7 @@ async def stream_graph_events(
                     started_at=datetime.now(UTC),
                 )
                 running[call_id] = record
+                parents[call_id] = [str(p) for p in event.get("parent_ids") or []]
                 collector.tool_calls.append(record)
 
                 yield stream.emit(
@@ -271,6 +299,24 @@ async def stream_graph_events(
                     )
                 )
 
+            # --- A write tool proposed a change (tools/builtin/actions.py) ---
+            elif kind == "on_custom_event" and event["name"] == "approval_required":
+                data = event.get("data") or {}
+                call_id = _owning_call(event, running, parents, tool=data.get("tool"))
+                record = running.get(call_id) if call_id else None
+                if record is not None:
+                    record.approval_id = data.get("approval_id")
+                yield stream.emit(
+                    ApprovalRequiredEvent(
+                        approval_id=str(data.get("approval_id")),
+                        tool_call_id=call_id if record is not None else None,
+                        summary=str(data.get("summary") or ""),
+                        diff=str(data.get("diff") or ""),
+                        danger_level=data.get("danger_level") or "caution",
+                        dry_run_output=data.get("dry_run_output"),
+                    )
+                )
+
     except asyncio.CancelledError:
         # The user closed the tab or pressed stop. Not an error — let the
         # caller take care of saving what was said so far.
@@ -280,7 +326,9 @@ async def stream_graph_events(
 
     except Exception as exc:
         logger.exception("Chat stream failed")
-        collector.error = f"{type(exc).__name__}: {exc}"
+        # Stored and shown after a reload: the same readable sentence as the
+        # live event, never the provider's raw JSON (that goes to the log above).
+        collector.error = _error_message(exc)
         yield stream.emit(
             ErrorEvent(
                 code=_error_code(exc),
@@ -307,6 +355,31 @@ async def stream_graph_events(
 # --------------------------------------------------------------------------
 
 
+def _owning_call(
+    event: dict[str, Any],
+    running: dict[str, ToolCallRecord],
+    parents: dict[str, list[str]],
+    *,
+    tool: str | None,
+) -> str | None:
+    """Which running tool call dispatched this custom event.
+
+    Not simply the event's run_id: a tool dispatches with the `config` it was
+    injected, which belongs to the ToolNode run — the tool call's PARENT (seen
+    with LangGraph 1.x). So match a running call whose parents include that
+    run, preferring the one with the tool name the event carries (parallel
+    calls share the same ToolNode run).
+    """
+    run_id = str(event.get("run_id") or "")
+    if run_id in running:
+        return run_id
+    candidates = [cid for cid in running if run_id and run_id in parents.get(cid, [])]
+    named = [cid for cid in candidates if running[cid].name == tool]
+    if named or candidates:
+        return (named or candidates)[0]
+    return None
+
+
 def _error_code(exc: Exception) -> str:
     type_name = type(exc).__name__.lower()
     text = str(exc).lower()
@@ -325,15 +398,44 @@ def _error_code(exc: Exception) -> str:
 def _error_message(exc: Exception) -> str:
     """The sentence shown to the user. Technical details go to the server log."""
     code = _error_code(exc)
+    text = str(exc)
+    if code == "llm_rate_limit":
+        wait = re.search(r"try again in ([0-9hms.]+)", text)
+        # The captured duration ends the provider's sentence: drop its period.
+        retry = wait.group(1).rstrip(".") if wait else ""
+        when = f" Try again in {_round_wait(retry)}" if retry else " Wait and try again"
+        if "tokens per day" in text or "(TPD)" in text:
+            return f"This model's daily token quota is used up.{when}, or pick another model."
+        return f"Hit the provider's rate limit.{when}."
+    if "413" in text or "too large" in text.lower():
+        return (
+            "The request was too large for this model. Ask about a narrower scope (one "
+            "namespace, one app), or pick a model with a larger context."
+        )
     return {
         "llm_timeout": "The model took too long to respond. Try again or switch to a faster model.",
-        "llm_rate_limit": "Hit the provider's rate limit. Wait a moment and try again.",
         "llm_auth": "Invalid API key. Check it in Settings.",
         "agent_loop": (
             "The assistant called tools too many times without reaching an answer. "
             "Try a more specific question."
         ),
-    }.get(code, f"Error while processing: {exc}")
+    }.get(
+        code,
+        "Something went wrong while answering. Try again; if it keeps happening, "
+        "check the server log.",
+    )
+
+
+def _round_wait(raw: str) -> str:
+    """'26m55.68s' -> '27 min', '41.2s' -> '42 s'."""
+    m = re.fullmatch(r"(?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?", raw)
+    if not m:
+        return raw
+    h, mins, sec = (float(x) if x else 0.0 for x in m.groups())
+    total = h * 3600 + mins * 60 + sec
+    if total >= 60:
+        return f"{int(-(-total // 60))} min"
+    return f"{int(-(-total // 1))} s"
 
 
 def _is_retryable(exc: Exception) -> bool:

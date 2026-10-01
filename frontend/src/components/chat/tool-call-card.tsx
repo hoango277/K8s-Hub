@@ -11,6 +11,8 @@ export interface ToolCallView {
   result?: string | null;
   error?: string | null;
   durationMs?: number | null;
+  /** Set when the call proposed a cluster change. */
+  approvalId?: string | null;
 }
 
 const STATUS_LABEL: Record<ToolCallView["status"], string> = {
@@ -53,13 +55,13 @@ function StatusIcon({ status }: { status: ToolCallView["status"] }) {
 }
 
 /**
- * Collapsible card for a single tool call.
+ * Collapsible card for a single tool call, shown inside the activity block.
  *
  * Collapsed by default: the user only needs to know what the assistant looked
  * up. Expanding shows the full arguments and result — which is exactly what
  * answers "why did it conclude that?".
  */
-export function ToolCallCard({ call }: { call: ToolCallView }) {
+export function ToolCallDetails({ call }: { call: ToolCallView }) {
   const [open, setOpen] = useState(false);
   const hasArgs = Object.keys(call.args).length > 0;
   const hasDetails = hasArgs || Boolean(call.result || call.error);

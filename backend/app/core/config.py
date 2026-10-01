@@ -229,8 +229,9 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str = Field(default="", description="Google AI Studio API key")
 
     # --- Kubernetes ---
-    KUBECONFIG: str | None = None
-    K8S_IN_CLUSTER: bool = False
+    # No KUBECONFIG / K8S_IN_CLUSTER setting: the Kubernetes client finds its
+    # credentials like kubectl — the pod's ServiceAccount when running as a pod,
+    # otherwise the kubectl kubeconfig (app/integrations/k8s/client.py).
     # read_only | require_approval | auto
     K8S_EXECUTION_MODE: Literal["read_only", "require_approval", "auto"] = Field(
         default="require_approval",
@@ -242,6 +243,34 @@ class Settings(BaseSettings):
     K8S_ALLOWED_NAMESPACES: list[str] = Field(
         default=[],
         description="Only operate in these namespaces. Leave empty to allow all",
+    )
+    APPROVAL_TTL_MINUTES: int = Field(
+        default=60,
+        ge=5,
+        le=1440,
+        description=(
+            "A proposed change must be approved within this many minutes, "
+            "or it expires (the cluster may have changed since the dry-run)"
+        ),
+    )
+
+    # --- Sandbox: where commands and skill scripts run ---
+    # local: a subprocess on the backend (a developer machine, or the backend
+    # pod itself) — guard rails only, no isolation.
+    # kubernetes: `kubectl exec` into the sandbox pod (deploy/sandbox/), which
+    # has no access to the backend's secrets and its own, narrower identity.
+    SANDBOX_BACKEND: Literal["local", "kubernetes"] = Field(
+        default="local",
+        description=(
+            "local: run commands and skill scripts on the backend · "
+            "kubernetes: run them in the sandbox pod on the cluster"
+        ),
+    )
+    SANDBOX_NAMESPACE: str = Field(
+        default="k8s-hub-sandbox", description="Namespace of the sandbox pod"
+    )
+    SANDBOX_SELECTOR: str = Field(
+        default="app=k8s-hub-sandbox", description="Label selector that finds the sandbox pod"
     )
 
     # --- Observability data sources ---
@@ -363,6 +392,9 @@ RUNTIME_EDITABLE: frozenset[str] = frozenset(
         # Kubernetes — editable because it only affects per-operation checks
         "K8S_EXECUTION_MODE",
         "K8S_ALLOWED_NAMESPACES",
+        "APPROVAL_TTL_MINUTES",
+        # Read on every command / script run, so switching takes effect at once.
+        "SANDBOX_BACKEND",
         # PROMETHEUS_URL / LOKI_URL / TEMPO_URL are DELIBERATELY not here: infrastructure
         # addresses on the lab1 cluster, set once in .env and not meant to be
         # changed from a web page.

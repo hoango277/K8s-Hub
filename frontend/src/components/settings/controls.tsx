@@ -5,6 +5,7 @@ import { Eye, ShieldCheck, TriangleAlert, X, Zap } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { inputClass } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { EXECUTION_MODES, type FieldMeta, type ModeOption } from "@/components/settings/meta";
 import { cn } from "@/lib/utils";
 import type { SettingField } from "@/types/settings";
@@ -349,6 +350,23 @@ export function GenericControl({ id, field, value, onChange, invalid, describedB
         invalid={invalid}
         describedBy={describedBy}
       />
+    );
+  }
+  if (field.options?.length) {
+    // A fixed set of values (e.g. SANDBOX_BACKEND): a list, not free text.
+    return (
+      <Select value={String(value ?? "")} onValueChange={onChange}>
+        <SelectTrigger id={id} aria-describedby={describedBy} className="w-full justify-between sm:w-56">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {field.options.map((o) => (
+            <SelectItem key={o} value={o}>
+              {o}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     );
   }
   return (

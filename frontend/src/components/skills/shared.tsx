@@ -57,6 +57,42 @@ export function validateSkillFilePath(raw: string, existing: string[]): string |
   return null;
 }
 
+// Custom CLI tools — the same rules as backend/app/services/tool_service.py.
+const TOOL_NAME_RE = /^[a-z][a-z0-9_]{1,39}$/;
+const COMMAND_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const PREFIX_RE = /^[A-Za-z0-9:._-]+( [A-Za-z0-9:._-]+){0,3}$/;
+export const READ_PREFIXES_MAX = 30;
+
+export function validateToolName(raw: string, taken: string[]): string | null {
+  const name = raw.trim();
+  if (!name) return "Enter a name.";
+  if (!TOOL_NAME_RE.test(name))
+    return "Use 2–40 characters: lowercase letters, digits and _, starting with a letter.";
+  if (taken.includes(name)) return "A tool with this name already exists.";
+  return null;
+}
+
+export function validateCommand(raw: string): string | null {
+  const command = raw.trim();
+  if (!command) return "Enter the program, e.g. kubectl.";
+  if (!COMMAND_RE.test(command)) return "Only the program name — no path, no spaces, no arguments.";
+  return null;
+}
+
+/** One read-only subcommand per line → list, or the first problem found. */
+export function parseReadPrefixes(raw: string): { prefixes: string[]; error: string | null } {
+  const prefixes = raw
+    .split("\n")
+    .map((l) => l.trim().split(/\s+/).join(" "))
+    .filter(Boolean);
+  if (prefixes.length > READ_PREFIXES_MAX)
+    return { prefixes, error: `At most ${READ_PREFIXES_MAX} subcommands.` };
+  const bad = prefixes.find((p) => !PREFIX_RE.test(p));
+  if (bad) return { prefixes, error: `“${bad}” isn't 1–4 plain words (e.g. get, rollout status).` };
+  return { prefixes, error: null };
+}
+
+// MCP servers — the same rules as backend/app/services/tool_service.py.
 const MCP_NAME_RE = /^[a-z][a-z0-9-]{1,31}$/;
 
 export function validateServerName(raw: string): string | null {
@@ -80,10 +116,6 @@ export function validateServerUrl(raw: string): string | null {
   if (url.length > 500) return "Use at most 500 characters.";
   return null;
 }
-
-// ---------------------------------------------------------------------------
-// Formatting
-// ---------------------------------------------------------------------------
 
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;

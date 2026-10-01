@@ -1,13 +1,16 @@
-"""Tool catalog state, external MCP servers, and the history of manual tool runs.
+"""Tool catalog state, custom tools, and the history of manual tool runs.
 
 What is NOT stored: the built-in tools themselves (they are code, in
 app/modules/tools/builtin/). Only what changes at runtime lives here:
-  - `tool_settings`: enabled/disabled per tool, and the danger level an
-    engineer assigned to an external tool;
-  - `mcp_servers` + `mcp_tools`: which servers are connected and the tools
-    they last reported, so the catalog still shows them when a server is down;
+  - `tool_settings`: enabled/disabled per tool;
+  - `custom_tools`: CLI tools engineers define on the web (kubectl-ai style);
   - `tool_runs`: who ran which tool from the Tools tab, with what input,
     and what came back. Chat tool calls are already in `tool_calls` + Langfuse.
+
+  - `mcp_servers` + `mcp_tools`: external MCP servers an engineer connected,
+    the tools they last reported, and each tool's policy (enabled, needs
+    approval). Removed on 30/09/2026, back on 01/10/2026 behind engineer-only
+    management and a per-tool approval choice.
 """
 
 from __future__ import annotations
@@ -30,13 +33,46 @@ class ToolSetting(Base):
 
     name: Mapped[str] = mapped_column(String(TOOL_NAME_MAX), primary_key=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    # read | write | destructive — only used for external (MCP) tools.
-    danger: Mapped[str | None] = mapped_column(String(16), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
     updated_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class CustomTool(Base):
+    """A CLI wrapped as a tool, as kubectl-ai's custom tools are.
+
+    The model writes the ARGUMENTS (never the program): `command` is fixed
+    here. A call whose arguments start with one of `read_only_prefixes` runs
+    at once in the sandbox; anything else is a change and goes through the
+    approval flow (dry-run where the CLI supports it, then a human decides).
+    """
+
+    __tablename__ = "custom_tools"
+
+    # Becomes the model's tool name, so a slug; unique across all tools.
+    name: Mapped[str] = mapped_column(String(TOOL_NAME_MAX), primary_key=True)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    # When to use it — what the model reads to decide.
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    # The program, e.g. "kubectl", "helm". One word, no path, no arguments.
+    command: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Syntax and examples for the model (kubectl-ai's `command_desc`).
+    usage: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # e.g. ["get", "describe", "logs", "rollout status"]
+    read_only_prefixes: Mapped[Any] = mapped_column(JSONB, nullable=False, default=list)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
 
@@ -52,12 +88,21 @@ class McpServer(Base):
     token_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     refreshed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 
 class McpTool(Base):
+    """A tool the server reported, with the policy an engineer set for it.
+
+    Defaults are the safe side: disabled, and every call waits for approval.
+    `read_only_hint` is what the SERVER claims — shown, never trusted.
+    """
+
     __tablename__ = "mcp_tools"
 
     server_id: Mapped[uuid.UUID] = mapped_column(
@@ -66,8 +111,15 @@ class McpTool(Base):
     name: Mapped[str] = mapped_column(String(128), primary_key=True)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     input_schema: Mapped[Any] = mapped_column(JSONB, nullable=False)
-    # What the SERVER claims. Shown as a hint, never trusted for safety.
     read_only_hint: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    requires_approval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    policy_updated_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    policy_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class ToolRun(Base):

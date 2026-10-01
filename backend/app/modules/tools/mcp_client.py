@@ -6,7 +6,8 @@ proxy drops idle connections. Opening one costs a single extra round trip.
 
 Nothing an MCP server says about itself is trusted for safety decisions: its
 `readOnlyHint` is shown to the engineer as a hint only. Every external tool
-starts DISABLED and marked WRITE until someone reviews it (see registry.py).
+starts DISABLED and REQUIRING APPROVAL; only an engineer/admin can enable it
+or let it run without approval (see registry.py and tool_service.py).
 """
 
 from __future__ import annotations

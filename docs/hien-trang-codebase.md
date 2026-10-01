@@ -1,6 +1,6 @@
 # Hiện trạng codebase K8s Hub
 
-*Báo cáo đọc mã, cập nhật ngày 25/09/2026 (lần 7). Mô tả những gì ĐANG CÓ trong kho, không phải kế hoạch.*
+*Báo cáo đọc mã, cập nhật ngày 01/10/2026 (lần 9). Mô tả những gì ĐANG CÓ trong kho, không phải kế hoạch.*
 
 ---
 
@@ -8,7 +8,8 @@
 
 K8s Hub được thiết kế quanh 4 use case: ra lệnh Kubernetes bằng ngôn ngữ tự nhiên, phân tích
 nguyên nhân gốc (RCA), thư viện skill/runbook, và giám sát chính con AI. Kho mã đã dựng **đầy đủ
-bộ khung thư mục cho cả 4**, nhưng mới **một use case chạy thật**.
+bộ khung thư mục cho cả 4**. Chạy thật: ra lệnh bằng ngôn ngữ tự nhiên (đọc cụm + đề xuất thay
+đổi qua phê duyệt) và thư viện skill; RCA vẫn là khung.
 
 | Mảng | Tình trạng |
 |---|---|
@@ -16,17 +17,19 @@ bộ khung thư mục cho cả 4**, nhưng mới **một use case chạy thật*
 | Tầng cấu hình (đa nhà cung cấp LLM, đổi nóng) | **Chạy được**, có test, khá hoàn chỉnh |
 | Lưu hội thoại vào PostgreSQL + migration | **Chạy được** |
 | Trang Cấu hình trên web | **Chạy được** — lưu xuống Postgres, có lịch sử thay đổi và trạng thái kết nối |
-| Kết nối Kubernetes | Client + 5 tool đọc **viết xong**, chưa chạy thật (thiếu `KUBECONFIG` của lab1) |
+| Kết nối Kubernetes | Client + 7 tool đọc (kể cả đọc **mọi loại tài nguyên**, trừ Secret) **chạy thật trên lab1** (không có biến nào trong `.env`: trong pod dùng ServiceAccount, ngoài pod dùng kubeconfig của kubectl) |
+| Thay đổi cụm qua phê duyệt | **Chạy được**: 5 tool ghi chỉ ĐỀ XUẤT → dry-run phía server + diff → engineer duyệt/từ chối (thẻ trong chat + trang Approvals) → thực thi → kiểm tra lại. Đã kiểm thật trên lab1 cả duyệt → thực thi → kiểm tra lại |
+| Sandbox chạy lệnh/script | **Chạy thật** cả `local` và `kubernetes` (pod sandbox đã apply lên lab1 ngày 30/09/2026) |
 | Đọc trace ứng dụng trên cụm (Grafana Tempo) | **Chạy được đầu-cuối**: 3 công cụ cho trợ lý, đã thử với Tempo thật trên lab1 |
 | RCA | Chỉ có khung file |
-| Skills (chuẩn Agent Skills) + Tools + MCP | **Backend chạy được đầu-cuối** (skill mẫu, tool metrics/logs/traces chạy thật trên lab1, kết nối MCP server) và **giao diện chạy được**, đã kiểm bằng trình duyệt thật |
+| Skills (chuẩn Agent Skills) + Tools + custom CLI tool | **Chạy được đầu-cuối** (skill mẫu, tool metrics/logs/traces chạy thật trên lab1, custom tool kiểu kubectl-ai thêm/sửa/xoá trên web). **MCP server bên ngoài**: bỏ 30/09, thêm lại 01/10/2026 — chỉ engineer/admin kết nối, chọn từng tool có cần phê duyệt; đã kiểm đầu-cuối với một MCP server thật chạy cục bộ |
 | Tracing: OTel + Langfuse | **Chạy thật** với Langfuse trên `lab1:30400`, đã kiểm trace đầu-cuối |
-| Audit log, đo lường chất lượng | Chỉ có khung file |
+| Audit log, đo lường chất lượng | Bảng `approvals` là nhật ký mọi thay đổi cụm (ai đề xuất, ai duyệt, kết quả); `audit_log.py` và đo lường chất lượng vẫn là khung |
 | Đăng nhập, phân quyền (JWT, 3 vai trò) | **Chạy được đầu-cuối** (backend + frontend), đã kiểm qua HTTP thật |
 | Quản trị người dùng (trang `/users`) | **Chạy được**, đã kiểm bằng trình duyệt thật |
 
-Về khối lượng: backend có ~5.300 dòng Python, nhưng **57 file chỉ chứa một dòng docstring
-kèm `TODO`** (không tính `__init__.py`). Frontend có 19 component/hook/type ở dạng khung rỗng — nhưng
+Về khối lượng: backend có 140 file, ~12.700 dòng Python; **32 file chỉ chứa một dòng docstring
+kèm `TODO`** (không tính `__init__.py`), gần hết thuộc RCA. Frontend có 16 component/hook/type ở dạng khung rỗng — nhưng
 không còn **trang** nào trắng: trang chưa có tính năng hiện mô tả những gì nó sẽ làm. Nghĩa là cấu
 trúc dự án đã được nghĩ xong và đóng cọc sẵn; phần thịt mới đắp vào một nhánh.
 
@@ -51,16 +54,16 @@ K8s-Hub/
 │   ├── app/api/v1/   10 router: chat, auth, users, settings, health (thật) + 5 router rỗng
 │   ├── app/core/     config.py (trung tâm hệ thống), security.py (JWT, bcrypt) + 3 file khung
 │   ├── app/db/       models users/refresh_tokens/chat_threads/messages/tool_calls + session
-│   ├── app/integrations/  llm/ (xong) · k8s, prometheus, loki (khung)
-│   ├── app/modules/  nl_command (một phần) · observability (tracing xong) · rca, skills (khung)
+│   ├── app/integrations/  llm, k8s (client + resources + diff), prometheus, loki, tempo (xong) · k8s/rbac (khung)
+│   ├── app/modules/  nl_command (agent + pipeline phê duyệt), tools, skills, sandbox (xong) · observability (tracing xong) · rca (khung)
 │   ├── app/schemas/  events.py, chat.py, auth.py (xong) + 5 file khung
 │   ├── app/services/ thread, auth, user service (xong) + 2 file khung
-│   ├── migrations/   5 revision Alembic
-│   └── tests/unit/   14 file test (226 test, đều xanh)
+│   ├── migrations/   8 revision Alembic
+│   └── tests/unit/   18 file test (322 test, đều xanh)
 ├── frontend/         Next.js 16 + React 19 + Tailwind v4 + TanStack Query
-│   └── src/          đăng nhập, chat, người dùng, cấu hình làm thật; 4 trang còn lại là "sắp có"
+│   └── src/          đăng nhập, chat, skills/tools, approvals, người dùng, cấu hình làm thật; RCA và giám sát AI là "sắp có"
 │       └── components/ui/  bộ component nền theo quy chuẩn UI/UX trong CLAUDE.md
-├── deploy/helm/      thư mục rỗng — chưa có manifest triển khai
+├── deploy/           helm/ rỗng · dev-workspace/ (pod code-server, chưa apply) · sandbox/ (pod sandbox, đã apply)
 ├── .claude/skills/   cap-nhat-hien-trang — quy trình cập nhật chính tài liệu này
 └── docs/             3 file kế hoạch .xlsx + báo cáo này
 ```
@@ -170,12 +173,14 @@ Các bảng đã có model và migration:
 | `users` | Chủ sở hữu hội thoại. Có `password_hash` (nullable — tài khoản OAuth-only sau này sẽ không có), `role`, `last_login_at` |
 | `refresh_tokens` | Phiên đăng nhập có thể thu hồi — xem mục 3.8 |
 | `chat_threads` | Một hội thoại. `last_message_at` tách khỏi `updated_at` để sửa tiêu đề không làm hội thoại nhảy lên đầu |
-| `messages` | Có `reasoning`, `trace_id`, `provider`, `model`, `prompt_tokens`, `completion_tokens`, `latency_ms` |
-| `tool_calls` | Bảng riêng chứ không nhét JSON vào `messages`, để thống kê "công cụ nào hay lỗi nhất" chỉ cần một câu truy vấn |
+| `messages` | Có `reasoning` (và `reasoning_steps`: suy nghĩ chia theo từng lần gọi tool, để hiện đúng thứ tự sau khi tải lại), `trace_id`, `provider`, `model`, `prompt_tokens`, `completion_tokens`, `latency_ms` |
+| `tool_calls` | Bảng riêng chứ không nhét JSON vào `messages`, để thống kê "công cụ nào hay lỗi nhất" chỉ cần một câu truy vấn. `approval_id` nối lời gọi với đề xuất nó tạo ra |
 | `settings_overrides` | Giá trị đổi trên trang Cấu hình (JSONB; khoá API lưu dạng `{"enc": ...}`), `updated_by` |
 | `settings_changes` | Lịch sử chỉ-ghi-thêm: ai, lúc nào, trường nào, từ gì sang gì (khoá API chỉ ghi "đã đổi") |
-| `tool_settings` | Bật/tắt từng tool, mức nguy hiểm engineer gán cho tool MCP |
-| `mcp_servers`, `mcp_tools` | MCP server đã kết nối (token **mã hoá**) và danh sách tool nó báo lần gần nhất — catalog vẫn hiện khi server tạm chết |
+| `tool_settings` | Bật/tắt từng tool có sẵn |
+| `mcp_servers`, `mcp_tools` | MCP server engineer đã kết nối (token **mã hoá**), tool nó báo lần gần nhất, và **chính sách từng tool**: `enabled`, `requires_approval` (mặc định tắt + cần duyệt), ai đổi lần cuối. Làm mới server giữ nguyên chính sách của tool cũ |
+| `custom_tools` | Custom CLI tool tạo trên web: chương trình, mô tả, cách dùng, danh sách lệnh con chỉ đọc, giới hạn thời gian |
+| `approvals` | Mỗi thay đổi cụm được đề xuất: kế hoạch chính xác (`plan`), diff, kết quả dry-run, trạng thái, ai đề xuất/duyệt, kết quả chạy, kết quả kiểm tra lại, hội thoại gốc. Không bao giờ xoá |
 | `tool_runs` | Lần chạy tool từ trang Skills (tab Tools) |
 | `skills`, `skill_files` | Skill tạo/import trên web (file lưu dạng bytes, đúng bố cục thư mục chuẩn) + trạng thái bật/tắt của cả skill có sẵn |
 | `skill_runs` | Mọi lần chạy script của skill (từ chat hay từ web): ai, script, tham số, exit code, output |
@@ -204,6 +209,35 @@ prop nguy hiểm của `ConfirmDialog` là `destructive`.
 
 - `chat-panel.tsx` — danh sách hội thoại, tạo/xoá, chọn model, khung chat streaming, nhớ hội thoại
   đang mở qua localStorage.
+- `activity-block.tsx` — suy nghĩ và mọi lần gọi tool của một lượt gộp thành **một dòng thu gọn**
+  ("Reasoned · used 5 tools"; lúc đang chạy thì "Running list_pods"), mở ra thấy dòng thời gian
+  suy nghĩ → tool → suy nghĩ đúng thứ tự (kể cả sau khi tải lại, nhờ `reasoning_steps`). Thay cho
+  khối suy nghĩ riêng ở đầu cộng một thẻ cho mỗi tool: trước đây kiểm tra sức khoẻ namespace gọi 5
+  tool là đẩy câu trả lời ra khỏi màn hình, và suy nghĩ giữa hai lần gọi tool bị dồn lên khối đầu.
+  `thinking-block.tsx` đã xoá. Thẻ phê duyệt vẫn luôn hiện ngoài khối gộp.
+- `waiting-indicator.tsx` — trong lúc chưa có chữ trả lời: chấm phát sóng + nhãn theo giai đoạn
+  (Connecting → Thinking → Running `list_pods` → **Reading the results**) + đồng hồ giây (từ giây thứ 3),
+  sau 20 giây thêm "larger models can take up to a minute"; lúc mới gửi có 3 dòng khung xương. Lấp
+  khoảng trống sau khi tool xong: đo trên lab1, Qwen im lặng ~47 giây ở đây trước chữ đầu tiên. Tắt chuyển
+  động khi `prefers-reduced-motion` (`k8s-orb`, `k8s-skeleton` trong `globals.css`). Tiêu đề khối hoạt
+  động không còn nhấp nháy trùng ("Working · N tools so far").
+- `approval-card.tsx` + `manifest-diff.tsx` — thẻ "Proposed change" dưới lời gọi tool ghi: tiêu
+  đề, mức nguy hiểm, trạng thái sống (tự hỏi lại khi đang chờ/đang chạy), diff tô màu kèm dấu +/−,
+  nút Approve (qua `ConfirmDialog`, đỏ nếu nguy hiểm) / Reject (hộp thoại có ô lý do); người không
+  có quyền chỉ thấy "đang chờ engineer". Tin nhắn `system` (ghi chú kết quả duyệt) hiện thành dòng
+  ghi chú giữa hội thoại. Khi hội thoại được tải lại giữa lúc đang stream, bản sao của lượt đang
+  chạy bị ẩn để không hiện trùng.
+- `approvals/approvals-page.tsx` — trang Approvals: lọc Waiting/Executed/Failed/Rejected/Expired/All,
+  mỗi mục là một thẻ phê duyệt, "Load more"; sidebar có huy hiệu số đề xuất đang chờ (chỉ
+  engineer/admin thấy). `ToastProvider` chuyển lên layout `(app)` để mọi trang dùng được.
+- `skills/custom-tool-dialog.tsx` — tạo/sửa custom tool, chọn mẫu kubectl/helm, kiểm tra từng ô
+  phía client đúng quy tắc backend; tab Tools có nhóm "Custom tools" (trống thì có hướng dẫn),
+  nút sửa/xoá (xoá qua `ConfirmDialog`). Đã bỏ tab "MCP servers".
+- `message-list.tsx` — màn hình chat trống: gợi ý câu hỏi **theo tool đang bật** (mỗi gợi ý ghi tool
+  nó cần, ví dụ `list_pods`, `pod_metrics`, `search_traces`; tool tắt/không dùng được thì gợi ý đó bị
+  ẩn, câu hỏi kiến thức chung bù vào). Không còn in tên từng tool (15 chip trên một dòng làm tràn
+  trang ở 390px); thay bằng "N tools ready for the assistant · See tools & skills" dẫn tới
+  `/skills#tools`, tự xuống dòng.
 - `message-item.tsx`, `thinking-block.tsx`, `tool-call-card.tsx`, `markdown.tsx` — hiển thị câu trả
   lời, khối suy luận có đếm thời gian, thẻ gọi công cụ kèm tham số và kết quả.
 - `model-picker.tsx` + `use-models.ts` — chọn nhà cung cấp và model cho riêng một lượt chat; lựa
@@ -235,10 +269,10 @@ prop nguy hiểm của `ConfirmDialog` là `destructive`.
 - `account/account-page.tsx` — trang Tài khoản (bấm tên trên header để mở): hồ sơ, **tự sửa tên hiển
   thị** (mọi vai trò, qua `PATCH /auth/me` — schema chỉ nhận `display_name`, gửi kèm `role` bị 422)
   và form đổi mật khẩu với ô nhập lại, kiểm trước độ dài và khớp nhau ngay dưới từng ô.
-- `skills/*` — trang **Skills** (`/skills`), bốn mục theo URL hash: **Skills** (thẻ skill, bật/tắt,
+- `skills/*` — trang **Skills** (`/skills`), ba mục theo URL hash: **Skills** (thẻ skill, bật/tắt,
   "New skill", "Import .zip"), **Tools** (theo nhóm, mức nguy hiểm có chữ, trạng thái "In chat /
-  Disabled / Unavailable: lý do", bật/tắt, chọn mức nguy hiểm cho tool MCP, **"Try it"** dựng form từ
-  JSON schema của tool rồi chạy thật), **MCP servers** (thêm/làm mới/bật-tắt/gỡ), **Run history**
+  Disabled / Unavailable: lý do", bật/tắt, "New tool" + sửa/xoá custom tool, **"Try it"** dựng form từ
+  JSON schema của tool rồi chạy thật — tool ghi thì chỉ tạo đề xuất), **Run history**
   (script của skill và tool chạy tay). Trang chi tiết `/skills/[name]`: cây file (SKILL.md, scripts/,
   references/, assets/), xem Markdown hoặc sửa (skill tuỳ chỉnh, engineer+), thêm/xoá file, **chạy
   script** kèm tham số và xem output, Export `.zip`, xoá skill. Thành phần UI mới dùng chung:
@@ -267,11 +301,14 @@ Hai tầng tách bạch (quy tắc ở mục "Skill và Tool" trong `CLAUDE.md`)
 | Nhóm | Tool | Nguồn | Trạng thái |
 |---|---|---|---|
 | Hệ thống | `system_info`, `current_time` | — | luôn có |
-| Kubernetes | `list_pods`, `describe_pod`, `get_pod_logs`, `list_events`, `list_deployments` | Kubernetes API (`kubernetes_asyncio`) | **viết xong, chưa chạy thật**: cần `KUBECONFIG` của lab1 (kubeconfig trên máy dev đang trỏ tới cụm k3d khác) hoặc `K8S_IN_CLUSTER=true` |
+| Kubernetes | `list_pods`, `describe_pod`, `get_pod_logs`, `list_events`, `list_deployments` | Kubernetes API (`kubernetes_asyncio`) | **chạy thật trên lab1**; `list_pods` chia nhóm FAILING NOW / RESTARTED EARLIER / HEALTHY / COMPLETED |
 | Metrics | `pod_metrics` (cpu, memory, restarts, throttling, kèm % so với limit) | Prometheus | **chạy thật trên lab1** |
 | Logs | `search_logs` | Loki | **chạy thật trên lab1** |
 | Traces | `list_traced_services`, `search_traces`, `get_trace` | Tempo | chạy thật (đã kiểm bằng trace mẫu); Tempo chưa có trace thật |
-| Ngoài | công cụ của MCP server kết nối thêm | MCP (Streamable HTTP, gói `mcp` 2.x) | mặc định **tắt và "write"** tới khi engineer duyệt |
+| Mọi tài nguyên | `get_resources`, `describe_resource` (Service, Ingress, Node, PVC, HPA, CRD…; tên kind/plural/tên tắt như kubectl) | Kubernetes REST + discovery (`k8s/resources.py`) | **chạy thật trên lab1** (kể cả CRD của Cilium); Secret luôn bị từ chối |
+| Đề xuất thay đổi | `scale_workload`, `restart_workload`, `set_image`, `delete_pod`, `delete_resource`, `apply_manifest` | kế hoạch → dry-run → phê duyệt (mục 3.10) | chỉ tạo đề xuất; không có ở chế độ `read_only` |
+| MCP | tool của MCP server bên ngoài, tên `<server>__<tool>` | MCP Streamable HTTP (`mcp` 2.2) | **tắt + cần phê duyệt** tới khi engineer đổi; cần duyệt → đề xuất (thẻ hiện đúng tham số, không dry-run), không cần → gọi thẳng; chính sách đọc lúc gọi |
+| Custom | CLI do engineer khai trên web (mẫu: kubectl, helm) | sandbox (mục 3.10) | lệnh chỉ đọc chạy ngay, lệnh khác thành đề xuất; đã kiểm `kubectl get` và dry-run `kubectl scale` trên lab1 |
 
 Nguyên tắc chung cho tool đọc cụm: LLM **không bao giờ viết PromQL/LogQL/TraceQL** — truy vấn dựng từ
 mẫu cố định hoặc tham số đã kiểm (tên namespace/pod theo DNS-1123, chuỗi tìm trong LogQL được escape
@@ -288,12 +325,9 @@ progressive disclosure: chỉ tên + mô tả vào system prompt (mục AVAILABL
 khảo), `investigate-slow-requests`, `namespace-health-check` (có mẫu báo cáo trong `assets/`). Skill
 tạo/import trên web lưu Postgres (`skills`, `skill_files`), Import/Export `.zip` đúng chuẩn.
 
-**Script chạy thẳng trên backend** — quyết định của người dùng, thay cho sandbox. Hàng rào
-(`skills/scripts.py`): chỉ file trong `scripts/`, chỉ `.py` (Python của venv) và `.sh` (bash),
-không qua shell, môi trường tối giản (không mang khoá API, DATABASE_URL, JWT_SECRET), chạy trong thư
-mục tạm, giới hạn 60 giây và 10.000 ký tự output, ghi `skill_runs` cho mọi lần chạy (từ chat hay
-từ web). Đây **không phải cô lập**: script vẫn đọc được file backend đọc được — vì vậy chỉ engineer+
-được tạo/sửa skill.
+**Script chạy trong sandbox** (từ 30/09/2026; trước đó chạy thẳng trên backend). `skills/scripts.py`
+chỉ kiểm: file trong `scripts/`, chỉ `.py`/`.sh`, tối đa 20 tham số × 500 ký tự; rồi giao cho
+`modules/sandbox` (mục 3.10). Mọi lần chạy vẫn ghi `skill_runs`. Chỉ engineer+ được tạo/sửa skill.
 
 Đã kiểm đầu-cuối bằng LLM thật: hỏi "request tới k8s-hub-selftest-frontend chậm và lỗi 500, điều tra
 giúp" → trợ lý tự gọi `load_skill("investigate-slow-requests")` rồi làm đúng các bước trong đó
@@ -302,13 +336,40 @@ thử lại metrics liên tục tới giới hạn vòng lặp khi không có d�
 tại — đã sửa bằng hướng dẫn trong SKILL.md ("mỗi tool một lần, không có dữ liệu cũng là kết quả") và
 mô tả của `run_skill_script`; chạy lại thì gọn.
 
-API: `/api/v1/tools` (catalog, bật/tắt, chạy thử, MCP servers, lịch sử) và `/api/v1/skills` (danh
-sách, xem/sửa file, tạo, import/export, chạy script, lịch sử). Xem/chạy tool: mọi vai trò; bật/tắt,
-thêm MCP server, tạo/sửa skill, chạy script từ web: engineer+.
+Kiểm trên lab1 bằng LLM thật (30/09/2026): hỏi "namespace langfuse có ổn không" → trợ lý nạp
+`namespace-health-check`, đọc mẫu báo cáo, gọi `list_deployments`/`list_pods`/`list_events`/`pod_metrics`
+và báo đúng: 5 pod restart cùng lúc 21 giờ trước (exit 255 — node vừa khởi động lại), riêng
+`langfuse-worker` 16 restart (exit 143). Ba lỗi phát hiện khi kiểm và đã sửa: (1) pod `Succeeded` bị
+tính là lỗi; (2) `list_pods` gộp "đang hỏng" với "từng restart" nên model báo pod đang chạy là
+CrashLoopBackOff — nay chia nhóm theo trạng thái HIỆN TẠI; (3) gpt-oss trên Groq bịa công cụ
+`repo_browser.open_file` khi skill ghi "read assets/…", Groq từ chối cả lượt — nay SKILL.md ghi rõ
+`read_skill_file(...)` và `agent.py` thử lại một lần kèm lời nhắc khi nhà cung cấp báo gọi công cụ
+không có trong danh sách (`test_agent_retry.py`).
+
+**Kết nối Kubernetes không cần cấu hình** (`integrations/k8s/client.py`): chạy thành pod thì dùng
+ServiceAccount của pod (tự nhận qua `KUBERNETES_SERVICE_HOST` + token); chạy trên máy dev thì dùng
+đúng kubeconfig mà `kubectl` dùng (biến `KUBECONFIG`, nhiều file nối bằng `;` trên Windows, hoặc
+`~/.kube/config`, theo context hiện tại). Đã bỏ hai biến `KUBECONFIG` và `K8S_IN_CLUSTER` khỏi
+`config.py` và `.env`. Lưu ý: trên máy dev, app có đúng quyền của kubeconfig đó (thường là admin).
+Nếu nạp lỗi, thông báo ghi rõ đã đọc những file nào và nhắc khi tiến trình backend không có
+`KUBECONFIG` — trên Windows biến môi trường chỉ tới tiến trình mở **sau** khi đặt (terminal trong
+VS Code mang môi trường lúc VS Code khởi động), nên backend chạy từ đó chỉ đọc `~/.kube/config`.
+
+API: `/api/v1/tools` (catalog, bật/tắt, chạy thử, custom tool CRUD + mẫu, MCP server
+thêm/làm mới/bật-tắt/gỡ, `PATCH /tools/{name}` nhận `requires_approval` cho tool MCP, lịch sử) và `/api/v1/skills`
+(danh sách, xem/sửa file, tạo, import/export, chạy script, lịch sử). Xem/chạy tool: mọi vai trò (chạy
+tool ghi cũng chỉ tạo đề xuất); bật/tắt, tạo/sửa/xoá custom tool, tạo/sửa skill, chạy script từ web:
+engineer+.
+
+**Lời nhắc hệ thống** (`nl_command/prompts`) bổ sung theo kubectl-ai: xem trạng thái HIỆN TẠI trước khi
+kết luận, tự tra tiếp thay vì bảo người dùng chạy lệnh, và trước khi đề xuất tạo/sửa tài nguyên phải
+hỏi đủ namespace, image:tag, số replica, CPU/RAM, cách expose rồi tóm tắt — không tự bịa giá trị mặc
+định. **Hết lượt gọi tool** (`MAX_TOOL_ROUNDS = 10`) thì model được hỏi thêm một lần không có tool và
+phải trả lời bằng những gì đã tìm được, thay vì lượt chat chết ở giới hạn đệ quy với thông báo lỗi.
 
 ### 3.6 Kiểm thử
 
-14 file test đơn vị (226 test), không cần mạng và không cần CSDL:
+15 file test đơn vị (232 test), không cần mạng và không cần CSDL:
 
 | File | Kiểm gì |
 |---|---|
@@ -324,7 +385,8 @@ thêm MCP server, tạo/sửa skill, chạy script từ web: engineer+.
 | `test_settings_persistence.py` | Lưu cấu hình: khoá API mã hoá khi lưu, lịch sử không bao giờ chứa khoá, restore ghi đúng giá trị .env, khoá không giải mã được (đổi JWT_SECRET) thì bỏ qua chứ không làm sập app |
 | `test_tempo.py` | TraceQL dựng từ tham số có kiểm (chặn chèn toán tử qua tên service/namespace), tóm tắt trace (đường chậm nhất, lỗi sâu nhất đứng đầu, thời gian theo service), công cụ trace tôn trọng `K8S_ALLOWED_NAMESPACES` |
 | `test_skills.py` | SKILL.md đúng chuẩn (name, description, từ khoá cấm, tên trùng thư mục), chặn đường dẫn thoát ra ngoài, export→import zip không mất dữ liệu, script nhận tham số và **không thấy biến môi trường bí mật**, chỉ chạy `.py`/`.sh`, progressive disclosure (prompt chỉ có tên + mô tả) |
-| `test_tools_registry.py` | MCP qua server chạy trong bộ nhớ (list/call, lỗi tool), tool MCP mặc định tắt + write dù server tự nhận read-only, không hạ mức nguy hiểm của tool có sẵn, LogQL escape đúng |
+| `test_tools_registry.py` | Custom tool: bật/tắt, xoá khỏi chat, phân loại đọc/ghi theo tiền tố, cú pháp shell chỉ là đối số, chặn Secret/`-w`/`logs -f`/`exec -it`/`port-forward`, lệnh đọc chạy trong sandbox, lệnh ghi thành đề xuất, chặn namespace bảo vệ; tool ghi biến mất ở `read_only`; LogQL escape đúng |
+| `test_approvals.py` | Kế hoạch scale/restart/set_image/delete_pod/apply đúng từng REST call, các yêu cầu sai bị chặn trước dry-run, diff chỉ hiện trường đổi, dry-run lệnh chỉ khi CLI hỗ trợ, trạng thái rollout, sự kiện `approval_required` gắn đúng lời gọi tool **qua ToolNode thật**, giới hạn lượt gọi tool kết thúc bằng câu trả lời, ghi chú hệ thống đi kèm câu hỏi kế tiếp |
 | `test_telemetry.py` | Dòng log JSON (kèm exception, trace_id) và `/metrics` có các metric của chat |
 
 `tests/conftest.py` mới là một dòng `TODO`, `tests/integration/` rỗng — nghĩa là **chưa có test nào
@@ -484,32 +546,121 @@ chỉ-đọc-lúc-khởi-động này không lọt lại lên web.
 
 `METRICS_ENABLED`, `LOG_FORMAT` chỉ đọc lúc khởi động.
 
+### 3.10 Thay đổi cụm qua phê duyệt, và sandbox
+
+Làm sau khi tham khảo kubectl-ai (30/09/2026). Khác kubectl-ai ở chỗ: LLM không viết lệnh shell cho
+thao tác có sẵn, lượt chat không treo chờ người, và người duyệt có thể là một engineer khác.
+
+**Luồng** (`tools/builtin/actions.py` → `nl_command/{planner,guardrails,dry_run,executor,verifier}.py`
+→ `services/approval_service.py`):
+
+1. Tool ghi dựng **kế hoạch chính xác** (các REST call, hoặc argv của custom tool) và kiểm: chế độ
+   không phải `read_only`, namespace trong danh sách cho phép và **không thuộc namespace bảo vệ**
+   (`kube-system`, `kube-public`, `kube-node-lease`, namespace sandbox), đối tượng tồn tại, container có
+   thật, image hợp lệ, có HPA chiếm quyền scale không, pod có controller không (không có thì "dangerous").
+2. **Dry-run phía server** (`dryRun=All`: webhook, validate, quota đều chạy, không lưu gì) + diff YAML
+   trước/sau. Custom tool: `kubectl … --dry-run=server`, `helm … --dry-run`; CLI khác ghi rõ "không có
+   dry-run". Dry-run lỗi thì không tạo đề xuất.
+3. Lưu dòng `approvals` trạng thái `pending`, hết hạn sau `APPROVAL_TTL_MINUTES` (mặc định 60). Tool trả
+   cho LLM "PROPOSED, NOT DONE…" và phát sự kiện `approval_required` để chat hiện thẻ.
+4. Engineer/admin **Approve** → khoá dòng (`SELECT … FOR UPDATE`, hai người bấm cùng lúc không chạy hai
+   lần) → chạy **đúng `plan` đã lưu** → kiểm tra lại (rollout xong trong 45 giây? pod đã đi? đối tượng có
+   mặt?; chưa xong thì báo kèm cảnh báo mới nhất, có nút "Check again"). **Reject** kèm lý do.
+5. Kết quả được ghi vào hội thoại gốc thành tin nhắn `system`; lượt sau nó được gộp vào đầu câu hỏi của
+   người dùng (một số nhà cung cấp từ chối system message giữa hội thoại).
+
+`auto` chỉ bỏ qua bước 4 khi người yêu cầu là engineer/admin. Đã kiểm trên lab1 bằng LLM thật: hỏi
+"scale kps-grafana lên 2" → trợ lý gọi `list_deployments` rồi `scale_workload`, dry-run được chấp nhận,
+diff đúng một dòng `replicas: 1 → 2`, trả lời "đang chờ engineer duyệt"; từ chối trên giao diện → ghi
+chú hiện trong hội thoại. Bước thực thi đã chạy thật (có sự đồng ý của người dùng): `apply_manifest`
+tạo ConfigMap `default/k8s-hub-approval-test` → duyệt → "applied", kiểm tra lại đạt; rồi custom tool
+`kubectl delete configmap …` chạy trong sandbox `kubernetes` → dry-run `--dry-run=server` → duyệt →
+exit 0; bấm duyệt lần hai bị từ chối ("already executed"). Hai dòng `approvals` đó được giữ làm
+nhật ký.
+
+**"Nói mà không làm"** (người dùng gặp trên lab1): hỏi "tạo pod nginx trong namespace nginx", gpt-oss dán
+manifest rồi viết "Đang gửi đề xuất tới hệ thống để chờ phê duyệt…" nhưng **không gọi `apply_manifest`**
+— không có đề xuất, không có thẻ. Đã sửa ở hai lớp: lời nhắc nói rõ chỉ lời gọi tool mới tạo đề xuất
+(không dán manifest; thiếu thông tin thì hỏi rồi dừng); và `agent.py` bắt câu trả lời có manifest YAML
+hoặc cụm "sẽ đề xuất / đang gửi đề xuất / I will propose…" mà lượt đó chưa gọi tool ghi nào → nhắc model
+**một lần** gọi tool thật (có test). Chạy lại câu hỏi đó: trợ lý kiểm cụm, thấy chưa có namespace `nginx`
+và hỏi lại người dùng — đúng hành vi. Lượt xác nhận tiếp theo chưa kiểm được vì hết hạn mức token/ngày
+của Groq cho model này.
+
+Ca tiếp theo cùng hội thoại (Qwen trên Groq), đã sửa:
+- **Không có tool xoá tổng quát.** "Xoá namespace nginx" được model làm bằng `apply_manifest` Namespace
+  nginx; người dùng duyệt, thẻ báo "executed" nhưng namespace **vẫn còn** (áp dụng lại chứ không xoá).
+  Nay có `delete_resource` (một đối tượng mỗi lần, luôn "dangerous"; không xoá Node/PV/CRD/ClusterRole…,
+  namespace hệ thống và `default`; xoá namespace có ghi chú "xoá MỌI THỨ bên trong"), `apply_manifest`
+  và lời nhắc ghi rõ nó không xoá được, và không đề xuất xoá hàng loạt.
+- **413 "request too large"** khi hỏi "xoá tất cả trừ pod jenkins": `get_resources` liệt kê cả cụm, vượt
+  giới hạn request của Qwen. Nay cắt ở 6.000 ký tự kèm lời nhắc thu hẹp theo namespace/nhãn.
+- **Chốt chặn nhắc nhầm**: câu hỏi lại của Qwen ("mình sẽ tạo… image tag nào?") khớp cụm "sẽ tạo" nên bị
+  nhắc, tốn thêm một lượt gọi model chậm (lượt đó 70 giây). Nay chỉ bắt manifest YAML hoặc "đang gửi
+  đề xuất / sending the proposal…", và bỏ qua khi câu trả lời đang hỏi lại.
+- **Qwen không hiện suy nghĩ**: Qwen 3.8 trên Groq mặc định không suy nghĩ (0 token suy nghĩ, kể cả với
+  `reasoning_effort="default"`); với `"high"` và `reasoning_format="parsed"` thì có (~2.300 ký tự, ở
+  trường riêng). `llm/provider.py` bật hai tham số này cho model `qwen/*` trên Groq — đổi lại mỗi lượt
+  tốn token và thời gian hơn.
+- **Tải lại trang giữa lúc đang trả lời thì thấy tin nhắn trống**: nay hiện "Still working on this
+  answer…" (kèm lối sang Approvals) và tự hỏi lại hội thoại mỗi 4 giây tới khi xong.
+
+Cũng từ ca này: một manifest gồm **Namespace mới + đối tượng bên trong** trước đây sẽ bị từ chối ở
+dry-run (dry-run không thật sự tạo namespace nên Pod báo "namespace not found"). Nay Namespace luôn được
+xếp tạo trước, đối tượng nằm trong namespace mới được diff phía client và ghi chú "sẽ được server kiểm
+khi chạy"; image không ghim tag (hoặc `:latest`) được cảnh báo trên thẻ.
+
+**Tool MCP trong luồng này** (01/10/2026): tool engineer để "cần phê duyệt" tạo đề xuất loại `mcp`
+(`plan_mcp` lưu URL + tên tool + tham số; token đọc lúc chạy, không lưu trong plan). Không có dry-run,
+thẻ hiện đúng lời gọi dạng JSON; duyệt xong backend mới gọi server; kiểm tra lại = lời gọi thành công.
+Đã kiểm đầu-cuối trên giao diện với một MCP server thật chạy cục bộ (Qwen): `add` (đã bỏ phê duyệt) chạy
+thẳng ra 5, `create_ticket` (cần duyệt) thành thẻ, duyệt xong server trả `TICKET-1`, ghi chú vào hội
+thoại. Sửa lúc kiểm: model được báo "passed the dry-run" cho lời gọi MCP — nay báo đúng là không có
+dry-run; nhãn "Requires approval" nằm giữa hai công tắc — nay đóng khung, nhãn đứng trước công tắc.
+Vai trò: chỉ kiểm bằng code (`require_role("engineer")` trên mọi endpoint ghi); chưa có test HTTP cho
+việc `user` bị chặn.
+
+Lỗi phát hiện lúc kiểm và đã sửa: sự kiện tuỳ biến phát từ trong tool mang `run_id` của **ToolNode**
+chứ không phải của lời gọi tool, nên `approval_id` không được lưu và thẻ biến mất sau khi tải lại; nay
+so khớp theo `parent_ids` + tên tool, có test dùng ToolNode thật. Danh sách Select trong hộp thoại
+modal bị vẽ phía sau hộp thoại — nay render vào container của dialog.
+
+**Sandbox** (`modules/sandbox/`, `SANDBOX_BACKEND`, đổi được trên trang Cấu hình):
+- `local` — tiến trình con trên backend: không shell, môi trường tối giản (lệnh CLI được mang thêm
+  `HOME`/`KUBECONFIG` để tìm cấu hình của chính nó; script thì không), thư mục tạm, giới hạn thời gian.
+- `kubernetes` — exec vào pod `k8s-hub-sandbox` (`deploy/sandbox/sandbox.yaml`): container `cli` có
+  token của ServiceAccount `sandbox` (đọc hầu hết, sửa workload, **không đọc Secret**) chạy lệnh qua
+  `timeout`; container `runner` **không có token** chạy script (file skill gửi kèm dạng base64, tối đa
+  ~75 KB). Hai container `readOnlyRootFilesystem`, không quyền root; kubectl/helm tải bằng initContainer
+  nên không cần build image. Backend chỉ cần quyền `pods/exec` trong namespace sandbox. **Đã apply lên
+  lab1** và kiểm: script skill chạy trong `runner` (container này không có file token), `kubectl get`
+  chạy trong `cli`, `kubectl get secrets` bị RBAC chặn (lớp chặn thứ hai sau chặn theo từ khoá), giới
+  hạn thời gian cắt lệnh đúng (exit 124). `.env` vẫn để `SANDBOX_BACKEND=local`; chuyển sang
+  `kubernetes` trên trang Cấu hình.
+
+API: `GET /approvals` (lọc trạng thái), `GET /approvals/summary`, `GET /approvals/{id}`, `POST
+/approvals/{id}/approve|reject|verify` (engineer+). Mọi vai trò xem được hàng đợi.
+
 ---
 
 ## 4. Những gì mới là khung
 
-57 file Python (không tính `__init__.py`) và 29 file TypeScript (component, hook, type cho RCA,
-skills, approvals, observability) hiện chỉ có một dòng mô tả trách nhiệm kèm `TODO`.
+32 file Python (không tính `__init__.py`) và 16 file TypeScript (component, hook, type cho RCA,
+clusters, observability) hiện chỉ có một dòng mô tả trách nhiệm kèm `TODO`.
 Chúng không vô dụng: mỗi file là một quyết định thiết kế đã chốt về việc "cái gì nằm ở đâu".
 
-**Kubernetes — mới có phần đọc.** `integrations/k8s/client.py` đã viết (kubeconfig hoặc in-cluster)
-cùng 5 tool đọc (mục 3.5), nhưng chưa chạy thật vì chưa có kubeconfig của lab1 — nên cấp một
-ServiceAccount gắn ClusterRole `view`. `resources.py`, `diff.py`, `rbac.py` vẫn rỗng; phần ghi lên
-cụm (apply/scale/rollout) chưa có và phải đi qua pipeline duyệt.
+**Kubernetes.** Đọc, đề xuất, dry-run, diff, thực thi đã có (mục 3.5, 3.10). Còn rỗng:
+`k8s/rbac.py` (SelfSubjectAccessReview trước khi đề xuất — hiện lỗi quyền chỉ lộ ra ở dry-run).
 
-**Pipeline nl_command.** Mới có `agent.py` (đồ thị chat đơn giản), `state.py`, `tools.py`, `prompts/`.
-Sáu file còn lại — `intent.py`, `planner.py`, `guardrails.py`, `dry_run.py`, `executor.py`,
-`verifier.py` — tức là toàn bộ chuỗi
-`intent → plan → dry-run → approval → execute → verify` mà README quảng cáo, đều rỗng. `agent.py`
-ghi rõ: chưa gắn checkpointer, và sẽ cần nó khi làm bước duyệt vì lúc đó đồ thị phải dừng giữa chừng
-rồi chạy tiếp.
+**Pipeline nl_command** đã làm hết (mục 3.10). Không dùng checkpointer của LangGraph: lượt chat
+kết thúc sau khi đề xuất, quyết định đến sau qua API, nên `langgraph-checkpoint-postgres` vẫn chưa
+cần.
 
 **RCA.** 15 file rỗng: 1 agent, 5 collector (k8s events, logs, metrics, pod state, rollout history),
 5 analyzer (CrashLoop, OOM, ImagePull, probe, scheduling), correlator, hypothesis, reporter, triggers.
 
-**Skills / Tools / MCP.** Đã làm (mục 3.5). Các file khung cũ `executor.py`, `loader.py`,
-`runbook.py`, `builtin/diagnose.py`, `builtin/k8s_write.py` đã xoá: runbook nay chính là một skill
-theo chuẩn Agent Skills, còn thao tác ghi sẽ thuộc pipeline duyệt.
+**Skills / Tools.** Đã làm (mục 3.5). MCP gỡ ngày 30/09 rồi thêm lại ngày 01/10/2026 với chính sách
+từng tool (mục 3.5, 3.10). Thao tác ghi là `tools/builtin/actions.py`.
 
 **Observability lớp A — còn 5 file rỗng.** `langfuse_client.py` và `tracing.py` đã viết xong
 (xem mục 3.7). Còn rỗng: `prompts` (prompt có version), `audit` (audit log append-only),
@@ -520,10 +671,12 @@ làm gì, còn *cluster thực sự đổi gì* thì không ai ghi lại cả.
 
 **Hạ tầng chung.** `core/security.py` đã xong (mục 3.8). Còn rỗng: `core/permissions.py`
 (RBAC mịn theo namespace/verb — khác `require_role`, xem mục 3.8),
-`core/exceptions.py`, `workers/{queue,tasks}.py`, `services/{approval,cluster}_service.py`.
+`core/exceptions.py`, `workers/{queue,tasks}.py`, `services/cluster_service.py`, `db/models/audit_log.py`
+(bảng `approvals` đang đóng vai nhật ký thay đổi cụm), `schemas/approval.py` (schema của approvals
+đang khai ngay trong `api/v1/approvals.py`).
 
-**5 router API rỗng**: `clusters`, `approvals`, `rca`, `skills`, `observability`. Chúng đã được mount
-vào `api_router` nên hiện ra trong `/docs` nhưng không có endpoint nào.
+**3 router API rỗng**: `clusters`, `rca`, `observability`. Chúng đã được mount vào `api_router` nên
+hiện ra trong `/docs` nhưng không có endpoint nào.
 
 ---
 
@@ -573,11 +726,19 @@ Node 22, kubectl, helm vào home (không cần root, không phải build image r
 workspace mở ra ngoài qua NodePort 30830 (frontend) và 30808 (backend); `env.cluster.example` là
 `.env` dùng DNS nội bộ của các service (`pg-rw.database.svc`, `…prometheus.monitoring.svc:9090`,
 `loki-gateway.loki.svc`, `tempo.tempo.svc:3200`, `langfuse-web.langfuse.svc:3000`) và
-`K8S_IN_CLUSTER=true`. Build image + CI/CD (Jenkins, Argo CD, Docker Hub/GHCR) là bước sau.
+không cần biến nào cho Kubernetes (tự dùng ServiceAccount của pod). Build image + CI/CD (Jenkins, Argo CD, Docker Hub/GHCR) là bước sau.
+
+**Pod sandbox** (`deploy/sandbox/sandbox.yaml`, **đã apply lên lab1**, pod 2/2 Running): namespace
+`k8s-hub-sandbox`, ServiceAccount `sandbox` + ClusterRole riêng (không Secret), Role `sandbox-exec`
+cho backend (`k8s-hub/k8s-hub-backend`) và dev workspace. Request mỗi container 10m CPU / 32Mi — node
+lab1 đang gần hết CPU request.
 
 Ba phụ thuộc đã khai trong `pyproject.toml` nhưng chưa dùng dòng nào: `redis`, `pgvector`,
-`langgraph-checkpoint-postgres`. Chúng là chỗ đặt trước cho background job, tìm kiếm ngữ nghĩa và
-checkpointer của bước duyệt.
+`langgraph-checkpoint-postgres` (bước duyệt hoá ra không cần checkpointer, xem mục 3.10). Gói `mcp`
+đã gỡ khỏi `requirements.txt`/`pyproject.toml` (venv vẫn còn cài, vô hại).
+
+`uvicorn --reload` trên máy dev Windows này **từng kẹt sau lần reload đầu tiên** (đổi file thì server
+vẫn chạy mã cũ, không báo lỗi) — sửa nhiều file mà hành vi không đổi thì khởi động lại backend.
 
 Lưu ý về phiên bản: `pyproject.toml` khai sàn rất thấp (`langgraph>=0.2.50`, `langchain-core>=0.3.20`,
 `langfuse>=3.0.0`) nhưng thực tế pip kéo về `langgraph 1.2`, `langchain-core 1.6`, `langfuse 4.15`.
@@ -590,6 +751,43 @@ Chưa có file khoá phiên bản, nên hai máy cài cách nhau vài tháng có
 Sắp theo mức độ nên xử lý sớm.
 
 ### Đã xử lý trong lần cập nhật này
+
+- **Langfuse thiếu người dùng/hội thoại trên các lời gọi model.** Trace vẫn lên đủ (đối chiếu 25/25 lượt
+  chat gần nhất), có số token; nhưng Langfuse 4.38 chạy chế độ `events_only` lưu `userId`/`sessionId`
+  theo TỪNG observation, còn metadata của CallbackHandler chỉ tới span gốc — generation lồng trong graph
+  để trống, nên mọi số liệu lọc theo người/phiên ra rỗng. Nay `chat.py` bọc lượt chat trong
+  `trace_attributes` (`propagate_attributes` của SDK 4.15): đã kiểm, mọi GENERATION/TOOL/CHAIN đều mang
+  user + session + token. **Chi phí vẫn trống** vì Langfuse chưa có bảng giá cho model Groq/Gemini —
+  khai trong giao diện Langfuse, không phải sửa mã. API đọc trace cũ (`/api/public/traces`) trả 404 ở chế
+  độ này; dùng `/api/public/v2/observations?fields=core,basic,usage`.
+- **Run history không có gì từ chat.** Trang chỉ đọc `tool_runs` (chạy tay); 40 lời gọi tool của trợ lý
+  nằm ở `tool_calls` mà không hiện. Nay mục "Tool runs" là một danh sách gộp chat + chạy tay (nhãn
+  "From chat"/"Manual"), gộp và phân trang ở backend theo thứ tự thời gian; người dùng thường chỉ thấy
+  của mình (lọc trong truy vấn — trước đây lọc sau khi phân trang nên tổng số sai). Script của skill vốn
+  đã ghi cả chat lẫn tay; chưa có lượt chat nào chạy script nên mục đó chỉ có "Manual".
+
+- **Gemini không hiện suy nghĩ.** langchain-google-genai 4.x trả suy nghĩ dạng khối
+  `{"type": "thinking", "thinking": …}`, còn code chỉ đọc kiểu cũ (`type: "text"` + `thought`). Nay đọc
+  cả `thinking`, `reasoning` (chuẩn LangChain) và kiểu cũ; thử thật ra ~3.200 ký tự suy nghĩ.
+- **Backend cũ của phiên trước vẫn giữ cổng 8000** (Windows cho hai tiến trình cùng nghe một cổng):
+  request rơi vào code cũ, endpoint mới trả 404. Khi khởi động lại backend mà hành vi không đổi, kiểm
+  `netstat -ano | grep :8000`.
+
+- **Lỗi của nhà cung cấp hiện nguyên JSON sau khi tải lại.** Sự kiện lỗi trực tiếp đã có câu dễ đọc,
+  nhưng `messages.error` lưu `RateLimitError: Error code: 429 - {...org_...}`. Nay lưu cùng câu dễ đọc
+  (hết hạn mức ngày: "…used up. Try again in 27 min, or pick another model"; 413: thu hẹp câu hỏi hoặc
+  đổi model; lỗi lạ: câu chung, chi tiết chỉ ở log).
+
+- **Chưa có đường thay đổi cụm có kiểm soát.** Nay có luồng phê duyệt đầy đủ (mục 3.10); không có tool
+  nào cho LLM tự đổi cụm.
+- **MCP server bên ngoài chạy tool không kiểm soát được.** Đã bỏ hẳn; tool mở rộng nay là custom CLI
+  tool chạy trong sandbox, lệnh ghi qua phê duyệt.
+- **Hỏi về Service/Ingress/Node/PVC… trợ lý không tra được.** Nay có `get_resources`/`describe_resource`.
+- **Lượt chat chết ở giới hạn vòng lặp** với thông báo lỗi. Nay hết lượt gọi tool thì buộc trả lời.
+- **Script skill chạy thẳng trên backend, không cô lập.** Nay chọn được sandbox `kubernetes` (khi đã
+  apply manifest); `local` giữ hành vi cũ.
+- **Danh sách tool trên màn hình chat trống tràn ngang ở 390px.** Thay bằng dòng "N tools ready · See
+  tools & skills"; gợi ý câu hỏi lọc theo tool đang bật.
 
 - **Ghi kết quả bị mất khi client ngắt kết nối.** `sse-starlette` huỷ chính task đang chạy generator,
   nên lệnh ghi trong `finally` bị huỷ ở điểm chờ đầu tiên và tin nhắn kẹt vĩnh viễn ở
@@ -645,6 +843,15 @@ Sắp theo mức độ nên xử lý sớm.
 
 ### Còn tồn tại
 
+**0a. Thay đổi được duyệt chạy bằng danh tính của backend.** Trên máy dev đó là kubeconfig admin của
+lab1 (tool có sẵn) hoặc kubeconfig đó qua sandbox `local` (custom tool). Hàng rào là kiểm tra trong
+planner + namespace bảo vệ + phê duyệt, không phải RBAC. Khi chạy thành pod, ServiceAccount của
+backend cần đúng quyền sửa workload (không hơn), và nên làm `k8s/rbac.py` để báo thiếu quyền sớm.
+
+**0b. Custom tool an toàn tới đâu là do engineer khai.** Tiền tố chỉ đọc sai (ví dụ để `helm get`,
+vốn in mật khẩu trong values) sẽ cho LLM đọc thứ không nên đọc mà không cần duyệt. Mẫu `helm` đã cố ý
+bỏ `get`. Secret bị chặn theo từ khoá, không theo ngữ nghĩa của từng CLI.
+
 **1. Không giới hạn số lần thử đăng nhập/đăng ký.** Không có rate limit hay khoá tạm sau nhiều lần
 sai mật khẩu — endpoint `/auth/login` dò mật khẩu bằng vét cạn được nếu ai đó cố tình.
 
@@ -663,7 +870,8 @@ và các endpoint hội thoại/đăng nhập chưa có test tự động nào c
 
 **6. `history_to_messages()` bỏ hết tool call của lượt trước.** Đây là lựa chọn có chủ ý và đã ghi rõ
 lý do (gửi thiếu vế là nhà cung cấp trả lỗi; kết quả cũ thường đã lỗi thời), nhưng hệ quả là trợ lý
-không nhớ nó đã tra gì ở lượt trước. Khi công cụ tra cụm xuất hiện, cần xem lại quyết định này.
+không nhớ nó đã tra gì ở lượt trước. Kết quả phê duyệt thì không mất: chúng đi vào lịch sử dưới dạng
+ghi chú hệ thống (mục 3.10).
 
 **Dữ liệu cũ trong CSDL vẫn tiếng Việt.** Tên hiển thị tài khoản (ví dụ admin "Người dùng cục bộ"),
 tiêu đề và nội dung hội thoại cũ được lưu trước khi đổi ngôn ngữ nên vẫn hiện tiếng Việt; mã không
@@ -677,19 +885,15 @@ dùng / Tài khoản, hoặc xoá hội thoại cũ, nếu muốn giao diện s�
 
 Xếp theo mức độ mở khoá cho phần còn lại:
 
-1. **Cấp kubeconfig chỉ-đọc của lab1** (ServiceAccount + ClusterRole `view`) rồi đặt `KUBECONFIG`
-   — 5 tool Kubernetes đã viết sẵn chỉ chờ bước này; khi đó skill `diagnose-crashloop` và
-   `namespace-health-check` chạy trọn. Song song phía hạ tầng: bật Beyla để Tempo có trace thật.
-2. **Bảng giá model trong Langfuse** để có cột chi phí — tracing đã chạy thật, chỉ còn thiếu giá cho
-   model Groq/Gemini (khai trên giao diện Langfuse, không cần sửa mã).
-3. **`audit.py`** — bảng append-only. Cần có trước khi có bất kỳ thao tác ghi nào lên cụm, và là
-   thứ Langfuse không bao giờ thay được: nó chỉ biết LLM *định* làm gì.
-4. **Pipeline duyệt** (`planner` → `guardrails` → `dry_run` → approval gate → `executor` → `verifier`).
-   Hợp đồng sự kiện SSE cho phần này đã định nghĩa xong, nên frontend sẽ lắp vào nhanh. Guardrail nên
-   dùng `require_role` đã có sẵn để chặn `user` khỏi bước duyệt — chỉ `admin`/`engineer` mới được.
-5. **RCA**, dùng lại các collector đã có từ bước 1.
-6. **Rate limit cho `/auth/login` và `/auth/register`** (rủi ro số 1 ở mục 6) — việc nhỏ, đáng làm
-   sớm trước khi có ai đó thử vét cạn mật khẩu.
+1. **Chuyển `SANDBOX_BACKEND=kubernetes`** khi demo (pod sandbox đã chạy) để lệnh custom tool không
+   dùng kubeconfig admin của máy dev.
+2. **Deploy K8s-Hub thành pod trên lab1** với ServiceAccount riêng: đọc toàn cụm (không Secret) + sửa
+   workload để chạy thay đổi đã duyệt; thêm ServiceMonitor. Song song: bật Beyla để Tempo có trace thật.
+3. **`k8s/rbac.py`** — SelfSubjectAccessReview trước khi đề xuất, để báo "không đủ quyền" ngay thay vì
+   ở dry-run.
+4. **RCA**, dùng lại tool đọc (kể cả `get_resources`) và đề xuất khắc phục qua đúng luồng phê duyệt.
+5. **Đánh giá** (so với kubectl-ai bằng k8s-ai-bench hoặc bộ kịch bản tự soạn) — người dùng tạm hoãn.
+6. **Rate limit cho `/auth/login` và `/auth/register`** (rủi ro số 1 ở mục 6).
 
 Lớp C (tự giám sát) **đã làm** (mục 3.9); việc còn lại là thêm ServiceMonitor khi backend chạy thành
 pod. Không bắc cầu số liệu từ Langfuse sang

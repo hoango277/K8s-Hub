@@ -24,6 +24,11 @@ export function useThread(id: string | null) {
     // History only changes when this same user sends a message, so there's no
     // need to refetch every time the tab regains focus.
     refetchOnWindowFocus: false,
+    // …except when an answer is still being written server-side and this tab
+    // isn't the one streaming it (page reloaded mid-answer, or another tab):
+    // re-read until it's finished, so the answer and its approval cards appear.
+    refetchInterval: (q) =>
+      q.state.data?.messages.some((m) => m.role === "assistant" && m.status === "streaming") ? 4_000 : false,
   });
 }
 

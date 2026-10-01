@@ -1,60 +1,109 @@
-"""Kubernetes API client (read-only use) - kubeconfig or in-cluster.
+"""Kubernetes API client (read-only use).
 
-Configuration (read at startup, from .env):
-  - K8S_IN_CLUSTER=true  -> the pod's ServiceAccount (when K8s-Hub runs on the cluster)
-  - KUBECONFIG=<path>    -> a kubeconfig file (development machine)
-  - neither              -> not configured; skills report that plainly
+Nothing to configure in .env — the client finds its credentials the way
+kubectl does:
 
-Give K8s-Hub a READ-ONLY identity (a ServiceAccount bound to the built-in
-`view` ClusterRole). The skills here only read, but least privilege means a
-bug or a prompt injection can't turn into a write even if someone adds one.
+  1. Inside a pod (how K8s-Hub is deployed): the pod's ServiceAccount, which
+     Kubernetes mounts into every pod. No kubeconfig to copy around or protect;
+     the token is rotated by Kubernetes and dies with the pod.
+  2. Outside a pod (the backend run on a developer's machine): the SAME
+     kubeconfig kubectl uses — the KUBECONFIG environment variable (several
+     files separated by ";" on Windows, ":" elsewhere) or ~/.kube/config, with
+     its current context. What `kubectl get pods` sees is what the tools see.
+  3. Neither: the Kubernetes tools report themselves unavailable.
 
-API clients are built per call rather than cached: the calls are rare
-(one per tool invocation) and a cached client would outlive a kubeconfig
-change or a token rotation.
+Mind the identity in case 2: it is whoever the kubeconfig belongs to — often a
+cluster admin. The tools only read, but the deployed pod should use a
+ServiceAccount bound to the `view` ClusterRole (read, no Secrets).
+
+API clients are built per call rather than cached: calls are rare (one per
+tool invocation), and a cached client would outlive a context switch or a
+token rotation.
 """
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
-from app.core.config import get_settings
+TOKEN_FILE = Path("/var/run/secrets/kubernetes.io/serviceaccount/token")
 
 
 class K8sError(RuntimeError):
-    """Not configured, unreachable, forbidden or not found. Message is user-facing."""
+    """No credentials, unreachable, forbidden or not found. Message is user-facing."""
+
+
+def _in_pod() -> bool:
+    return bool(os.environ.get("KUBERNETES_SERVICE_HOST")) and TOKEN_FILE.is_file()
+
+
+def _kubeconfig_files() -> list[Path]:
+    """The kubeconfig files kubectl would read, that exist."""
+    raw = os.environ.get("KUBECONFIG") or str(Path.home() / ".kube" / "config")
+    return [
+        Path(p).expanduser() for p in raw.split(os.pathsep) if p and Path(p).expanduser().is_file()
+    ]
 
 
 def config_problem() -> str | None:
-    """Why the cluster can't be reached, or None when it is configured."""
-    config = get_settings()
-    if config.K8S_IN_CLUSTER or (config.KUBECONFIG or "").strip():
+    """Why the cluster can't be reached, or None when credentials were found."""
+    if _in_pod() or _kubeconfig_files():
         return None
     return (
-        "No Kubernetes access is configured (set KUBECONFIG, or K8S_IN_CLUSTER=true "
-        "when running on the cluster)."
+        "No Kubernetes credentials found: run K8s-Hub as a pod on the cluster, or give "
+        "this machine a kubeconfig (KUBECONFIG or ~/.kube/config) like kubectl uses."
     )
 
 
-@asynccontextmanager
-async def api_client():
+async def _configuration() -> Any:
     from kubernetes_asyncio import client, config
 
     problem = config_problem()
     if problem:
         raise K8sError(problem)
-    settings = get_settings()
+    cfg = client.Configuration()
     try:
-        if settings.K8S_IN_CLUSTER:
-            config.load_incluster_config()
-            api = client.ApiClient()
+        if _in_pod():
+            config.load_incluster_config(client_configuration=cfg)
         else:
-            cfg = client.Configuration()
-            await config.load_kube_config(config_file=settings.KUBECONFIG, client_configuration=cfg)
-            api = client.ApiClient(configuration=cfg)
+            await config.load_kube_config(
+                config_file=os.pathsep.join(str(p) for p in _kubeconfig_files()),
+                client_configuration=cfg,
+            )
     except Exception as exc:
-        raise K8sError(f"Could not load the Kubernetes configuration: {exc}") from exc
+        # Name the files read: the usual cause is a process started before
+        # KUBECONFIG was set (Windows only passes env vars to NEW processes), so it
+        # silently fell back to ~/.kube/config alone.
+        files = ", ".join(str(p) for p in _kubeconfig_files())
+        hint = "" if os.environ.get("KUBECONFIG") else (
+            " KUBECONFIG is not set in the backend process; if you set it recently, "
+            "restart the backend from a new terminal."
+        )
+        raise K8sError(
+            f"Could not load the Kubernetes credentials from {files}: {exc}.{hint}"
+        ) from exc
+    return cfg
+
+
+@asynccontextmanager
+async def api_client():
+    from kubernetes_asyncio import client
+
+    api = client.ApiClient(configuration=await _configuration())
+    try:
+        yield api
+    finally:
+        await api.close()
+
+
+@asynccontextmanager
+async def ws_api_client():
+    """Same credentials, over a websocket — what `exec` into a pod needs."""
+    from kubernetes_asyncio.stream import WsApiClient
+
+    api = WsApiClient(configuration=await _configuration())
     try:
         yield api
     finally:
@@ -153,6 +202,7 @@ async def check() -> dict[str, Any]:
 
 __all__ = [
     "K8sError",
+    "api_client",
     "check",
     "config_problem",
     "list_deployments",
@@ -160,4 +210,5 @@ __all__ = [
     "list_pods",
     "pod_logs",
     "read_pod",
+    "ws_api_client",
 ]

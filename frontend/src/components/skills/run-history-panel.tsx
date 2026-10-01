@@ -3,9 +3,9 @@
 import { SkillRunList, ToolRunList } from "@/components/skills/execution-log";
 import { SectionHeader } from "@/components/skills/shared";
 
-/** Two short lists rather than one merged feed: they page independently on
- * the backend, and merging two paginated sources by date would reorder rows
- * every time "Show more" loaded a page from only one of them. */
+/** Two lists: skill scripts, and tool runs. The tool list is already one feed
+ * of chat calls + manual runs, merged and paged on the backend (merging pages
+ * here would reorder rows on every "Show more"). */
 export function RunHistoryPanel({ description }: { description: string }) {
   return (
     <>
@@ -22,7 +22,7 @@ export function RunHistoryPanel({ description }: { description: string }) {
         </section>
         <section aria-labelledby="tool-runs-title">
           <h3 id="tool-runs-title" className="mb-3 text-sm font-semibold">
-            Tools run by hand
+            Tool runs
           </h3>
           <ToolRunList />
         </section>

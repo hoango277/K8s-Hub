@@ -68,6 +68,9 @@ class Message(Base, TimestampMixin):
     # that explains why the assistant chose to look up one thing and not another.
     # NULL for user messages, and for providers that do not expose reasoning.
     reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The reasoning split around tool calls: [{"text", "at_tool"}]. NULL for
+    # messages saved before 30/09/2026 — the UI then shows `reasoning` as one step.
+    reasoning_steps: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
 
     # Order within the conversation, starting at 1. Not based on created_at
     # because two messages can be written within the same millisecond.
@@ -126,6 +129,10 @@ class ToolCall(Base, TimestampMixin):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Set when the call proposed a cluster change: the chat shows its approval card.
+    approval_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("approvals.id", ondelete="SET NULL"), nullable=True
+    )
 
     message: Mapped[Message] = relationship(back_populates="tool_calls", lazy="raise")
 

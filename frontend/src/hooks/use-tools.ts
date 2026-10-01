@@ -4,7 +4,16 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 
 import { api } from "@/lib/api";
 import { qk } from "@/lib/query-keys";
-import type { McpServer, McpServerCreate, Tool, ToolPatch, ToolRun, ToolRunPage } from "@/types/tool";
+import type {
+  CustomTool,
+  CustomToolFields,
+  McpServer,
+  McpServerCreate,
+  Tool,
+  ToolPatch,
+  ToolRun,
+  ToolRunPage,
+} from "@/types/tool";
 
 const RUNS_PAGE = 20;
 
@@ -58,6 +67,43 @@ export function useToolRuns() {
       return loaded < last.total ? loaded : undefined;
     },
   });
+}
+
+/** Ready-made definitions (kubectl, helm) not created yet. Engineers only. */
+export function useCustomToolTemplates(enabled: boolean) {
+  return useQuery({
+    queryKey: qk.tools.templates,
+    queryFn: () => api.get<CustomTool[]>("/tools/custom/templates"),
+    enabled,
+  });
+}
+
+/** Custom tools change what the assistant can call: refresh the catalog, the
+ * chat's tool list and the remaining templates. */
+function useCustomMutation<TVars, TResult>(fn: (vars: TVars) => Promise<TResult>) {
+  const qc = useQueryClient();
+  const invalidate = useInvalidateCatalog();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.tools.templates });
+      invalidate();
+    },
+  });
+}
+
+export function useCreateCustomTool() {
+  return useCustomMutation((tool: CustomTool) => api.post<Tool>("/tools/custom", tool));
+}
+
+export function useUpdateCustomTool() {
+  return useCustomMutation(({ name, fields }: { name: string; fields: CustomToolFields }) =>
+    api.put<Tool>(`/tools/custom/${encodeURIComponent(name)}`, fields),
+  );
+}
+
+export function useDeleteCustomTool() {
+  return useCustomMutation((name: string) => api.del<null>(`/tools/custom/${encodeURIComponent(name)}`));
 }
 
 export function useMcpServers() {

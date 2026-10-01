@@ -2,7 +2,7 @@
 #
 # One pod running code-server (VS Code in the browser). You code INSIDE the
 # cluster, so:
-#   - no kubeconfig file: kubectl and the backend (K8S_IN_CLUSTER=true) use the
+#   - no kubeconfig file: kubectl and the backend (auto-detected in a pod) use the
 #     pod's ServiceAccount token, mounted automatically;
 #   - every service is reachable by its cluster DNS name (Postgres, Prometheus,
 #     Loki, Tempo, Langfuse) — see env.cluster.example;

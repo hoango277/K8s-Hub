@@ -316,3 +316,74 @@ def test_thought_blocks_do_not_leak_into_answer():
         {"type": "text", "text": "spoken out"},
     ]
     assert _text_of(content) == "spoken out"
+
+
+def thought(text: str) -> dict[str, Any]:
+    return {
+        "event": "on_chat_model_stream",
+        "name": "model",
+        "run_id": "r1",
+        "data": {"chunk": AIMessageChunk(content="", additional_kwargs={"reasoning_content": text})},
+    }
+
+
+async def test_reasoning_is_split_where_tools_ran():
+    """Thought → tool → thought must come back in that order after a reload,
+    not as one block of reasoning above every tool call."""
+    _, collector = await run(
+        [
+            thought("Check pods "),
+            thought("first."),
+            tool_start("t1", "list_pods", {"namespace": "kube-system"}),
+            tool_end("t1", "ok"),
+            thought("All running; check events."),
+            tool_start("t2", "list_events", {"namespace": "kube-system"}),
+            tool_end("t2", "none"),
+            token("Healthy."),
+        ]
+    )
+    assert collector.reasoning_steps == [
+        {"text": "Check pods first.", "at_tool": 0},
+        {"text": "All running; check events.", "at_tool": 1},
+    ]
+    assert collector.reasoning == "Check pods first.All running; check events."
+
+
+GROQ_TPD = (
+    "Error code: 429 - {'error': {'message': 'Rate limit reached for model `openai/gpt-oss-120b` "
+    "in organization `org_x` service tier `on_demand` on tokens per day (TPD): Limit 200000, "
+    "Used 199079, Requested 4661. Please try again in 26m55.68s.', 'code': 'rate_limit_exceeded'}}"
+)
+
+
+class RateLimitError(Exception):
+    pass
+
+
+async def test_stored_error_is_readable_not_raw_json():
+    """The error saved with the message (shown after a reload) used to be the
+    provider's raw JSON; it must be the same readable sentence as the live event."""
+    frames, collector = await run([], error=RateLimitError(GROQ_TPD))
+    assert collector.error == (
+        "This model's daily token quota is used up. Try again in 27 min, or pick another model."
+    )
+    assert "org_x" not in frames[-1]["data"]
+
+
+async def test_unknown_errors_do_not_leak_details():
+    _, collector = await run([], error=RuntimeError("secret internal detail at 0xdeadbeef"))
+    assert "0xdeadbeef" not in collector.error
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        {"type": "thinking", "thinking": "weighing OOM vs probe", "index": 0},  # google-genai 4.x
+        {"type": "reasoning", "reasoning": "weighing OOM vs probe"},  # LangChain standard
+        {"type": "text", "text": "weighing OOM vs probe", "thought": True},  # older Gemini
+    ],
+)
+def test_reasoning_blocks_of_every_shape_are_read(block):
+    chunk = AIMessageChunk(content=[block, {"type": "text", "text": "Answer."}])
+    assert _reasoning_of(chunk) == "weighing OOM vs probe"
+    assert _text_of(chunk.content) == "Answer."

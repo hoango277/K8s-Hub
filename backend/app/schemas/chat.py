@@ -61,6 +61,15 @@ class ToolCallOut(BaseModel):
     error: str | None
     duration_ms: int | None
     started_at: datetime
+    # The approval this call proposed, if any: the chat shows its card.
+    approval_id: uuid.UUID | None = None
+
+
+class ReasoningStep(BaseModel):
+    """One stretch of reasoning; `at_tool` = how many tool calls came before it."""
+
+    text: str
+    at_tool: int
 
 
 class MessageOut(BaseModel):
@@ -73,6 +82,9 @@ class MessageOut(BaseModel):
 
     # The reasoning, if the provider exposes it.
     reasoning: str | None = None
+    # The same reasoning split around tool calls, in order. None for older
+    # messages: show `reasoning` as a single step then.
+    reasoning_steps: list[ReasoningStep] | None = None
 
     position: int
     status: MessageStatus
@@ -124,6 +136,7 @@ __all__ = [
     "ThreadDetail",
     "ThreadOut",
     "ThreadUpdate",
+    "ReasoningStep",
     "ToolCallOut",
     "ToolCallStatus",
 ]

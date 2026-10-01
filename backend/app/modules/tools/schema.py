@@ -1,7 +1,7 @@
 """What a tool is — and how it differs from a skill.
 
 A TOOL is code the model can call: read pods, query metrics, search logs,
-explain a trace, or a tool exposed by an external MCP server. A SKILL (Agent
+explain a trace, propose a change, or a custom CLI tool defined on the web. A SKILL (Agent
 Skills standard, app/modules/skills/) is a folder of instructions telling the
 agent HOW to use tools for a task. Skills sit on top of tools, not instead.
 
@@ -25,10 +25,11 @@ from langchain_core.tools import BaseTool
 class Danger(StrEnum):
     """What running the tool can do to the cluster.
 
-    Only READ tools are ever handed to the chat agent or run from the Tools
-    page. WRITE/DESTRUCTIVE ones need the approval pipeline (dry-run -> a human
-    approves -> execute -> audit), which doesn't exist yet — until it does they
-    are listed but can't run.
+    READ tools run as soon as they are called. WRITE/DESTRUCTIVE tools never
+    change anything themselves: calling one PROPOSES the change, which goes
+    through the approval flow (dry-run -> a human approves -> execute ->
+    verify -> audit; app/services/approval_service.py). In read_only mode they
+    are not offered at all.
     """
 
     READ = "read"
@@ -41,7 +42,8 @@ class Category(StrEnum):
     METRICS = "metrics"
     LOGS = "logs"
     TRACES = "traces"
-    EXTERNAL = "external"
+    CUSTOM = "custom"
+    MCP = "mcp"
 
 
 @dataclass(frozen=True)
@@ -50,7 +52,7 @@ class ToolSpec:
     title: str
     category: Category
     danger: Danger
-    #: "builtin" or "mcp:<server name>"
+    #: "builtin", "custom" (a CLI tool defined on the web) or "mcp:<server name>"
     source: str = "builtin"
     #: Returns why the tool can't run now (e.g. "TEMPO_URL is empty"), or None.
     unavailable: Callable[[], str | None] = lambda: None

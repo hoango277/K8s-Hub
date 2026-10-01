@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { BookOpen, Bot, Cpu, ShieldCheck } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, BookOpen, Bot, Cpu, Gauge, HeartPulse, ShieldCheck, Waypoints } from "lucide-react";
 
-import { MessageItem, toolCallsOf } from "@/components/chat/message-item";
+import { MessageItem, thoughtsOf, toolCallsOf } from "@/components/chat/message-item";
 import type { LiveTurn } from "@/hooks/use-chat-stream";
 import type { Message } from "@/types/chat";
 
@@ -15,17 +16,40 @@ interface Props {
   onSuggestion?: (question: string) => void;
 }
 
-// Only suggest questions the assistant CAN ANSWER RIGHT NOW with the tools it
-// has (`system_info`, `current_time`) or from general knowledge. Suggesting
-// "which pods are failing?" before there is a cluster lookup tool promises
-// something the system can't do yet — same principle as the system prompt in
-// nl_command/prompts.
-const SUGGESTIONS = [
-  { icon: Cpu, question: "Which AI model is the system using?" },
+// Only suggest questions the assistant CAN ANSWER RIGHT NOW. Each suggestion
+// names the tool it needs; one whose tool is switched off or unavailable (e.g.
+// no Kubernetes access on a laptop) is skipped, and general-knowledge questions
+// fill the rest — suggesting "which pods are failing?" without a pod tool
+// promises something the system can't do (same rule as the system prompt).
+// kube-system exists on every cluster, so the example works anywhere.
+const SUGGESTIONS: { icon: typeof Cpu; question: string; needs?: string }[] = [
+  { icon: HeartPulse, question: "Is everything healthy in the kube-system namespace?", needs: "list_pods" },
+  { icon: Gauge, question: "Which containers in kube-system are closest to their memory limit?", needs: "pod_metrics" },
+  { icon: Waypoints, question: "Are there any failing requests in the last 30 minutes?", needs: "search_traces" },
   { icon: ShieldCheck, question: "What does the current execution mode let me do on the cluster?" },
   { icon: BookOpen, question: "Explain CrashLoopBackOff and the usual steps to fix it" },
-  { icon: BookOpen, question: "When should I use a StatefulSet instead of a Deployment?" },
+  { icon: Cpu, question: "Which AI model is the system using?" },
 ];
+
+function suggestionsFor(toolNames: string[]) {
+  const available = new Set(toolNames);
+  return SUGGESTIONS.filter((s) => !s.needs || available.has(s.needs)).slice(0, 4);
+}
+
+/**
+ * The turn being streamed can ALSO be in the stored messages when the thread is
+ * re-read mid-stream — e.g. an approval decided in the card writes a note into
+ * the conversation and refreshes it. The live view already shows that turn, so
+ * drop its stored copy (the question and the "streaming" assistant row).
+ */
+function withoutLiveTurn(messages: Message[]): Message[] {
+  let i = messages.length - 1;
+  while (i >= 0 && !(messages[i].role === "assistant" && messages[i].status === "streaming")) i--;
+  if (i < 0) return messages;
+  const drop = new Set([i]);
+  if (i > 0 && messages[i - 1].role === "user") drop.add(i - 1);
+  return messages.filter((_, k) => !drop.has(k));
+}
 
 function caption(m: Message): string | null {
   if (m.role !== "assistant") return null;
@@ -68,7 +92,7 @@ export function MessageList({ messages, live, toolNames, onSuggestion }: Props) 
 
           {onSuggestion && (
             <ul className="mt-8 grid gap-2 sm:grid-cols-2">
-              {SUGGESTIONS.map(({ icon: Icon, question }) => (
+              {suggestionsFor(toolNames).map(({ icon: Icon, question }) => (
                 <li key={question}>
                   <button
                     type="button"
@@ -83,14 +107,21 @@ export function MessageList({ messages, live, toolNames, onSuggestion }: Props) 
             </ul>
           )}
 
+          {/* A count and a link, not the raw tool names: the names mean little to a
+              user, and 15 of them on one line overflowed the page. */}
           {toolNames.length > 0 && (
-            <p className="mt-6 text-center text-xs text-[var(--muted-foreground)]">
-              Available tools:{" "}
-              {toolNames.map((t) => (
-                <code key={t} className="mx-0.5 rounded bg-[var(--muted)] px-1.5 py-0.5">
-                  {t}
-                </code>
-              ))}
+            <p className="mt-6 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-xs text-[var(--muted-foreground)]">
+              <span>
+                {toolNames.length} tool{toolNames.length === 1 ? "" : "s"} ready for the assistant
+              </span>
+              <span aria-hidden>·</span>
+              <Link
+                href="/skills#tools"
+                className="inline-flex items-center gap-1 rounded underline underline-offset-2 outline-none hover:text-[var(--foreground)] focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+              >
+                See tools & skills
+                <ArrowRight aria-hidden className="size-3" />
+              </Link>
             </p>
           )}
         </div>
@@ -98,16 +129,19 @@ export function MessageList({ messages, live, toolNames, onSuggestion }: Props) 
     );
   }
 
+  const stored = live ? withoutLiveTurn(messages) : messages;
+
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
-      {messages.map((m) => (
+      {stored.map((m) => (
         <MessageItem
           key={m.id}
           role={m.role}
           content={m.content}
-          thinking={m.reasoning ?? ""}
+          thinkingSteps={thoughtsOf(m)}
           toolCalls={toolCallsOf(m)}
           error={m.status === "error" ? m.error : null}
+          inProgress={m.role === "assistant" && m.status === "streaming"}
           meta={caption(m)}
         />
       ))}
@@ -118,11 +152,12 @@ export function MessageList({ messages, live, toolNames, onSuggestion }: Props) 
           <MessageItem
             role="assistant"
             content={live.content}
-            thinking={live.thinking}
+            thinkingSteps={live.thinkingSteps}
             isThinking={live.thinkingSince !== null}
             thinkingSeconds={live.thinkingMs > 0 ? live.thinkingMs / 1000 : null}
             toolCalls={live.toolCalls}
             streaming={live.status === "streaming"}
+            startedAt={live.startedAt}
             error={live.error?.message ?? null}
           />
         </>

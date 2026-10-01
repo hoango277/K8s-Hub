@@ -145,6 +145,20 @@ export const FIELDS: Record<string, FieldMeta> = {
     control: "namespaces",
     help: "The assistant only reads and acts inside these namespaces. Leave empty to allow all.",
   },
+  APPROVAL_TTL_MINUTES: {
+    label: "Approval expires after",
+    section: "cluster",
+    control: "number",
+    unit: "minutes",
+    step: 5,
+    help: "A proposed change nobody decided on expires, because the cluster may have changed since its dry-run.",
+  },
+  SANDBOX_BACKEND: {
+    label: "Sandbox",
+    section: "cluster",
+    control: "generic",
+    help: "Where custom-tool commands and skill scripts run: on this backend (local) or in the sandbox pod on the cluster (kubernetes).",
+  },
 };
 
 /** Position of a field inside its section: the order of FIELDS above. */
@@ -175,13 +189,14 @@ export const EXECUTION_MODES: ModeOption[] = [
   {
     value: "require_approval",
     label: "Require approval",
-    description: "Every change the assistant plans waits for a person to approve it.",
+    description: "Every change the assistant proposes is dry-run, then waits for an engineer or admin to approve it.",
     recommended: true,
   },
   {
     value: "auto",
     label: "Automatic",
-    description: "Changes run without approval. Only for test clusters you can afford to break.",
+    description:
+      "Changes proposed by engineers and admins run right after the dry-run, without approval. Only for test clusters.",
     dangerous: true,
   },
 ];

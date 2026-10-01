@@ -1,89 +1,167 @@
-"""Tests for the tool registry and MCP tools, with an in-process MCP server (no network)."""
+"""Tool registry, custom CLI tools (kubectl-ai style), and built-in tool helpers."""
 
 from __future__ import annotations
 
 import pytest
-from mcp.server.mcpserver import MCPServer
 
-from app.modules.tools import mcp_client
+from app.modules.nl_command import intent
 from app.modules.tools.builtin.logs import build_logql
+from app.modules.tools.custom import CustomToolDef
 from app.modules.tools.guard import ToolInputError
-from app.modules.tools.registry import McpToolRecord, ToolRegistry, mcp_tool_name
+from app.modules.tools.registry import ToolRegistry
 from app.modules.tools.schema import Danger
 
 
-@pytest.fixture
-def server() -> MCPServer:
-    srv = MCPServer("demo")
-
-    @srv.tool()
-    def add(a: int, b: int) -> int:
-        """Add two numbers."""
-        return a + b
-
-    @srv.tool()
-    def fail() -> str:
-        """Always fails."""
-        raise RuntimeError("nope")
-
-    return srv
-
-
-async def test_list_and_call_tools_of_an_mcp_server(server):
-    tools = await mcp_client.list_tools("mem://demo", _server=server)
-    assert {t.name for t in tools} == {"add", "fail"}
-    add = next(t for t in tools if t.name == "add")
-    assert add.input_schema["required"] == ["a", "b"]
-    assert await mcp_client.call_tool("mem://demo", "add", {"a": 2, "b": 3}, _server=server) == "5"
-
-
-async def test_tool_error_becomes_a_readable_message(server):
-    with pytest.raises(mcp_client.McpError, match="reported an error"):
-        await mcp_client.call_tool("mem://demo", "fail", {}, _server=server)
-
-
-def _record(tool="add"):
-    return McpToolRecord(
-        server_name="demo", server_url="http://x/mcp", token=None, tool=tool,
-        description="Add two numbers.", input_schema={"type": "object", "properties": {}},
-        read_only_hint=True,
+def _kubectl(**kw) -> CustomToolDef:
+    return CustomToolDef(
+        name="kubectl",
+        title="kubectl",
+        description="The Kubernetes CLI.",
+        command="kubectl",
+        read_only_prefixes=["get", "describe", "rollout status"],
+        **kw,
     )
 
 
-def test_external_tools_start_disabled_and_write_whatever_the_server_claims():
+def test_custom_tools_are_listed_and_toggled_on_their_own_row():
     reg = ToolRegistry()
-    reg.set_mcp_tools("demo", [_record()])
-    spec = reg.get("demo__add")
-    assert spec is not None
-    assert not reg.is_enabled(spec)
-    assert reg.danger(spec) is Danger.WRITE  # readOnlyHint=True is NOT trusted
-    assert spec.tool not in reg.chat_tools()
+    reg.set_custom_tools([_kubectl()])
+    spec = reg.get("kubectl")
+    assert spec is not None and spec.source == "custom"
+    assert spec.danger is Danger.WRITE  # mixed read/change: never shown as harmless
+    assert reg.is_enabled(spec)
+    reg.set_enabled("kubectl", False)
+    assert reg.can_run(spec) == "This tool is disabled."
+    assert reg.custom_def("kubectl").enabled is False
 
 
-def test_reviewed_external_tool_reaches_the_chat():
+def test_removing_a_custom_tool_takes_it_out_of_the_chat():
     reg = ToolRegistry()
-    reg.set_mcp_tools("demo", [_record()])
-    reg.set_state("demo__add", enabled=True)
-    assert reg.can_run(reg.get("demo__add")) is not None  # still WRITE
-    reg.set_state("demo__add", danger=Danger.READ)
-    assert reg.can_run(reg.get("demo__add")) is None
+    reg.set_custom_tools([_kubectl()])
+    reg.remove_custom("kubectl")
+    assert reg.get("kubectl") is None
+    assert all(t.name != "kubectl" for t in reg.chat_tools())
 
 
-def test_builtin_danger_cannot_be_downgraded():
+def test_builtin_tools_can_be_switched_off():
     reg = ToolRegistry()
-    reg.set_state("list_pods", danger=Danger.DESTRUCTIVE)
-    assert reg.danger(reg.get("list_pods")) is Danger.READ
+    reg.set_enabled("list_pods", False)
+    assert reg.can_run(reg.get("list_pods")) == "This tool is disabled."
 
 
-def test_removing_a_server_removes_its_tools():
+def test_write_tools_are_not_offered_in_read_only_mode(monkeypatch):
+    from app.core.config import Settings
+    from app.modules.tools.builtin import actions
+
+    monkeypatch.setattr(
+        actions, "get_settings", lambda: Settings(_env_file=None, K8S_EXECUTION_MODE="read_only")
+    )
     reg = ToolRegistry()
-    reg.set_mcp_tools("demo", [_record("add"), _record("sub")])
-    reg.remove_mcp_server("demo")
-    assert reg.get("demo__add") is None and reg.get("demo__sub") is None
+    assert "read_only" in (reg.can_run(reg.get("scale_workload")) or "")
 
 
-def test_tool_names_are_legal_for_model_providers():
-    assert mcp_tool_name("my server", "get.thing/v2") == "my_server__get_thing_v2"
+# --- read or change? (intent.py) -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        ("get pods -n shop", "read"),
+        ("kubectl get pods -n shop", "read"),  # the program repeated: dropped
+        ("rollout status deployment/api -n shop", "read"),
+        ("rollout restart deployment/api -n shop", "write"),
+        ("delete pod x -n shop", "write"),
+        ("getx pods", "write"),  # a prefix matches whole words only
+    ],
+)
+def test_classify_by_read_only_prefixes(args, expected):
+    tokens = intent.split_arguments("kubectl", args)
+    assert intent.classify(tokens, ["get", "describe", "rollout status"]) == expected
+
+
+def test_shell_syntax_is_just_arguments():
+    # No shell: "; rm -rf /" can't become a second command.
+    tokens = intent.split_arguments("kubectl", "get pods; rm -rf /")
+    assert tokens == ["get", "pods;", "rm", "-rf", "/"]
+    assert intent.classify(tokens, ["get"]) == "read"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        "get secrets -n shop",
+        "get secret/db -n shop",
+        "logs api -f -n shop",
+        "get pods -w",
+        "exec -it api -n shop -- sh",
+        "port-forward svc/api 8080:80",
+    ],
+)
+def test_refused_arguments(args):
+    tokens = intent.split_arguments("kubectl", args)
+    with pytest.raises(ToolInputError):
+        intent.check_tokens(tokens)
+
+
+def test_helm_install_flag_is_not_mistaken_for_a_tty():
+    intent.check_tokens(intent.split_arguments("helm", "upgrade -i kps chart -n monitoring"))
+
+
+@pytest.mark.parametrize(
+    ("args", "ns"),
+    [("get pods -n shop", "shop"), ("get pods --namespace=shop", "shop"), ("get pods", None)],
+)
+def test_namespace_of(args, ns):
+    assert intent.namespace_of(intent.split_arguments("kubectl", args)) == ns
+
+
+async def test_custom_tool_read_runs_in_the_sandbox(monkeypatch):
+    from app.modules.sandbox.base import ExecResult
+    from app.modules.tools import custom
+
+    seen = {}
+
+    async def fake_run(argv, *, time_limit):
+        seen["argv"] = argv
+        return ExecResult(exit_code=0, stdout="pod-a Running", stderr="", duration_ms=5)
+
+    monkeypatch.setattr(custom, "run_command", fake_run)
+    spec = custom.build_spec(_kubectl())
+    out = await spec.tool.ainvoke({"arguments": "get pods -n shop"})
+    assert seen["argv"] == ["kubectl", "get", "pods", "-n", "shop"]
+    assert "pod-a Running" in out and "exit 0" in out
+
+
+async def test_custom_tool_change_is_proposed_not_run(monkeypatch):
+    from app.modules.tools import custom
+    from app.modules.tools.builtin import actions
+
+    async def must_not_run(*a, **kw):
+        raise AssertionError("a change must not run before approval")
+
+    proposed = {}
+
+    async def fake_propose(build, *, source, config):
+        plan = await build()
+        proposed["plan"] = plan
+        return "PROPOSED"
+
+    monkeypatch.setattr(custom, "run_command", must_not_run)
+    monkeypatch.setattr(actions, "propose", fake_propose)
+    spec = custom.build_spec(_kubectl())
+    out = await spec.tool.ainvoke({"arguments": "delete pod api-1 -n shop"})
+    assert out == "PROPOSED"
+    plan = proposed["plan"]
+    assert plan.argv == ["kubectl", "delete", "pod", "api-1", "-n", "shop"]
+    assert plan.danger == "dangerous" and plan.namespace == "shop"
+
+
+async def test_custom_tool_refuses_changes_in_protected_namespaces():
+    from app.modules.tools import custom
+
+    spec = custom.build_spec(_kubectl())
+    out = await spec.tool.ainvoke({"arguments": "delete pod coredns-1 -n kube-system"})
+    assert "protected" in out
 
 
 def test_logql_text_filter_is_an_escaped_literal():
@@ -95,3 +173,45 @@ def test_logql_text_filter_is_an_escaped_literal():
 def test_logql_rejects_unsafe_pod_prefixes(pod):
     with pytest.raises(ToolInputError):
         build_logql(namespace="shop", pod=pod, app=None, contains=None, errors_only=False)
+
+
+# --------------------------------------------------------------------------
+# list_pods groups pods by their CURRENT state
+# --------------------------------------------------------------------------
+
+from datetime import UTC, datetime, timedelta  # noqa: E402
+from types import SimpleNamespace as NS  # noqa: E402
+
+from app.modules.tools.builtin import kubernetes as k8s_tools  # noqa: E402
+
+
+def _pod(phase, *, ready=True, restarts=0, waiting=None, last=None):
+    ago = datetime.now(UTC) - timedelta(hours=20)
+    status = NS(
+        name="app", ready=ready, restart_count=restarts,
+        state=NS(waiting=NS(reason=waiting, message="") if waiting else None, terminated=None, running=None),
+        last_state=NS(terminated=NS(reason=last[0], exit_code=last[1], finished_at=ago)) if last else None,
+    )
+    return NS(
+        metadata=NS(name=f"p-{phase}-{waiting}-{restarts}", creation_timestamp=ago),
+        status=NS(phase=phase, container_statuses=[status]),
+        spec=NS(node_name="lab1"),
+    )
+
+
+def test_running_pod_with_old_restarts_is_not_failing():
+    group, row = k8s_tools._pod_row(_pod("Running", restarts=16, last=("Error", 143)))
+    assert group == k8s_tools.RESTARTED
+    assert "16 restart(s), last one 20h ago (Error, exit 143)" in row
+
+
+def test_crashloop_is_failing_now():
+    group, row = k8s_tools._pod_row(
+        _pod("Running", ready=False, restarts=5, waiting="CrashLoopBackOff", last=("OOMKilled", 137))
+    )
+    assert group == k8s_tools.FAILING and "CrashLoopBackOff (last exit OOMKilled, code 137)" in row
+
+
+def test_finished_probe_pod_is_completed_not_a_problem():
+    group, _ = k8s_tools._pod_row(_pod("Succeeded", ready=False))
+    assert group == k8s_tools.COMPLETED

@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from contextlib import AbstractContextManager, nullcontext
 from typing import TYPE_CHECKING, Any
 
 from app.core.config import get_settings
@@ -222,6 +223,26 @@ def get_callback_handler(*, trace_id: str | None = None) -> Any | None:
         return None
 
 
+def trace_attributes(
+    *, user_id: str, session_id: str, tags: list[str] | None = None
+) -> AbstractContextManager[Any]:
+    """Put user, session and tags on EVERY span started inside the block.
+
+    Langfuse v4 (events-only mode) stores these per observation and its
+    aggregations only count observations that carry them. Setting them as
+    CallbackHandler metadata reached the root span only, so the model calls
+    nested in the graph — where tokens and cost live — had none.
+    A no-op when Langfuse is disabled.
+    """
+    if get_langfuse() is None:
+        return nullcontext()
+    try:
+        from langfuse import propagate_attributes
+    except ImportError:
+        return nullcontext()
+    return propagate_attributes(user_id=user_id, session_id=session_id, tags=tags)
+
+
 def shutdown_langfuse() -> None:
     """Flush whatever is left in the queue, then close. Called at app shutdown.
 
@@ -249,4 +270,5 @@ __all__ = [
     "get_tracer_provider",
     "init_langfuse",
     "shutdown_langfuse",
+    "trace_attributes",
 ]

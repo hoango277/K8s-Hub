@@ -1,0 +1,225 @@
+# K8s-Hub sandbox: where custom-tool commands and skill scripts run when
+# SANDBOX_BACKEND=kubernetes (backend/app/modules/sandbox/kubernetes.py).
+#
+# One pod, two containers:
+#   cli     kubectl + helm, with the `sandbox` ServiceAccount token mounted
+#           ONLY here. Runs custom-tool commands: reads at once, changes only
+#           after an engineer approved them in K8s-Hub.
+#   runner  Python, NO token at all. Runs skill scripts: whatever a script
+#           does, it can't reach the cluster API with an identity.
+# Neither container ever sees the backend's API keys, database or JWT secret.
+#
+# The ServiceAccount can read most things and change workloads, but NEVER
+# read Secrets (so `helm list/status`, which keep release state in Secrets,
+# don't work here — use the built-in tools for Helm-managed workloads).
+#
+# Apply (as cluster admin):   kubectl apply -f sandbox.yaml
+# Then set SANDBOX_BACKEND=kubernetes in Settings > Advanced (or .env).
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: k8s-hub-sandbox
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sandbox
+  namespace: k8s-hub-sandbox
+# The token is mounted by hand into `cli` only (see the Deployment).
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8s-hub-sandbox
+rules:
+  # Read (no Secrets).
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - services
+      - endpoints
+      - configmaps
+      - persistentvolumeclaims
+      - persistentvolumes
+      - events
+      - namespaces
+      - nodes
+      - serviceaccounts
+      - resourcequotas
+      - limitranges
+      - replicationcontrollers
+    verbs: [get, list, watch]
+  - apiGroups: [apps, batch, autoscaling, policy, networking.k8s.io, storage.k8s.io, events.k8s.io, discovery.k8s.io]
+    resources: ["*"]
+    verbs: [get, list, watch]
+  - apiGroups: [metrics.k8s.io]
+    resources: [pods, nodes]
+    verbs: [get, list]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get, list]
+  # Change workloads — only ever used for commands an engineer approved.
+  - apiGroups: [""]
+    resources: [pods, services, configmaps, persistentvolumeclaims]
+    verbs: [create, update, patch, delete]
+  - apiGroups: [apps]
+    resources: [deployments, deployments/scale, statefulsets, statefulsets/scale, daemonsets, replicasets]
+    verbs: [create, update, patch, delete]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [create, update, patch, delete]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [create, update, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8s-hub-sandbox
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8s-hub-sandbox
+subjects:
+  - kind: ServiceAccount
+    name: sandbox
+    namespace: k8s-hub-sandbox
+---
+# Who may exec into the sandbox: the K8s-Hub backend (when deployed as a pod)
+# and the dev workspace. Only exec — not create pods, not read anything else.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sandbox-exec
+  namespace: k8s-hub-sandbox
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create, get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sandbox-exec
+  namespace: k8s-hub-sandbox
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: sandbox-exec
+subjects:
+  - kind: ServiceAccount
+    name: k8s-hub-backend
+    namespace: k8s-hub
+  - kind: ServiceAccount
+    name: workspace
+    namespace: k8s-hub-dev
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-hub-sandbox
+  namespace: k8s-hub-sandbox
+  labels: { app: k8s-hub-sandbox }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: k8s-hub-sandbox }
+  template:
+    metadata:
+      labels: { app: k8s-hub-sandbox }
+    spec:
+      serviceAccountName: sandbox
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile: { type: RuntimeDefault }
+      initContainers:
+        # Fetch kubectl and helm into a shared volume, so no custom image has
+        # to be built and pushed. Pin the versions for reproducible demos.
+        - name: fetch-tools
+          image: curlimages/curl:8.10.1
+          env:
+            - { name: KUBECTL_VERSION, value: "stable" }
+            - { name: HELM_VERSION, value: "v3.18.4" }
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              v="$KUBECTL_VERSION"
+              [ "$v" = stable ] && v=$(curl -fsSL https://dl.k8s.io/release/stable.txt)
+              curl -fsSLo /tools/kubectl "https://dl.k8s.io/release/$v/bin/linux/amd64/kubectl"
+              chmod +x /tools/kubectl
+              curl -fsSL "https://get.helm.sh/helm-$HELM_VERSION-linux-amd64.tar.gz" \
+                | tar -xz -C /tmp linux-amd64/helm
+              mv /tmp/linux-amd64/helm /tools/helm
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tools, mountPath: /tools }
+            - { name: fetch-tmp, mountPath: /tmp }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 500m, memory: 128Mi }
+      containers:
+        - name: cli
+          image: python:3.12-slim
+          command: ["sleep", "infinity"]
+          env:
+            - { name: PATH, value: "/tools:/usr/local/bin:/usr/bin:/bin" }
+            - { name: HOME, value: /tmp }
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: tools, mountPath: /tools, readOnly: true }
+            - { name: cli-tmp, mountPath: /tmp }
+            # The ServiceAccount token, where kubectl looks for it — here only.
+            - { name: sa-token, mountPath: /var/run/secrets/kubernetes.io/serviceaccount, readOnly: true }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+        - name: runner
+          image: python:3.12-slim
+          command: ["sleep", "infinity"]
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: runner-tmp, mountPath: /tmp }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+      volumes:
+        - name: tools
+          emptyDir: {}
+        - name: fetch-tmp
+          emptyDir: {}
+        - name: cli-tmp
+          emptyDir: { sizeLimit: 256Mi }
+        - name: runner-tmp
+          emptyDir: { sizeLimit: 256Mi }
+        - name: sa-token
+          projected:
+            sources:
+              - serviceAccountToken: { path: token, expirationSeconds: 3600 }
+              - configMap:
+                  name: kube-root-ca.crt
+                  items: [{ key: ca.crt, path: ca.crt }]
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef: { fieldPath: metadata.namespace }

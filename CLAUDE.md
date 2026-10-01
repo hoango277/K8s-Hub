@@ -140,20 +140,49 @@ Ba vai trò: `admin` (toàn quyền), `engineer` (sau này thêm/sửa/xoá skil
   thư mục tuỳ chọn `scripts/`, `references/`, `assets/`. Code ở
   `app/modules/skills/`. **Skill KHÔNG phải công cụ LangChain** — đừng gọi công cụ
   là "skill" trong mã hay giao diện.
-- **Tool = code LLM gọi được**: đọc pod, metrics, log, trace, công cụ từ MCP
-  server. Code ở `app/modules/tools/`. Skill hướng dẫn agent dùng tool nào.
+- **Tool = code LLM gọi được**: đọc pod/mọi loại tài nguyên, metrics, log, trace,
+  đề xuất thay đổi, và custom tool. Code ở `app/modules/tools/`. Skill hướng dẫn
+  agent dùng tool nào.
 - Nạp skill theo **progressive disclosure**: chỉ `name` + `description` vào system
   prompt; thân SKILL.md qua `load_skill`, file phụ qua `read_skill_file`, script
   qua `run_skill_script`.
 - Skill mẫu nằm trong repo (`backend/skills/<name>/`, chỉ đọc trên web); skill tạo
   hoặc import trên web lưu CSDL, có Import/Export `.zip` đúng chuẩn.
-- **Script chạy thẳng trên backend — quyết định có chủ ý.** Ai sửa được skill là
-  chạy được mã trên server, nên chỉ engineer+ tạo/sửa skill. Giữ các hàng rào trong
-  `scripts.py`: không qua shell, môi trường tối giản (không khoá API/DB/JWT), thư
-  mục tạm, giới hạn thời gian, ghi lịch sử mọi lần chạy.
-- Tool đọc cụm: chỉ tool **read** đã bật mới tới chat; LLM không viết
-  PromQL/LogQL/TraceQL, kết quả luôn được tóm tắt. Tool từ MCP server mặc định
-  **tắt và "write"** tới khi engineer duyệt — không tin `readOnlyHint` của server.
+- **MCP server bên ngoài: chỉ admin/engineer thêm, và họ chọn từng tool có cần
+  phê duyệt hay không** (bỏ ngày 30/09, thêm lại 01/10/2026 theo yêu cầu người
+  dùng). Tool mới **tắt + cần phê duyệt**, mặc kệ server tự nhận `readOnlyHint`.
+  Tool cần phê duyệt thì lời gọi thành đề xuất trong bảng `approvals` (không có
+  dry-run, thẻ hiện đúng tham số); tool được bỏ phê duyệt thì gọi thẳng. Chính
+  sách đọc lúc gọi nên đổi là có hiệu lực ngay. Tắt phê duyệt phải qua
+  `ConfirmDialog` destructive. Token server mã hoá, không lưu trong `plan`.
+- **Custom tool theo kiểu kubectl-ai**: engineer khai báo trên web một CLI
+  (`command` cố định, mô tả, cách dùng, danh sách **lệnh con chỉ đọc**). LLM chỉ
+  viết phần đối số; chạy không qua shell. Lệnh khớp tiền tố chỉ đọc chạy ngay
+  trong sandbox, còn lại thành đề xuất chờ duyệt. Luôn chặn Secret, `-w/--watch`,
+  `logs -f`, `exec -it`, `port-forward`.
+- **Script và lệnh chạy trong sandbox** (`SANDBOX_BACKEND`): `local` = tiến trình
+  con trên backend (hàng rào, không cô lập); `kubernetes` = pod sandbox
+  (`deploy/sandbox/sandbox.yaml`) — container `runner` không có token chạy script,
+  container `cli` có ServiceAccount riêng (không đọc Secret) chạy lệnh. Ai sửa
+  được skill/custom tool là chạy được mã ở đó, nên chỉ engineer+ tạo/sửa.
+- Tool đọc cụm: LLM không viết PromQL/LogQL/TraceQL, kết quả luôn được tóm tắt,
+  Secret không bao giờ được đọc.
+
+## Thay đổi cụm: luôn qua phê duyệt
+
+- Tool ghi (`scale_workload`, `restart_workload`, `set_image`, `delete_pod`, `delete_resource`,
+  `apply_manifest`, lệnh ghi của custom tool, tool MCP đang "cần phê duyệt") **chỉ ĐỀ XUẤT**: dựng kế hoạch →
+  kiểm tra (namespace được phép, namespace bảo vệ như `kube-system`, đối tượng
+  tồn tại) → **dry-run phía server** + diff → lưu vào bảng `approvals`. Không có
+  đường nào để LLM tự thay đổi cụm.
+- Lượt chat **không treo** chờ người duyệt: đề xuất được lưu, lượt kết thúc;
+  engineer/admin quyết định sau (thẻ trong chat hoặc trang Approvals). Kết quả
+  được ghi lại vào hội thoại thành ghi chú hệ thống để lượt sau trợ lý biết.
+- Thứ được chạy là **đúng `plan` đã lưu** lúc dry-run, không hỏi lại LLM. Đề
+  xuất hết hạn sau `APPROVAL_TTL_MINUTES`. Sau khi chạy có bước kiểm tra lại
+  (rollout xong chưa…). Dòng `approvals` không bao giờ xoá — nó là nhật ký.
+- `K8S_EXECUTION_MODE`: `read_only` không đưa tool ghi cho LLM; `auto` chỉ bỏ
+  qua phê duyệt khi người yêu cầu là engineer/admin.
 
 ## Giám sát: mỗi thứ đúng một chỗ
 

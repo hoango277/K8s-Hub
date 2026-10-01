@@ -180,6 +180,22 @@ async def add_user_message(
     return message
 
 
+async def add_system_note(db: AsyncSession, thread_id: uuid.UUID, content: str) -> Message:
+    """A line from K8s-Hub itself — e.g. "the change you proposed was approved
+    and executed". Shown in the chat as a note, and passed to the model on the
+    next turn (see history_to_messages) so it knows what happened meanwhile."""
+    message = Message(
+        thread_id=thread_id,
+        role="system",
+        content=content,
+        position=await next_position(db, thread_id),
+        status="complete",
+    )
+    db.add(message)
+    await db.flush()
+    return message
+
+
 async def start_assistant_message(
     db: AsyncSession,
     thread: ChatThread,
@@ -215,6 +231,7 @@ async def finish_assistant_message(
     *,
     content: str,
     reasoning: str = "",
+    reasoning_steps: Sequence[dict[str, Any]] = (),
     tool_calls: Sequence[dict[str, Any]] = (),
     latency_ms: int | None = None,
     prompt_tokens: int | None = None,
@@ -229,6 +246,7 @@ async def finish_assistant_message(
     message.content = content
     # Store an empty string as NULL: saves space and distinguishes 'none' from ''.
     message.reasoning = reasoning or None
+    message.reasoning_steps = list(reasoning_steps) or None
     message.status = "error" if error else "complete"
     message.error = error
     message.latency_ms = latency_ms
@@ -247,6 +265,7 @@ async def finish_assistant_message(
                 error=tc.get("error"),
                 duration_ms=tc.get("duration_ms"),
                 started_at=tc.get("started_at") or datetime.now(UTC),
+                approval_id=uuid.UUID(str(tc["approval_id"])) if tc.get("approval_id") else None,
             )
         )
 
@@ -257,6 +276,7 @@ async def finish_assistant_message(
 __all__ = [
     "DEFAULT_TITLE",
     "HISTORY_LIMIT",
+    "add_system_note",
     "add_user_message",
     "create_thread",
     "delete_thread",

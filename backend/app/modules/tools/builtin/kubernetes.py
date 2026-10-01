@@ -32,37 +32,66 @@ def _age(ts: datetime | None) -> str:
     return f"{seconds}s"
 
 
-def _container_problem(status: Any) -> str | None:
-    """The most telling thing about one container, or None if it is healthy."""
+# Pod groups in list_pods output, most urgent first. Keeping "failing now"
+# apart from "restarted earlier" matters: mixed into one "problems" list, the
+# model reported pods that were Running and ready as CrashLoopBackOff (seen on
+# lab1 with the Langfuse worker: 16 old restarts, healthy now).
+FAILING, RESTARTED, HEALTHY, COMPLETED = range(4)
+GROUP_TITLES = {
+    FAILING: "FAILING NOW",
+    RESTARTED: "RUNNING NOW, BUT RESTARTED EARLIER",
+    HEALTHY: "HEALTHY",
+    COMPLETED: "COMPLETED (finished jobs/probes, not a problem)",
+}
+
+
+def _current_problem(status: Any, phase: str) -> str | None:
+    """What is wrong with this container RIGHT NOW, or None."""
     state = status.state
     if state and state.waiting and state.waiting.reason not in (None, "ContainerCreating"):
-        return f"{status.name}: {state.waiting.reason}"
+        msg = f"{status.name}: {state.waiting.reason}"
+        last = status.last_state.terminated if status.last_state else None
+        if last:
+            msg += f" (last exit {last.reason}, code {last.exit_code})"
+        return msg
     if state and state.terminated and state.terminated.exit_code != 0:
         t = state.terminated
         return f"{status.name}: terminated {t.reason} (exit {t.exit_code})"
-    last = status.last_state.terminated if status.last_state else None
-    if last and last.reason in ("OOMKilled", "Error"):
-        return f"{status.name}: last exit {last.reason} (exit {last.exit_code})"
-    if not status.ready:
-        return f"{status.name}: not ready"
+    if phase == "Running" and not status.ready:
+        return f"{status.name}: running but not ready"
     return None
 
 
-def _pod_row(pod: Any) -> tuple[bool, str]:
+def _last_restart(status: Any) -> str | None:
+    last = status.last_state.terminated if status.last_state else None
+    if not status.restart_count or not last:
+        return None
+    return (
+        f"{status.name}: {status.restart_count} restart(s), last one {_age(last.finished_at)} ago "
+        f"({last.reason}, exit {last.exit_code})"
+    )
+
+
+def _pod_row(pod: Any) -> tuple[int, str]:
     statuses = pod.status.container_statuses or []
+    phase = pod.status.phase or "?"
     ready = sum(1 for s in statuses if s.ready)
     restarts = sum(s.restart_count for s in statuses)
-    problems = [p for s in statuses if (p := _container_problem(s))]
-    phase = pod.status.phase or "?"
-    if phase not in ("Running", "Succeeded") and not problems:
-        problems.append(f"phase {phase}")
     row = (
         f"- {pod.metadata.name}: {phase}, ready {ready}/{len(statuses)}, restarts {restarts}, "
-        f"age {_age(pod.metadata.creation_timestamp)}, node {pod.spec.node_name or '-'}"
+        f"age {_age(pod.metadata.creation_timestamp)}"
     )
-    if problems:
-        row += " — " + "; ".join(problems)
-    return bool(problems), row
+    if phase == "Succeeded":
+        return COMPLETED, row
+    now = [p for s in statuses if (p := _current_problem(s, phase))]
+    if phase not in ("Running", "Succeeded") and not now:
+        now.append(f"phase {phase}")
+    if now:
+        return FAILING, row + " — " + "; ".join(now)
+    past = [p for s in statuses if (p := _last_restart(s))]
+    if past:
+        return RESTARTED, row + " — " + "; ".join(past)
+    return HEALTHY, row
 
 
 def _fail(exc: Exception) -> str:
@@ -73,8 +102,10 @@ def _fail(exc: Exception) -> str:
 async def list_pods(namespace: str, label_selector: str | None = None) -> str:
     """List pods in a namespace with their health: phase, readiness, restarts and problems.
 
-    Use first when the user asks what is failing or why an app is down. Pods
-    with problems (CrashLoopBackOff, OOMKilled, not ready) are listed first.
+    Use first when the user asks what is failing or why an app is down. Pods are
+    grouped: FAILING NOW (e.g. CrashLoopBackOff, not ready), RUNNING NOW BUT
+    RESTARTED EARLIER (healthy at the moment — report them as past restarts, not
+    as crashing), HEALTHY, and COMPLETED (finished jobs, not a problem).
 
     Args:
         namespace: Kubernetes namespace.
@@ -91,13 +122,29 @@ async def list_pods(namespace: str, label_selector: str | None = None) -> str:
         return f"No pods in namespace {namespace}" + (
             f" matching {label_selector}." if label_selector else "."
         )
-    rows = sorted((_pod_row(p) for p in pods), key=lambda r: (not r[0], r[1]))
-    unhealthy = sum(1 for bad, _ in rows if bad)
-    head = f"{len(pods)} pod(s) in {namespace}, {unhealthy} with problems:"
-    shown = [r for _, r in rows[:50]]
-    if len(rows) > 50:
-        shown.append(f"… {len(rows) - 50} more healthy pods not shown")
-    return "\n".join([head, *shown])
+    groups: dict[int, list[str]] = {}
+    for pod in pods:
+        group, row = _pod_row(pod)
+        groups.setdefault(group, []).append(row)
+    counts = ", ".join(
+        f"{len(groups.get(g, []))} {GROUP_TITLES[g].split(' (')[0].lower()}"
+        for g in (FAILING, RESTARTED, HEALTHY, COMPLETED)
+        if groups.get(g)
+    )
+    lines = [f"{len(pods)} pod(s) in {namespace}: {counts}."]
+    shown = 0
+    for group in (FAILING, RESTARTED, HEALTHY, COMPLETED):
+        rows = sorted(groups.get(group, []))
+        if not rows:
+            continue
+        lines.append(f"{GROUP_TITLES[group]}:")
+        for row in rows:
+            if shown >= 50:
+                lines.append("… more pods not shown")
+                break
+            lines.append(row)
+            shown += 1
+    return "\n".join(lines)
 
 
 @tool(parse_docstring=True)

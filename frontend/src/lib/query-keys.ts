@@ -48,6 +48,13 @@ export const qk = {
     all: ["tools"] as const,
     list: ["tools", "list"] as const,
     runs: ["tools", "runs"] as const,
+    templates: ["tools", "templates"] as const,
     servers: ["tools", "servers"] as const,
+  },
+  approvals: {
+    all: ["approvals"] as const,
+    list: (status: string | null) => ["approvals", "list", status] as const,
+    detail: (id: string) => ["approvals", "detail", id] as const,
+    summary: ["approvals", "summary"] as const,
   },
 } as const;

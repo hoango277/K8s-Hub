@@ -5,7 +5,7 @@ A **skill** is a folder that teaches the agent HOW to do a task:
 ```
 <name>/
   SKILL.md        YAML front matter (name, description) + instructions
-  scripts/        optional — code the agent can run (runs on the backend)
+  scripts/        optional — code the agent can run (in the sandbox, see below)
   references/     optional — documents the agent reads when needed
   assets/         optional — templates, examples
 ```
@@ -33,13 +33,20 @@ results.
 | `parser.py` | Validate a skill folder: front matter, name rules, safe paths, size limits |
 | `store.py` | In-memory list of skills (built-in from `backend/skills/` + custom from the DB) |
 | `agent_tools.py` | `skills_prompt()` and the three tools the agent uses |
-| `scripts.py` | Run a script on the backend: no shell, stripped env, temp dir, timeout |
+| `scripts.py` | Checks a script run (scripts/ only, .py/.sh, argument limits) and hands it to the sandbox |
 
 Persistence, import/export and run history: `app/services/skill_service.py`.
 API: `app/api/v1/skills.py`. Built-in skills: `backend/skills/`.
 
-## Scripts run on the backend — deliberate
+## Where scripts run — the sandbox
 
-Chosen over a sandbox. Whoever can edit a skill can run code on the K8s-Hub
-server, so editing is engineer+ only. See the guard rails in `scripts.py`; they
-limit accidents but are not isolation.
+`SANDBOX_BACKEND` (`app/modules/sandbox/`) decides:
+
+- `local` — a subprocess on the backend: no shell, stripped environment, temp
+  dir, time limit. Guard rails, not isolation (the original 29/09/2026 choice).
+- `kubernetes` — the `runner` container of the sandbox pod
+  (`deploy/sandbox/sandbox.yaml`): no ServiceAccount token, no backend secrets,
+  read-only root filesystem.
+
+Either way, whoever can edit a skill can run code there, so editing is
+engineer+ only.

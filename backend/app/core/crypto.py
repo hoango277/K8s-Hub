@@ -1,4 +1,4 @@
-"""Encrypt secrets stored in the database (provider API keys, MCP server tokens).
+"""Encrypt secrets stored in the database (provider API keys).
 
 Fernet with a key derived from JWT_SECRET. Not a vault — whoever has both the
 database and .env can decrypt — but a database dump or a read-only DB user no

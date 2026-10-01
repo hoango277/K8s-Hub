@@ -107,6 +107,7 @@ export function SkillRunItem({ run, showSkill = true }: { run: SkillRun; showSki
 
 export function ToolRunItem({ run }: { run: ToolRun }) {
   const args = Object.keys(run.args).length > 0 ? JSON.stringify(run.args, null, 2) : null;
+  const TriggerIcon = run.trigger === "chat" ? MessageSquare : MousePointerClick;
   return (
     <RunShell
       ok={run.ok}
@@ -114,6 +115,12 @@ export function ToolRunItem({ run }: { run: ToolRun }) {
       durationMs={run.duration_ms}
       actor={run.actor_email}
       title={<code className="text-xs">{run.tool}</code>}
+      meta={
+        <Badge tone={run.trigger === "chat" ? "info" : "neutral"}>
+          <TriggerIcon aria-hidden className="size-3" />
+          {run.trigger === "chat" ? "From chat" : "Manual"}
+        </Badge>
+      }
     >
       {args && (
         <div>
@@ -180,7 +187,7 @@ export function ToolRunList() {
       <EmptyState
         icon={History}
         title="No tool runs yet"
-        description="Use “Try it” on a tool under Tools to run it by hand; each run is recorded here with its arguments and output."
+        description="Tools the assistant calls in chat, and tools run by hand with “Try it” under Tools, are recorded here with their arguments and output."
         className="py-10"
       >
         <a href="#tools" className="text-sm font-medium underline underline-offset-2 hover:opacity-80">

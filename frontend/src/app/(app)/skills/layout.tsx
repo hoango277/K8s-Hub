@@ -1,7 +1,5 @@
-import { ToastProvider } from "@/components/ui/toast";
-
-/** Shared by the list and detail pages so a toast survives navigating between
- * them (e.g. "Deleted X" after the detail page returns to the list). */
+/** Kept as a route segment boundary; the toast area now lives in the (app)
+ * layout so every page shares it. */
 export default function SkillsLayout({ children }: { children: React.ReactNode }) {
-  return <ToastProvider>{children}</ToastProvider>;
+  return children;
 }

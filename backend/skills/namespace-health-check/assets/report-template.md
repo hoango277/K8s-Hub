@@ -3,6 +3,10 @@
 **Needs attention**
 - <deployment/pod>: <problem> — <evidence: ready 1/3, CrashLoopBackOff, OOMKilled x4…>
 
+**Restarted earlier, healthy now**
+- <pod>: <N> restarts, last <when> (<reason>, exit <code>) — <one-line reading, e.g.
+  several pods restarting at the same moment with exit 255 usually means the node rebooted>
+
 **Warnings in the last hour**
 - <reason> ×<count> on <object>: <message>
 

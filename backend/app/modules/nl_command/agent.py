@@ -13,15 +13,16 @@ events for every step (`astream_events`), and that is exactly what lets the
 chat panel show "calling tool X" in real time. Writing it by hand would mean
 rebuilding all of that.
 
-No checkpointer yet: history is reloaded from the system's own database
-(the `messages` table) on every turn, so LangGraph doesn't need to remember it
-for us. A checkpointer only becomes necessary with the action approval step —
-which needs to pause midway and resume later.
+No checkpointer: history is reloaded from the system's own database (the
+`messages` table) on every turn. The approval flow doesn't need one either:
+a write tool stores the proposal and the turn ENDS; the decision comes later
+and is written back into the conversation (app/services/approval_service.py).
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterable, Sequence
 from typing import Any
 
@@ -38,9 +39,40 @@ from app.modules.nl_command.tools import get_tools
 
 logger = logging.getLogger(__name__)
 
-# Stops the tool-calling loop from running forever. Each round is 2 steps
-# (assistant + tools), so this number allows about 12 tool calls per turn.
-RECURSION_LIMIT = 25
+# Tool rounds (one assistant reply asking for tools + running them) allowed
+# per turn. When they run out, the model is asked ONE more time without tools
+# and must answer with what it found — instead of the turn dying on
+# LangGraph's recursion limit with an error and nothing to show for it.
+MAX_TOOL_ROUNDS = 10
+
+# Hard backstop, above the budget: each round is 2 graph steps (assistant +
+# tools), plus the final tool-less answer.
+RECURSION_LIMIT = MAX_TOOL_ROUNDS * 2 + 5
+
+# Seen on lab1 with gpt-oss: asked to create a pod, the model pasted the
+# manifest and wrote "sending the proposal for approval…" — but never called
+# apply_manifest, so no approval card existed and nothing could be approved.
+# Detected on the final answer and corrected ONCE per turn.
+NARRATED_CHANGE = re.compile(
+    r"```ya?ml[\s\S]*?apiVersion:[\s\S]*?kind:"
+    r"|\b(sending|submitting) (the |a |this )?(proposal|change|manifest)"
+    r"|\bi(?: will|'ll|'m going to) (propose|submit) (it|this|the change)"
+    r"|đang gửi đề xuất|gửi đề xuất tới|sẽ gửi đề xuất",
+    re.IGNORECASE,
+)
+NOT_CALLED = (
+    "Your reply describes a cluster change, but you did not call any write tool, so NOTHING was "
+    "proposed: no approval card exists. If you have what you need, call the write tool now "
+    "(e.g. apply_manifest) instead of describing it. If the change was already proposed earlier, "
+    "or you still need details from the user, answer briefly without calling a tool."
+)
+NUDGED = "k8s_hub_nudged"
+
+OUT_OF_BUDGET = (
+    "You have used all the tool calls allowed for this question. Do NOT call any tool. "
+    "Answer now with what you found, say clearly what is still unknown, and suggest what "
+    "to check next."
+)
 
 
 def build_chat_graph(
@@ -58,6 +90,7 @@ def build_chat_graph(
     """
     tool_list = list(get_tools() if tools is None else tools)
     llm = get_llm(provider=provider, model=model)
+    write_tools = _write_tool_names(tool_list)
 
     # With no tools, don't call bind_tools — some providers raise an error when
     # given an empty list.
@@ -80,7 +113,37 @@ def build_chat_graph(
         mistake for a provider problem. This is also why the project sets its
         Python floor at 3.11 (see pyproject.toml).
         """
-        reply = await bound_llm.ainvoke([system_message, *state["messages"]], config)
+        messages = [system_message, *state["messages"]]
+        if tool_list and _tool_rounds(state["messages"]) >= MAX_TOOL_ROUNDS:
+            logger.warning("Tool budget of %d rounds used up; forcing an answer", MAX_TOOL_ROUNDS)
+            reply = await llm.ainvoke([*messages, SystemMessage(content=OUT_OF_BUDGET)], config)
+            return {"messages": [reply]}
+        try:
+            reply = await bound_llm.ainvoke(messages, config)
+        except Exception as exc:
+            if not _is_unknown_tool_error(exc):
+                raise
+            # The model called a tool that isn't in the list — gpt-oss on Groq
+            # does this with tool names from its training ("repo_browser.
+            # open_file"), and Groq rejects the whole response. One corrected
+            # retry usually recovers; without it the turn is simply lost.
+            logger.warning("Model called an unknown tool, retrying once: %s", exc)
+            names = ", ".join(t.name for t in tool_list)
+            nudge = SystemMessage(
+                content=(
+                    "Your previous reply called a tool that does not exist. Call ONLY these "
+                    f"tools: {names}. To read a file of a skill, use read_skill_file."
+                )
+            )
+            reply = await bound_llm.ainvoke([*messages, nudge], config)
+
+        if write_tools and _narrates_without_calling(reply, state["messages"], write_tools):
+            logger.warning("Model described a change without calling a write tool; nudging once")
+            retry = await bound_llm.ainvoke(
+                [*messages, reply, SystemMessage(content=NOT_CALLED)], config
+            )
+            retry.additional_kwargs[NUDGED] = True
+            return {"messages": [reply, retry]}
         return {"messages": [reply]}
 
     graph = StateGraph(ChatState)
@@ -102,6 +165,69 @@ def build_chat_graph(
     return graph.compile()
 
 
+def _write_tool_names(tools: Sequence[BaseTool]) -> set[str]:
+    """Tools that propose changes: built-in WRITE/DESTRUCTIVE ones and custom CLI tools."""
+    from app.modules.tools.registry import registry
+    from app.modules.tools.schema import Danger
+
+    names = set()
+    for t in tools:
+        spec = registry.get(t.name)
+        if spec is not None and spec.danger is not Danger.READ:
+            names.add(t.name)
+    return names
+
+
+def _this_turn(messages: Sequence[AnyMessage]) -> list[AnyMessage]:
+    """Messages since the user's last question."""
+    out: list[AnyMessage] = []
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            break
+        out.append(message)
+    return out
+
+
+def _narrates_without_calling(
+    reply: AnyMessage, messages: Sequence[AnyMessage], write_tools: set[str]
+) -> bool:
+    if not isinstance(reply, AIMessage) or reply.tool_calls:
+        return False
+    text = reply.content if isinstance(reply.content, str) else str(reply.content)
+    if not NARRATED_CHANGE.search(text):
+        return False
+    # Asking the user for details is the RIGHT move when something is missing
+    # (Qwen on lab1: "the namespace doesn't exist — which tag? limits?"); an
+    # earlier, broader pattern nudged that and cost a second slow model call.
+    if "?" in text[-400:]:
+        return False
+    for m in _this_turn(messages):
+        if isinstance(m, AIMessage):
+            if m.additional_kwargs.get(NUDGED):
+                return False  # once per turn
+            if any(tc["name"] in write_tools for tc in m.tool_calls):
+                return False  # it did propose
+    return True
+
+
+def _tool_rounds(messages: Sequence[AnyMessage]) -> int:
+    """Assistant replies that asked for tools since the user's last question."""
+    rounds = 0
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            break
+        if isinstance(message, AIMessage) and message.tool_calls:
+            rounds += 1
+    return rounds
+
+
+def _is_unknown_tool_error(exc: Exception) -> bool:
+    """The provider rejected a call to a tool that wasn't offered (Groq: 400
+    "tool call validation failed ... which was not in request.tools")."""
+    text = str(exc).lower()
+    return "not in request.tools" in text or "tool call validation failed" in text
+
+
 def history_to_messages(rows: Iterable[Any]) -> list[AnyMessage]:
     """Convert history from the database into messages for the model.
 
@@ -113,15 +239,31 @@ def history_to_messages(rows: Iterable[Any]) -> list[AnyMessage]:
     it trust numbers from ten minutes ago.
     """
     messages: list[AnyMessage] = []
+    # System notes (an approval decided, a change executed) are folded into the
+    # NEXT user message instead of sent as messages of their own: a system
+    # message mid-conversation, or two user messages in a row, is rejected by
+    # some providers. The current question always comes last, so a note
+    # always has a user message to ride on.
+    notes: list[str] = []
     for row in rows:
         content = (row.content or "").strip()
         if not content:
             continue
-        if row.role == "user":
+        if row.role == "system":
+            notes.append(content)
+        elif row.role == "user":
+            if notes:
+                content = (
+                    "[K8s-Hub update since your last reply — from the system, not the user]\n"
+                    + "\n".join(notes)
+                    + "\n\n"
+                    + content
+                )
+                notes = []
             messages.append(HumanMessage(content=content))
         elif row.role == "assistant" and row.status == "complete":
             messages.append(AIMessage(content=content))
     return messages
 
 
-__all__ = ["RECURSION_LIMIT", "build_chat_graph", "history_to_messages"]
+__all__ = ["MAX_TOOL_ROUNDS", "RECURSION_LIMIT", "build_chat_graph", "history_to_messages"]
