@@ -7,6 +7,7 @@ will silently generate a migration that drops that table.
 
 from app.db.models.approval import Approval
 from app.db.models.message import Message, ToolCall
+from app.db.models.rca_report import RcaEvidence, RcaHypothesis, RcaRun
 from app.db.models.setting import SettingChange, SettingOverride
 from app.db.models.skill import SkillFile, SkillRecord, SkillRun
 from app.db.models.thread import ChatThread
@@ -20,6 +21,9 @@ __all__ = [
     "McpServer",
     "McpTool",
     "Message",
+    "RcaEvidence",
+    "RcaHypothesis",
+    "RcaRun",
     "RefreshToken",
     "SettingChange",
     "SettingOverride",
