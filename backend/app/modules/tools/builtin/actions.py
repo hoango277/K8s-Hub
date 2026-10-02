@@ -26,6 +26,7 @@ from langchain_core.tools import tool
 from app.core.config import get_settings
 from app.integrations.k8s import client as k8s
 from app.modules.nl_command import planner
+from app.modules.nl_command.injection import claim_provenance
 from app.modules.nl_command.planner import ActionPlan
 from app.modules.tools.guard import ToolInputError
 from app.modules.tools.schema import Category, Danger, ToolSpec
@@ -49,6 +50,12 @@ async def propose(
     """Build → dry-run → store as pending; tell the chat UI; tell the model."""
     from app.services import approval_service as svc
 
+    # What the user asked in this turn, and any tool output of the turn that
+    # looked like planted instructions — shown on the approval card so the
+    # approver can tell a requested change from an injected one.
+    provenance = claim_provenance()
+    question = ((config or {}).get("metadata") or {}).get("question")
+    request_text = question or (provenance.request if provenance else None)
     try:
         plan = await build()
         row = await svc.propose(
@@ -56,6 +63,8 @@ async def propose(
             actor=svc.actor_from_config(config),
             source=source,
             thread_id=_thread_id(config),
+            request_text=request_text,
+            risk_flags=provenance.flags if provenance else None,
         )
     except (ToolInputError, k8s.K8sError, svc.ApprovalError) as exc:
         return f"Not proposed: {exc}"

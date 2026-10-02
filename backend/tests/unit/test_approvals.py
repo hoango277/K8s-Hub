@@ -266,10 +266,26 @@ def test_model_is_told_nothing_happened_yet():
 
     row = NS(
         id="12345678-aaaa", status="pending", kind="scale", title="Scale x", diff="+a",
-        dry_run_output=None,
+        dry_run_output=None, risk_flags=None,
     )
     text = message_for_model(row)
     assert text.startswith("PROPOSED, NOT DONE") and "do NOT say it has been done" in text
+    assert "SECURITY" not in text
+
+
+def test_model_is_told_when_a_proposal_followed_planted_instructions():
+    """The model may have been tricked into this proposal: it must tell the user
+    rather than present it as an ordinary fix."""
+    from app.services.approval_service import message_for_model
+
+    row = NS(
+        id="12345678-aaaa", status="pending", kind="scale", title="Scale payments", diff="+a",
+        dry_run_output=None,
+        risk_flags=[{"tool": "describe_resource", "signals": ["addresses_ai"]}],
+    )
+    text = message_for_model(row)
+    assert text.startswith("PROPOSED, NOT DONE")
+    assert "SECURITY" in text and "describe_resource" in text and "prompt-injection" in text
 
 
 # --------------------------------------------------------------------------

@@ -6,6 +6,13 @@
 export type ApprovalStatus = "pending" | "executing" | "executed" | "failed" | "rejected" | "expired";
 export type ApprovalDanger = "caution" | "dangerous";
 
+/** A tool output read before proposing that looked like planted instructions. */
+export interface RiskFlag {
+  tool: string;
+  /** addresses_ai | fake_system | override | conceal | names_write_tool | claims_approval */
+  signals: string[];
+}
+
 export interface Approval {
   id: string;
   /** scale | restart | set_image | delete_pod | apply | command */
@@ -27,6 +34,10 @@ export interface Approval {
   verify_ok: boolean | null;
   verify_message: string | null;
   requested_by_email: string;
+  /** What the user asked in the turn that produced this proposal. */
+  request_text: string | null;
+  /** Possible prompt injection: empty when nothing suspicious was read. */
+  risk_flags: RiskFlag[];
   decided_by_email: string | null;
   decided_at: string | null;
   executed_at: string | null;
