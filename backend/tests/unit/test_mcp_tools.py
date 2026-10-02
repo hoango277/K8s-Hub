@@ -203,6 +203,9 @@ def test_model_is_not_told_an_mcp_call_was_dry_run():
 
     from app.services.approval_service import message_for_model
 
-    row = NS(id="12345678", status="pending", kind="mcp", title="Call x", diff="+{}", dry_run_output=None)
+    row = NS(
+        id="12345678", status="pending", kind="mcp", title="Call x", diff="+{}",
+        dry_run_output=None, risk_flags=None,
+    )
     text = message_for_model(row)
     assert "dry-run" in text and "passed the server dry-run" not in text

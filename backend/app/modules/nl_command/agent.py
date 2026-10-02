@@ -33,6 +33,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from app.integrations.llm.client import get_llm
+from app.modules.nl_command.injection import make_tool_guard
 from app.modules.nl_command.prompts import build_system_prompt
 from app.modules.nl_command.state import ChatState
 from app.modules.nl_command.tools import get_tools
@@ -151,7 +152,13 @@ def build_chat_graph(
     graph.add_edge(START, "assistant")
 
     if tool_list:
-        graph.add_node("tools", ToolNode(tool_list))
+        # Every tool call passes through the injection guard: cluster data comes
+        # back marked untrusted (and flagged when it talks to the model), and a
+        # proposal remembers what the user actually asked (injection.py).
+        guard = make_tool_guard(
+            untrusted=_registry_tool_names(tool_list), write_tools=write_tools
+        )
+        graph.add_node("tools", ToolNode(tool_list, awrap_tool_call=guard))
         # tools_condition returns "tools" when the model asks for a tool, END otherwise.
         graph.add_conditional_edges(
             "assistant",
@@ -176,6 +183,15 @@ def _write_tool_names(tools: Sequence[BaseTool]) -> set[str]:
         if spec is not None and spec.danger is not Danger.READ:
             names.add(t.name)
     return names
+
+
+def _registry_tool_names(tools: Sequence[BaseTool]) -> set[str]:
+    """Tools that return cluster or external data: everything in the tool
+    registry (built-in, custom CLI, MCP). The core and skill tools are not
+    there — their output is K8s-Hub's own or an engineer's written skill."""
+    from app.modules.tools.registry import registry
+
+    return {t.name for t in tools if registry.get(t.name) is not None}
 
 
 def _this_turn(messages: Sequence[AnyMessage]) -> list[AnyMessage]:

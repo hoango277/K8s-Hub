@@ -353,6 +353,11 @@ async def stream_reply(
                             # mode only skips approval for engineers and admins.
                             "user_id": str(user.id),
                             "user_role": user.role,
+                            # Stored with any change proposed in this turn, next
+                            # to the change itself on the approval card: "asked:
+                            # why is checkout slow?" beside "scale payments to 0"
+                            # is how a planted instruction gets caught.
+                            "question": payload.content,
                             # Tools read these two values to report the provider and
                             # model ACTUALLY running, not the global configuration.
                             "llm_provider": provider_name,

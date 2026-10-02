@@ -235,6 +235,10 @@ export function ApprovalCard({
   const a = approval;
   const pending = a.status === "pending";
   const dangerous = a.danger === "dangerous";
+  // Older rows predate the field; treat missing as "nothing flagged".
+  const flags = a.risk_flags ?? [];
+  const flagged = flags.length > 0;
+  const flaggedTools = [...new Set(flags.map((f) => f.tool))].join(", ");
 
   function doApprove() {
     setConfirming(false);
@@ -270,11 +274,36 @@ export function ApprovalCard({
         </div>
       </div>
 
+      {flagged && (
+        <div
+          role="note"
+          aria-label="Possible prompt injection"
+          className="flex gap-2 rounded-md border border-[var(--destructive)]/50 bg-[var(--destructive)]/10 px-3 py-2 text-xs"
+        >
+          <ShieldAlert aria-hidden className="mt-0.5 size-4 shrink-0 text-[var(--destructive)]" />
+          <div className="space-y-1">
+            <p className="font-medium text-[var(--destructive)]">Possible prompt injection</p>
+            <p className="leading-relaxed">
+              Before proposing this, the assistant read text addressed to it in the output of{" "}
+              <span className="font-mono">{flaggedTools}</span>. The request may come from cluster data, not
+              from the user. Check that it matches what they asked.
+            </p>
+          </div>
+        </div>
+      )}
+
       <p className="text-xs text-[var(--muted-foreground)]">
         Requested by {a.requested_by_email} {ago(a.created_at)}
         {a.namespace && <> · namespace {a.namespace}</>}
         {pending && <> · expires {ago(a.expires_at)}</>}
       </p>
+
+      {a.request_text && (
+        <blockquote className="border-l-2 pl-3 text-xs text-[var(--muted-foreground)]">
+          <span className="font-medium text-[var(--foreground)]">Asked: </span>
+          <span className="line-clamp-3 whitespace-pre-wrap break-words">“{a.request_text}”</span>
+        </blockquote>
+      )}
 
       {a.command && (
         <pre className="overflow-x-auto rounded-md bg-[var(--muted)] px-3 py-2 font-mono text-xs">
@@ -395,9 +424,9 @@ export function ApprovalCard({
         title={dangerous ? "Run this dangerous change?" : "Run this change?"}
         description={`${a.title}. It runs now on the cluster, exactly as shown in the diff.${
           dangerous ? " This may be hard to undo." : ""
-        }`}
+        }${flagged ? " It was flagged as a possible prompt injection — make sure the user asked for it." : ""}`}
         confirmLabel="Approve and run"
-        destructive={dangerous}
+        destructive={dangerous || flagged}
         onConfirm={doApprove}
         onCancel={() => setConfirming(false)}
       />
