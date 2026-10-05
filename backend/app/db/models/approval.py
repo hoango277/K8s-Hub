@@ -72,6 +72,16 @@ class Approval(Base):
     )
     tool_call_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    # What the user asked in the turn that produced this proposal, and the tool
+    # outputs of that turn that looked like planted instructions
+    # ([{"tool": "get_pod_logs", "signals": ["addresses_ai", …]}]). Shown side by
+    # side on the approval card: "asked: why is checkout slow?" next to "scale
+    # payments to 0" is how an indirect prompt injection gets caught
+    # (app/modules/nl_command/injection.py). NULL for rows from before, and for
+    # proposals made outside a chat turn (the Tools tab).
+    request_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    risk_flags: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
     )

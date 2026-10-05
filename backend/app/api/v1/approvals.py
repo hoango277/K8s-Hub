@@ -32,6 +32,16 @@ Engineer = Annotated[User, Depends(require_role("engineer"))]
 ApprovalStatus = Literal["pending", "executing", "executed", "failed", "rejected", "expired"]
 
 
+class RiskFlag(BaseModel):
+    """A tool output of the proposing turn that looked like planted instructions."""
+
+    tool: str
+    signals: list[str] = Field(
+        description="Why it was flagged: addresses_ai, fake_system, override, conceal, "
+        "names_write_tool, claims_approval"
+    )
+
+
 class ApprovalOut(BaseModel):
     id: uuid.UUID
     kind: str
@@ -49,6 +59,12 @@ class ApprovalOut(BaseModel):
     verify_ok: bool | None
     verify_message: str | None
     requested_by_email: str
+    request_text: str | None = Field(
+        description="What the user asked in the turn that produced this proposal"
+    )
+    risk_flags: list[RiskFlag] = Field(
+        description="Possible prompt injection: flagged tool outputs read before proposing"
+    )
     decided_by_email: str | None
     decided_at: datetime | None
     executed_at: datetime | None
@@ -87,6 +103,8 @@ def _out(row: Approval) -> ApprovalOut:
         verify_ok=row.verify_ok,
         verify_message=row.verify_message,
         requested_by_email=row.requested_by_email,
+        request_text=row.request_text,
+        risk_flags=[RiskFlag(**f) for f in row.risk_flags or []],
         decided_by_email=row.decided_by_email,
         decided_at=row.decided_at,
         executed_at=row.executed_at,
