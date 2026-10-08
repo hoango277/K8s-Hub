@@ -1,0 +1,173 @@
+# Helm values for the Alloy DaemonSet on lab1 (release `alloy`, chart grafana/alloy 1.12.1).
+#
+# Apply (needs helm + cluster-admin kubeconfig):
+#   helm repo add grafana https://grafana.github.io/helm-charts && helm repo update
+#   helm upgrade alloy grafana/alloy -n monitoring --version 1.12.1 -f deploy/observability/alloy-values.yaml
+#
+# Changes from the values running before 07/10/2026 (revision 4), and why:
+#
+#  1. memory limit 1Gi -> 2Gi. Alloy was OOM-killed (exit 137) ~30 s after every
+#     start — 1,799 restarts in 7 days, peak working set 1,017–1,023 MiB. Beyla
+#     instrumenting the langfuse namespace (ClickHouse, Redis, web, worker) is
+#     what needs the memory. Logs were being lost the whole time.
+#  2. storage on the host (/var/lib/alloy) instead of /tmp inside the container.
+#     Each restart forgot how far every log file had been read, re-sent old lines
+#     and Loki rejected them: `400 ... timestamp too old` ("dropping data").
+#  3. loki.source.kubernetes_events: Kubernetes keeps events for 1 hour only; the
+#     K8s-Hub RCA module reads older ones from Loki (job="kubernetes-events").
+#     The `alloy` ClusterRole already allows list/watch on events. lab1 has ONE
+#     node, so the DaemonSet runs once; on a multi-node cluster this source would
+#     be duplicated per node (enable clustering or move it to a single Deployment).
+#  4. Beyla also instruments `rca-lab` (the RCA evaluation scenarios), so its
+#     service-graph metrics give the RCA module real "service calls service" edges.
+
+alloy:
+  storagePath: /var/lib/alloy/data
+  mounts:
+    extra:
+      - name: alloy-data
+        mountPath: /var/lib/alloy
+  resources:
+    limits:
+      memory: 2Gi
+    requests:
+      cpu: 100m
+      memory: 512Mi
+  securityContext:
+    allowPrivilegeEscalation: true
+    appArmorProfile:
+      type: Unconfined
+    capabilities:
+      add: [BPF, NET_ADMIN, NET_RAW, PERFMON, DAC_READ_SEARCH, SYS_PTRACE, CHECKPOINT_RESTORE]
+    privileged: false
+    runAsUser: 0
+  configMap:
+    content: |
+      // ================= LOGS: pod -> Loki =================
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      discovery.relabel "pods" {
+        targets = discovery.kubernetes.pods.targets
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          target_label  = "app"
+        }
+      }
+
+      loki.source.kubernetes "pods" {
+        targets    = discovery.relabel.pods.output
+        forward_to = [loki.write.default.receiver]
+      }
+
+      // ================= Kubernetes events -> Loki (K8s-Hub RCA) =================
+      // The API server keeps events for 1 hour; this keeps them in Loki.
+      loki.source.kubernetes_events "cluster" {
+        job_name   = "kubernetes-events"
+        log_format = "json"
+        forward_to = [loki.write.default.receiver]
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://loki-gateway.loki.svc.cluster.local/loki/api/v1/push"
+        }
+      }
+
+      // ================= BEYLA eBPF =================
+      beyla.ebpf "default" {
+        enforce_sys_caps = true
+
+        attributes {
+          kubernetes {
+            enable       = "true"
+            cluster_name = "lab1"
+          }
+        }
+
+        discovery {
+          instrument {
+            kubernetes {
+              namespace = "{langfuse,rca-lab}"
+            }
+          }
+          exclude_instrument {
+            kubernetes {
+              namespace = "{kube-system,monitoring,loki,tempo,argocd,cnpg-system,cert-manager,clickhouse-operator,local-path-storage}"
+            }
+          }
+        }
+
+        ebpf {
+          context_propagation = "disabled"   // "all"/"tcp" conflicts with Cilium's TC programs
+        }
+
+        metrics {
+          features = ["application", "application_service_graph"]
+        }
+
+        traces {
+          sampler {
+            name = "parentbased_traceidratio"
+            arg  = "0.2"
+          }
+        }
+
+        output {
+          traces = [otelcol.processor.batch.default.input]
+        }
+      }
+
+      prometheus.scrape "beyla" {
+        targets      = beyla.ebpf.default.targets
+        honor_labels = true
+        forward_to   = [prometheus.remote_write.kps.receiver]
+      }
+
+      prometheus.remote_write "kps" {
+        endpoint {
+          url = "http://kps-kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090/api/v1/write"
+        }
+      }
+
+      otelcol.processor.batch "default" {
+        output {
+          traces = [otelcol.exporter.otlp.tempo.input]
+        }
+      }
+
+      otelcol.exporter.otlp "tempo" {
+        client {
+          endpoint = "tempo.tempo.svc.cluster.local:4317"
+          tls {
+            insecure = true
+          }
+        }
+      }
+
+controller:
+  type: daemonset
+  hostPID: true
+  volumes:
+    extra:
+      - name: alloy-data
+        hostPath:
+          path: /var/lib/alloy
+          type: DirectoryOrCreate
+
+service:
+  type: NodePort
+  nodePort: 31245

@@ -1,7 +1,7 @@
 """Loki HTTP API client - READS logs of the target K8s cluster.
 
 Role: evidence source for the logs tool and for RCA
-(app/modules/rca/collectors/logs.py). This app's OWN logs only go to stdout
+(app/modules/rca/detectors/logs.py). This app's OWN logs only go to stdout
 (app/core/logging.py) — on the cluster Alloy ships them here like any pod.
 
 Runs LogQL it is given; the tool builds that LogQL from validated fields,
@@ -39,9 +39,12 @@ def _base_url() -> str:
     return url
 
 
-async def query_range(logql: str, *, minutes: int, limit: int) -> list[LogLine]:
-    """Newest first, at most `limit` lines across all streams."""
-    end_ns = time.time_ns()
+async def query_range(
+    logql: str, *, minutes: int, limit: int, end: float | None = None
+) -> list[LogLine]:
+    """Newest first, at most `limit` lines across all streams, in the `minutes`
+    before `end` (unix seconds, default now)."""
+    end_ns = time.time_ns() if end is None else int(end * 1_000_000_000)
     params = {
         "query": logql,
         "start": end_ns - minutes * 60 * 1_000_000_000,
@@ -67,4 +70,30 @@ async def query_range(logql: str, *, minutes: int, limit: int) -> list[LogLine]:
     return lines[:limit]
 
 
-__all__ = ["LogLine", "LokiError", "query_range"]
+async def metric_range(
+    logql: str, *, minutes: int, step_seconds: int, end: float | None = None
+) -> list[dict[str, Any]]:
+    """A LogQL METRIC query (count_over_time…) as a Prometheus-style matrix:
+    [{"metric": {labels}, "values": [[unix_ts, "value"], …]}]. Used by RCA to
+    count error lines per pod without pulling the lines themselves."""
+    end_s = time.time() if end is None else end
+    params = {
+        "query": logql,
+        "start": int((end_s - minutes * 60) * 1_000_000_000),
+        "end": int(end_s * 1_000_000_000),
+        "step": f"{step_seconds}s",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+            resp = await client.get(f"{_base_url()}/loki/api/v1/query_range", params=params)
+    except httpx.HTTPError as exc:
+        raise LokiError(f"Could not reach Loki at {_base_url()}: {type(exc).__name__}") from exc
+    if resp.status_code != 200:
+        raise LokiError(f"Loki rejected the query ({resp.status_code}): {resp.text[:300]}")
+    data: Any = resp.json().get("data") or {}
+    if data.get("resultType") != "matrix":
+        return []
+    return list(data.get("result") or [])
+
+
+__all__ = ["LogLine", "LokiError", "metric_range", "query_range"]

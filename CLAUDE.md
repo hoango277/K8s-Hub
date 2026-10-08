@@ -4,6 +4,18 @@ Nền tảng vận hành Kubernetes có AI hỗ trợ. Backend FastAPI + LangGra
 Next.js. Xem `README.md` để biết kiến trúc dự kiến, nhưng nhớ rằng README mô tả
 **kế hoạch** — phần lớn kho mã hiện vẫn là file khung chỉ có docstring kèm `TODO`.
 
+## Quy tắc thường trực: đọc `docs/` trước, kế hoạch nằm trong `docs/ke-hoach/`
+
+**Đầu mỗi phiên làm việc, đọc `docs/README.md` trước** rồi tới `docs/hien-trang-codebase.md` và kế
+hoạch liên quan trong `docs/ke-hoach/`. Chỉ đọc mã sau đó, để kiểm chứng và đi vào chi tiết.
+
+**Mọi kế hoạch phải nằm trong `docs/ke-hoach/<chu-de>.md`**, kể cả kế hoạch viết ở chế độ plan (file
+trong `~/.claude/plans/` không nằm trong kho, phiên sau và người khác không thấy). Chép vào `docs/`
+ngay khi kế hoạch được duyệt. Mỗi file kế hoạch có bảng "Tiến độ" ở đầu; xong một giai đoạn thì cập
+nhật bảng đó cùng lúc với báo cáo hiện trạng. Thêm file mới vào bảng trong `docs/README.md`.
+
+Kế hoạch ghi điều *định làm*; báo cáo hiện trạng ghi điều *đã chạy được*. Hai thứ không thay nhau.
+
 ## Quy tắc thường trực: cập nhật báo cáo hiện trạng
 
 **Mỗi khi thay đổi mã nguồn, cập nhật luôn `docs/hien-trang-codebase.md` cho khớp.**
@@ -200,6 +212,34 @@ Ba vai trò: `admin` (toàn quyền), `engineer` (sau này thêm/sửa/xoá skil
   Loki**: trên cụm, Alloy đã gom stdout của mọi pod.
 - Không cấu hình cho Prometheus scrape máy dev. Khi backend chạy thành pod thì
   thêm ServiceMonitor cùng Deployment.
+
+## RCA (chẩn đoán nguyên nhân gốc) — kiểu Groot
+
+Kế hoạch đầy đủ: `docs/ke-hoach/rca-groot.md`. Những điểm không được làm trái:
+
+- **LLM không bao giờ nhận log/metric/trace thô.** Detector biến dữ liệu thành *sự kiện* có bằng
+  chứng ≤ 300 ký tự; luật nối sự kiện; xếp hạng tất định; LLM chỉ kiểm chứng top-k và viết báo cáo
+  trong ngân sách tool cố định.
+- **Không có luật thì không có cạnh** trong đồ thị nhân quả, kể cả khi hai thực thể liên quan nhau.
+- RCA đọc **nơi lưu** (Kubernetes API, Prometheus, Loki, Tempo, bảng `approvals`), không đọc collector.
+  Alloy chỉ thu gom; lịch sử Kubernetes events (> 1 giờ) nằm trong Loki dưới
+  `job="kubernetes-events"` (logfmt).
+- Luật nhân quả là dữ liệu trong `modules/rca/rules.py`; thêm loại sự kiện thì thêm vào
+  `model.EVENT_TYPES` và viết luật cho nó — sự kiện không có luật nào sẽ không bao giờ nối vào đồ thị.
+- AI chỉ **chọn** bản sửa trong danh sách ứng viên do `remediation.py` tính; mọi thứ AI trả về qua
+  `report.validate()` trước khi lưu. Đề xuất sửa từ RCA luôn dùng vai trò `user` để không bao giờ tự
+  chạy, kể cả ở chế độ `auto`.
+- Không chép giá trị biến môi trường vào bằng chứng, chỉ tên biến.
+- RCA đọc **cả cụm**; phạm vi phân tích = namespace được chọn + namespace nó phụ thuộc (hoặc cả cụm).
+  Cạnh "gọi" luôn ghi nguồn (config/metric/trace/log/annotation).
+- **Secret chỉ được đọc metadata** qua `resources.list_secret_metadata()` (thời điểm thay đổi, nhãn Helm) —
+  không bao giờ `data`, không annotation. Đừng thêm đường nào khác đọc Secret.
+- Trọng số học từ phản hồi (`rca_weights`) chỉ nhận phản hồi của engineer+ hoặc nhãn đánh giá, không
+  bao giờ từ verdict của AI; hệ số luôn bị kẹp.
+- Webhook `POST /rca/alerts` xác thực bằng `ALERTMANAGER_WEBHOOK_TOKEN` (chỉ trong `.env`, không bao
+  giờ in ra). Để Alertmanager trên lab1 gọi được, backend phải chạy `--host 0.0.0.0`.
+- `python -m rca_eval.run` **ghi vào cụm** (namespace `rca-lab`) và tạo dòng `approvals` — chỉ chạy khi
+  người dùng đồng ý, không đưa vào CI.
 
 ## Quy ước viết mã
 

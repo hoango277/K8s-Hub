@@ -50,15 +50,25 @@ async def _get(path: str, params: dict[str, Any]) -> Any:
     return body["data"]
 
 
-async def query(promql: str) -> list[dict[str, Any]]:
-    """Instant query -> [{"metric": {...}, "value": [ts, "v"]}, ...]."""
-    data = await _get("/api/v1/query", {"query": promql})
+async def query(promql: str, *, at: float | None = None) -> list[dict[str, Any]]:
+    """Instant query -> [{"metric": {...}, "value": [ts, "v"]}, ...].
+
+    `at` (unix seconds) evaluates it at a past moment — RCA looks at an
+    incident window, not only at "now"."""
+    params: dict[str, Any] = {"query": promql}
+    if at is not None:
+        params["time"] = at
+    data = await _get("/api/v1/query", params)
     return list(data.get("result") or [])
 
 
-async def query_range(promql: str, *, minutes: int, step_seconds: int) -> list[dict[str, Any]]:
-    """Range query -> [{"metric": {...}, "values": [[ts, "v"], ...]}, ...]."""
-    end = time.time()
+async def query_range(
+    promql: str, *, minutes: int, step_seconds: int, end: float | None = None
+) -> list[dict[str, Any]]:
+    """Range query -> [{"metric": {...}, "values": [[ts, "v"], ...]}, ...].
+
+    The window is the `minutes` before `end` (unix seconds, default now)."""
+    end = time.time() if end is None else end
     data = await _get(
         "/api/v1/query_range",
         {"query": promql, "start": end - minutes * 60, "end": end, "step": step_seconds},

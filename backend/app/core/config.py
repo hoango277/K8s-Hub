@@ -254,6 +254,43 @@ class Settings(BaseSettings):
         ),
     )
 
+    # --- Root-cause analysis (app/modules/rca) ---
+    RCA_LOOKBACK_MINUTES: int = Field(
+        default=120,
+        ge=15,
+        le=1440,
+        description=(
+            "How far back a diagnosis looks for causes. Changes usually come "
+            "minutes to hours before the symptom they cause"
+        ),
+    )
+    RCA_LLM_TOOL_BUDGET: int = Field(
+        default=4,
+        ge=0,
+        le=10,
+        description=(
+            "Read-only tool calls the AI may make to check the top hypotheses "
+            "before writing the report. 0 = write the report from the graph alone"
+        ),
+    )
+    RCA_SCAN_INTERVAL_MINUTES: int = Field(
+        default=0,
+        ge=0,
+        le=1440,
+        description=(
+            "Look for new problems in the scanned namespaces every this many minutes "
+            "and diagnose them. 0 = off"
+        ),
+    )
+    RCA_SCAN_NAMESPACES: list[str] = Field(
+        default=[],
+        description="Namespaces the periodic scan watches. Empty = the whole cluster",
+    )
+    # Alertmanager sends it as `Authorization: Bearer <token>` to POST /api/v1/rca/alerts.
+    # Empty = the webhook is off. Startup-only and never shown in the UI: anyone
+    # holding it can make K8s-Hub start diagnoses (and LLM calls).
+    ALERTMANAGER_WEBHOOK_TOKEN: str = ""
+
     # --- Sandbox: where commands and skill scripts run ---
     # local: a subprocess on the backend (a developer machine, or the backend
     # pod itself) — guard rails only, no isolation.
@@ -393,6 +430,12 @@ RUNTIME_EDITABLE: frozenset[str] = frozenset(
         "K8S_EXECUTION_MODE",
         "K8S_ALLOWED_NAMESPACES",
         "APPROVAL_TTL_MINUTES",
+        # Read at the start of every diagnosis.
+        "RCA_LOOKBACK_MINUTES",
+        "RCA_LLM_TOOL_BUDGET",
+        # The scanner re-reads both on every cycle.
+        "RCA_SCAN_INTERVAL_MINUTES",
+        "RCA_SCAN_NAMESPACES",
         # Read on every command / script run, so switching takes effect at once.
         "SANDBOX_BACKEND",
         # PROMETHEUS_URL / LOKI_URL / TEMPO_URL are DELIBERATELY not here: infrastructure

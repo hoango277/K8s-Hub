@@ -42,6 +42,7 @@ class Category(StrEnum):
     METRICS = "metrics"
     LOGS = "logs"
     TRACES = "traces"
+    DIAGNOSIS = "diagnosis"
     CUSTOM = "custom"
     MCP = "mcp"
 

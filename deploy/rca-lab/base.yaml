@@ -1,0 +1,86 @@
+# The RCA evaluation lab on lab1 (docs/ke-hoach/rca-groot.md, phases 5–6).
+#
+# What it is: a namespace where backend/rca_eval injects known faults, plus
+# fast alert rules and an Alertmanager receiver that sends those alerts to the
+# K8s-Hub webhook (POST /api/v1/rca/alerts). Nothing here touches other
+# namespaces: the operator's default matcher strategy (OnNamespace) only routes
+# alerts whose `namespace` label is rca-lab to this receiver.
+#
+# Apply (cluster write — needs the admin kubeconfig):
+#   1. the webhook token, never committed (same value as ALERTMANAGER_WEBHOOK_TOKEN in backend/.env):
+#        kubectl create namespace rca-lab
+#        kubectl -n rca-lab create secret generic k8s-hub-rca-webhook --from-literal=token=<TOKEN>
+#   2. kubectl apply -f deploy/rca-lab/base.yaml
+#   The backend must listen on the LAN (uvicorn --host 0.0.0.0) and the
+#   firewall must allow lab1 → 192.168.1.27:8000. Change the URL below if the
+#   developer machine's address changes.
+#
+# Remove everything: kubectl delete namespace rca-lab
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rca-lab
+  labels:
+    k8s-hub.io/purpose: rca-evaluation
+---
+# The default kube-prometheus-stack rules wait 15 minutes (`for: 15m`); these
+# fire after 1–2 minutes so an evaluation scenario doesn't take a quarter hour.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: rca-lab-fast
+  namespace: rca-lab
+spec:
+  groups:
+    - name: rca-lab
+      rules:
+        - alert: RcaLabContainerWaiting
+          expr: |
+            max by (namespace, pod, container, reason) (
+              kube_pod_container_status_waiting_reason{namespace="rca-lab",
+                reason=~"CrashLoopBackOff|ImagePullBackOff|ErrImagePull|CreateContainerConfigError"}
+            ) == 1
+          for: 1m
+          labels: {severity: warning}
+          annotations:
+            summary: "{{ $labels.pod }} is stuck in {{ $labels.reason }}"
+        - alert: RcaLabPodPending
+          expr: max by (namespace, pod) (kube_pod_status_phase{namespace="rca-lab", phase="Pending"}) == 1
+          for: 2m
+          labels: {severity: warning}
+          annotations:
+            summary: "{{ $labels.pod }} has been Pending for 2 minutes"
+        - alert: RcaLabReplicasUnavailable
+          expr: |
+            kube_deployment_spec_replicas{namespace="rca-lab"}
+              > kube_deployment_status_replicas_available{namespace="rca-lab"}
+          for: 2m
+          labels: {severity: warning}
+          annotations:
+            summary: "{{ $labels.deployment }} is missing replicas"
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: k8s-hub-rca
+  namespace: rca-lab
+spec:
+  route:
+    receiver: k8s-hub-rca
+    groupBy: [alertname, pod, deployment]
+    groupWait: 10s
+    groupInterval: 1m
+    # An unresolved alert is re-sent every repeatInterval; the webhook also
+    # drops fingerprints it diagnosed in the last hour (app/modules/rca/triggers.py).
+    repeatInterval: 1h
+  receivers:
+    - name: k8s-hub-rca
+      webhookConfigs:
+        - url: http://192.168.1.27:8000/api/v1/rca/alerts
+          sendResolved: false
+          httpConfig:
+            authorization:
+              type: Bearer
+              credentials:
+                name: k8s-hub-rca-webhook
+                key: token

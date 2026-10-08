@@ -14,6 +14,7 @@ import {
   ScrollText,
   Search,
   SearchX,
+  Stethoscope,
   Terminal,
   Trash2,
   TriangleAlert,
@@ -41,6 +42,7 @@ const CATEGORIES: { id: ToolCategory; label: string; icon: LucideIcon }[] = [
   { id: "metrics", label: "Metrics", icon: Activity },
   { id: "logs", label: "Logs", icon: ScrollText },
   { id: "traces", label: "Traces", icon: Waypoints },
+  { id: "diagnosis", label: "Diagnosis", icon: Stethoscope },
   { id: "custom", label: "Custom tools", icon: Terminal },
   { id: "mcp", label: "External (MCP)", icon: Plug },
 ];

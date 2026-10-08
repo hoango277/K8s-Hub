@@ -24,7 +24,7 @@ import threading
 from typing import Any
 
 from app.modules.tools import mcp
-from app.modules.tools.builtin import actions, kubernetes, logs, metrics, resources, traces
+from app.modules.tools.builtin import actions, kubernetes, logs, metrics, rca, resources, traces
 from app.modules.tools.custom import CustomToolDef, build_spec
 from app.modules.tools.schema import ToolSpec
 
@@ -34,6 +34,7 @@ BUILTIN: list[ToolSpec] = [
     *metrics.TOOLS,
     *logs.TOOLS,
     *traces.TOOLS,
+    *rca.TOOLS,
     *actions.TOOLS,
 ]
 
@@ -118,7 +119,6 @@ class ToolRegistry:
         with self._lock:
             self._custom_defs.pop(name, None)
             self._custom.pop(name, None)
-
 
     def set_mcp_tools(self, server_name: str, records: list[mcp.McpToolRecord]) -> None:
         """Replace every tool of one server (after a refresh, or at startup)."""

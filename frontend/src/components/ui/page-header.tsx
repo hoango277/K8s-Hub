@@ -15,7 +15,9 @@ interface Props {
 /** The header of every page — see the UI/UX guidelines section in CLAUDE.md. */
 export function PageHeader({ title, description, icon: Icon, actions, className }: Props) {
   return (
-    <header className={cn("mb-8 flex flex-wrap items-start justify-between gap-4", className)}>
+    // From sm up the actions stay on the title's row (top right) and the text
+    // shrinks instead; a long description used to push the main button below it.
+    <header className={cn("mb-8 flex flex-wrap items-start justify-between gap-4 sm:flex-nowrap", className)}>
       <div className="flex min-w-0 items-start gap-3">
         {Icon && (
           <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-[var(--accent)]">

@@ -3,7 +3,7 @@
  * Change one side, change the other.
  */
 
-export type ToolCategory = "kubernetes" | "metrics" | "logs" | "traces" | "custom" | "mcp";
+export type ToolCategory = "kubernetes" | "metrics" | "logs" | "traces" | "diagnosis" | "custom" | "mcp";
 export type ToolDanger = "read" | "write" | "destructive";
 
 /** The subset of JSON Schema that Pydantic emits for tool arguments. */

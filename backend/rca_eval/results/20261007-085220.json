@@ -1,0 +1,217 @@
+[
+  {
+    "scenario": "bad-image",
+    "title": "Rollout to an image tag that doesn't exist",
+    "expected": "Rollout on web",
+    "rca_ranked": [
+      "Rollout:Workload/rca-lab/web",
+      "ImagePullError:Pod/rca-lab/web-7887c7b74c-g9zhc",
+      "ImagePullError:Pod/rca-lab/web-7887c7b74c-67s7m"
+    ],
+    "rca_hit_rank": 1,
+    "ai_root": null,
+    "ai_hit": null,
+    "rca_seconds": 2.07,
+    "report_seconds": 0.0,
+    "rca_tokens": 0,
+    "run_id": "57cd5a97-6c04-4e82-83f7-45529cfe79a0",
+    "baseline_answer": null,
+    "baseline_hit": null,
+    "baseline_seconds": 0.0,
+    "baseline_tokens": 0,
+    "k8sgpt_findings": [
+      "Pod rca-lab/web-7887c7b74c-67s7m: Back-off pulling image \"nginx:9.99.99-does-not-exist\": ErrImagePull: rpc error: code = NotFound desc = failed to pull and unpack image \"docker.io/library/nginx:9.99.99-does-not-exist\": failed to resolve image: docker.io/library/nginx:9.99.99-does-not-exist: not foun"
+    ],
+    "k8sgpt_hit": true,
+    "error": null
+  },
+  {
+    "scenario": "oom",
+    "title": "Container allocates more memory than its limit",
+    "expected": "MemoryNearLimit/OOMKilled on hog",
+    "rca_ranked": [
+      "OOMKilled:Pod/rca-lab/hog-5467d44577-tkfxf",
+      "CrashLoop:Pod/rca-lab/hog-5467d44577-j4lnz",
+      "CrashLoop:Pod/rca-lab/hog-5467d44577-tkfxf"
+    ],
+    "rca_hit_rank": 1,
+    "ai_root": null,
+    "ai_hit": null,
+    "rca_seconds": 1.1,
+    "report_seconds": 0.0,
+    "rca_tokens": 0,
+    "run_id": "0dcb0fb3-6a39-4539-8278-9b0178ad95cb",
+    "baseline_answer": null,
+    "baseline_hit": null,
+    "baseline_seconds": 0.0,
+    "baseline_tokens": 0,
+    "k8sgpt_findings": [
+      "Deployment rca-lab/hog: Deployment rca-lab/hog has 1 replicas but 0 are available with status running",
+      "Pod rca-lab/hog-5467d44577-tkfxf: the termination reason is OOMKilled exitCode=137 container=hog pod=hog-5467d44577-tkfxf"
+    ],
+    "k8sgpt_hit": true,
+    "error": null
+  },
+  {
+    "scenario": "bad-config",
+    "title": "ConfigMap edited to a value the app refuses",
+    "expected": "ConfigChange on app-config",
+    "rca_ranked": [
+      "ConfigChange:ConfigMap/rca-lab/app-config",
+      "RestartSpike:Pod/rca-lab/cfg-577f48797c-wjt5b",
+      "CrashLoop:Pod/rca-lab/cfg-577f48797c-wjt5b"
+    ],
+    "rca_hit_rank": 1,
+    "ai_root": null,
+    "ai_hit": null,
+    "rca_seconds": 1.18,
+    "report_seconds": 0.0,
+    "rca_tokens": 0,
+    "run_id": "0bdef9c4-987e-4e1f-ab7c-5008a76de34f",
+    "baseline_answer": null,
+    "baseline_hit": null,
+    "baseline_seconds": 0.0,
+    "baseline_tokens": 0,
+    "k8sgpt_findings": [
+      "Deployment rca-lab/cfg: Deployment rca-lab/cfg has 1 replicas but 0 are available with status running",
+      "Pod rca-lab/cfg-577f48797c-wjt5b: the termination reason is Error exitCode=1 container=cfg pod=cfg-577f48797c-wjt5b"
+    ],
+    "k8sgpt_hit": false,
+    "error": null
+  },
+  {
+    "scenario": "missing-key",
+    "title": "Rollout references a ConfigMap key that doesn't exist",
+    "expected": "Rollout on keys",
+    "rca_ranked": [
+      "Rollout:Workload/rca-lab/keys",
+      "ConfigChange:ConfigMap/rca-lab/keys-config",
+      "ContainerConfigError:Pod/rca-lab/keys-c6c86444b-w78ll"
+    ],
+    "rca_hit_rank": 1,
+    "ai_root": null,
+    "ai_hit": null,
+    "rca_seconds": 0.64,
+    "report_seconds": 0.0,
+    "rca_tokens": 0,
+    "run_id": "4ebc639f-ca5b-4635-b027-4a85fe10b1c7",
+    "baseline_answer": null,
+    "baseline_hit": null,
+    "baseline_seconds": 0.0,
+    "baseline_tokens": 0,
+    "k8sgpt_findings": [
+      "Pod rca-lab/keys-c6c86444b-w78ll: couldn't find key KEY_MISSING in ConfigMap rca-lab/keys-config"
+    ],
+    "k8sgpt_hit": true,
+    "error": null
+  },
+  {
+    "scenario": "bad-probe",
+    "title": "Rollout with a readiness probe on a path that 404s",
+    "expected": "Rollout on api",
+    "rca_ranked": [
+      "Rollout:Workload/rca-lab/api",
+      "ProbeFailed:Pod/rca-lab/api-7c5d7f76c4-rtbt6",
+      "PodNotReady:Pod/rca-lab/api-7c5d7f76c4-rtbt6"
+    ],
+    "rca_hit_rank": 1,
+    "ai_root": null,
+    "ai_hit": null,
+    "rca_seconds": 1.15,
+    "report_seconds": 0.0,
+    "rca_tokens": 0,
+    "run_id": "c2f1a10a-c25b-4d00-a5c9-1df97f2ecd2a",
+    "baseline_answer": null,
+    "baseline_hit": null,
+    "baseline_seconds": 0.0,
+    "baseline_tokens": 0,
+    "k8sgpt_findings": [
+      "Deployment rca-lab/api: Deployment rca-lab/api has 1 replicas but 0 are available with status running",
+      "Service rca-lab/api: Service has not ready endpoints, pods: [Pod/api-7c5d7f76c4-rtbt6], expected 1",
+      "Pod rca-lab/api-7c5d7f76c4-rtbt6: Readiness probe failed: HTTP probe failed with statuscode: 404"
+    ],
+    "k8sgpt_hit": true,
+    "error": null
+  },
+  {
+    "scenario": "too-big",
+    "title": "Rollout requests more CPU than the node has",
+    "expected": "Rollout on big",
+    "rca_ranked": [
+      "Rollout:Workload/rca-lab/big",
+      "NodeSaturated:Node/-/lab1",
+      "Unschedulable:Pod/rca-lab/big-7fb56dd6f-w2ndp"
+    ],
+    "rca_hit_rank": 1,
+    "ai_root": null,
+    "ai_hit": null,
+    "rca_seconds": 0.91,
+    "report_seconds": 0.0,
+    "rca_tokens": 0,
+    "run_id": "6bf07251-eda8-4e5a-8e58-5f6d624d5716",
+    "baseline_answer": null,
+    "baseline_hit": null,
+    "baseline_seconds": 0.0,
+    "baseline_tokens": 0,
+    "k8sgpt_findings": [
+      "Pod rca-lab/big-7fb56dd6f-w2ndp: 0/1 nodes are available: 1 Insufficient cpu. preemption: 0/1 nodes are available: 1 Preemption is not helpful for scheduling."
+    ],
+    "k8sgpt_hit": true,
+    "error": null
+  },
+  {
+    "scenario": "pvc-pending",
+    "title": "Volume claim with a storage class that doesn't exist",
+    "expected": "PvcPending on data",
+    "rca_ranked": [
+      "PvcPending:PVC/rca-lab/data",
+      "ScaleChange:Workload/rca-lab/store",
+      "Unschedulable:Pod/rca-lab/store-5f977dfd7f-tpz8t"
+    ],
+    "rca_hit_rank": 1,
+    "ai_root": null,
+    "ai_hit": null,
+    "rca_seconds": 1.14,
+    "report_seconds": 0.0,
+    "rca_tokens": 0,
+    "run_id": "352bcb15-6b12-4900-ae15-75d70ba7cb10",
+    "baseline_answer": null,
+    "baseline_hit": null,
+    "baseline_seconds": 0.0,
+    "baseline_tokens": 0,
+    "k8sgpt_findings": [
+      "Deployment rca-lab/store: Deployment rca-lab/store has 1 replicas but 0 are available with status running",
+      "PersistentVolumeClaim rca-lab/data: storageclass.storage.k8s.io \"rca-lab-missing-class\" not found",
+      "Pod rca-lab/store-5f977dfd7f-tpz8t: 0/1 nodes are available: pod has unbound immediate PersistentVolumeClaims. not found"
+    ],
+    "k8sgpt_hit": true,
+    "error": null
+  },
+  {
+    "scenario": "scale-zero",
+    "title": "Approved change through K8s-Hub scales the backend to 0",
+    "expected": "ApprovalExecuted/ScaleChange on api2",
+    "rca_ranked": [
+      "ApprovalExecuted:Workload/rca-lab/api2",
+      "ScaleChange:Workload/rca-lab/api2",
+      "ServiceNoEndpoints:Service/rca-lab/api2"
+    ],
+    "rca_hit_rank": 1,
+    "ai_root": null,
+    "ai_hit": null,
+    "rca_seconds": 0.7,
+    "report_seconds": 0.0,
+    "rca_tokens": 0,
+    "run_id": "5ed503a1-4e09-455f-9778-1e46d1d162fe",
+    "baseline_answer": null,
+    "baseline_hit": null,
+    "baseline_seconds": 0.0,
+    "baseline_tokens": 0,
+    "k8sgpt_findings": [
+      "ConfigMap rca-lab/kube-root-ca.crt: ConfigMap kube-root-ca.crt is not used by any pods in the namespace",
+      "Service rca-lab/api2: Service has no endpoints, expected label app=api2"
+    ],
+    "k8sgpt_hit": false,
+    "error": null
+  }
+]

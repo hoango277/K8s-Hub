@@ -50,6 +50,7 @@ CHAT_TURN_SECONDS = Histogram(
     buckets=(0.5, 1, 2, 5, 10, 20, 30, 60, 120),
 )
 
+
 def record_chat_turn(
     *,
     provider: str,
@@ -61,6 +62,29 @@ def record_chat_turn(
     try:
         CHAT_TURNS.labels(provider, model, outcome).inc()
         CHAT_TURN_SECONDS.labels(provider).observe(seconds)
+    except Exception:  # pragma: no cover - defensive
+        pass
+
+
+# Diagnoses (app/modules/rca). Service health only: how many, how they ended,
+# how long the deterministic part took. What the AI did is in Langfuse.
+RCA_RUNS = Counter(
+    "k8shub_rca_runs_total",
+    "Finished diagnoses, by what started them and how they ended.",
+    ["trigger", "outcome"],  # trigger: manual|chat|alert|scan; outcome: ok|error
+)
+RCA_RUN_SECONDS = Histogram(
+    "k8shub_rca_run_duration_seconds",
+    "Wall-clock time of the deterministic analysis (detectors, graph, ranking).",
+    buckets=(0.5, 1, 2, 5, 10, 20, 30, 60),
+)
+
+
+def record_rca_run(*, trigger: str, outcome: str, seconds: float) -> None:
+    """Must never raise — metrics can't break a diagnosis."""
+    try:
+        RCA_RUNS.labels(trigger, outcome).inc()
+        RCA_RUN_SECONDS.observe(seconds)
     except Exception:  # pragma: no cover - defensive
         pass
 
@@ -97,6 +121,9 @@ __all__ = [
     "CHAT_STREAMS_ACTIVE",
     "CHAT_TURNS",
     "CHAT_TURN_SECONDS",
+    "RCA_RUNS",
+    "RCA_RUN_SECONDS",
     "record_chat_turn",
+    "record_rca_run",
     "setup_metrics",
 ]
