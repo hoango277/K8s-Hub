@@ -106,6 +106,8 @@ export interface RcaReport {
   next_steps?: string[];
   tool_evidence?: { id: string; tool: string; args: Record<string, unknown>; text: string }[];
   validation?: string[];
+  /** Cited evidence quotes that looked like planted instructions (possible prompt injection). */
+  flagged_evidence?: { id: string; source: string; signals: string[] }[];
   tool_calls_used?: number;
   provider?: string | null;
   model?: string | null;

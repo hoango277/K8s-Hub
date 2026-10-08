@@ -57,6 +57,25 @@ export function ReportPanel({ run }: { run: RcaRun }) {
 
   return (
     <Box>
+      {(report.flagged_evidence?.length ?? 0) > 0 && (
+        <div
+          role="note"
+          aria-label="Possible prompt injection"
+          className="mb-3 flex gap-2 rounded-md border border-[var(--destructive)]/50 bg-[var(--destructive)]/10 px-3 py-2 text-xs"
+        >
+          <ShieldAlert aria-hidden className="mt-0.5 size-4 shrink-0 text-[var(--destructive)]" />
+          <div className="space-y-1">
+            <p className="font-medium text-[var(--destructive)]">Possible prompt injection</p>
+            <p className="leading-relaxed">
+              Evidence{" "}
+              <span className="font-mono">{report.flagged_evidence!.map((f) => f.id).join(", ")}</span> contains text
+              addressed to the AI. It came from cluster data, so whoever controls that workload wrote it. Check that the
+              verdicts below don&apos;t rest on it.
+            </p>
+          </div>
+        </div>
+      )}
+
       <p className="text-base font-medium leading-relaxed">{report.summary}</p>
       {report.explanation && (
         <p className="mt-2 text-sm leading-relaxed text-[var(--muted-foreground)]">{report.explanation}</p>
