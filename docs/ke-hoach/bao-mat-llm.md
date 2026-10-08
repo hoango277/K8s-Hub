@@ -15,7 +15,8 @@ rate limit, khoá tạm khi sai mật khẩu và che dữ liệu nhạy cảm tr
 | 4. Payload tiếng Việt | **Xong** (08/10) | Bỏ dấu rồi so mẫu không dấu; kịch bản `logs_vi`. gpt-oss-20b cảnh báo 0/3 → **3/3**; phát hiện 0/6 → 6/6 |
 | 5. Bằng chứng RCA đưa vào LLM | **Xong code** (08/10) — chờ Hòa duyệt PR | Khối EVIDENCE bọc untrusted, từng câu quét, báo cáo lưu `flagged_evidence`, trang chẩn đoán hiện cảnh báo. Chưa có kịch bản đo riêng cho RCA |
 | 6. Kiểm thử thủ công trên lab1 | Chưa | Cần kubeconfig lab1; báo Hòa trước (log tấn công vào Loki mà RCA đọc) |
-| Hoãn: rate limit, khoá tạm, che bí mật | Hoãn | Quyết định 02/10/2026 |
+| 7. Che bí mật trước khi gửi LLM (OWASP LLM02) | **Xong** (09/10/2026) | `tools/redact.py`, áp tại nguồn + lưới trong `injection.py` + EVIDENCE RCA. 3 test; thử trên kind: 5/5 bí mật bị che. Không đo trước/sau (người dùng chọn bỏ) |
+| Hoãn: rate limit, khoá tạm | Hoãn | Quyết định 02/10/2026 |
 
 ## Mô hình đe doạ
 
@@ -78,6 +79,21 @@ Cần kubeconfig lab1 (sửa `server` thành `https://lab1:6443`). Apply `evals/
 qua giao diện chat theo bốn đường (log, annotation, ConfigMap, chat trực tiếp), ghi lại payload / câu hỏi /
 câu trả lời / có thẻ không / có cảnh báo không. Xoá `sec-eval` khi xong. Báo Hòa trước: trên lab1 Alloy gom
 log mọi pod vào Loki, nơi RCA đọc.
+
+## 7. Che bí mật trước khi gửi LLM
+
+Chặn đọc Secret là chưa đủ: mật khẩu hay nằm thẳng trong env của Deployment, trong ConfigMap, hoặc bị app
+in ra log. `describe_resource` gửi nguyên spec (kể cả `env[].value`), `get_pod_logs`/`search_logs` gửi
+nguyên dòng log — tới nhà cung cấp LLM, Langfuse, bảng `tool_calls`.
+
+- Module `tools/redact.py`: che **theo cấu trúc** (cặp `name`/`value` có tên nhạy cảm — PASSWORD, TOKEN,
+  SECRET, …KEY, CREDENTIAL —, khoá ConfigMap có tên như vậy) và **theo mẫu** trong văn bản (mật khẩu trong
+  URL `scheme://user:pass@host` — giữ host —, `Bearer …`, JWT, private key PEM, khoá AWS/GitHub/Groq/Google,
+  `password=…` trong log). Thay bằng `[REDACTED]` để model biết có thứ bị ẩn chứ không đoán.
+- Áp **tại nguồn** trong `describe_resource`, `get_pod_logs`, `search_logs` (để Langfuse và DB cũng không
+  lưu bản gốc), và trong hàm bọc tool của `injection.py` làm lưới cho custom tool/MCP; câu trích EVIDENCE
+  của RCA cũng qua lớp này.
+- Giới hạn: bí mật đặt trong biến tên lạ (`XYZ=abc123`) không bị bắt — giảm rủi ro, không loại bỏ.
 
 ## Kiểm tra
 

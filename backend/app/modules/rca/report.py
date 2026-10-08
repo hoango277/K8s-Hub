@@ -40,6 +40,7 @@ from app.modules.nl_command import injection
 from app.modules.observability.langfuse_client import get_callback_handler, trace_attributes
 from app.modules.observability.tracing import new_trace_id
 from app.modules.rca import remediation
+from app.modules.tools.redact import redact_text
 from app.modules.tools.registry import registry
 from app.modules.tools.schema import Danger
 
@@ -180,7 +181,7 @@ def build_context(run: RcaRun, hyps: list[RcaHypothesis], fixes: list[remediatio
     for eid in dict.fromkeys(cited):
         for ev in (events.get(eid) or {}).get("evidence") or []:
             mark = f" [flagged: {', '.join(flags[ev['id']])}]" if ev["id"] in flags else ""
-            lines.append(f"- {ev['id']} ({ev['source']}){mark}: {ev['text']}")
+            lines.append(f"- {ev['id']} ({ev['source']}){mark}: {redact_text(ev['text'])}")
     signals = sorted({s for found in flags.values() for s in found})
     parts.append("\nEVIDENCE (cite by id):")
     parts.append(injection.wrap(EVIDENCE_SOURCE, "\n".join(lines) or "(none)", signals))

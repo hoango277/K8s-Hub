@@ -41,6 +41,8 @@ from typing import Any
 
 from langchain_core.messages import AnyMessage, HumanMessage, ToolMessage
 
+from app.modules.tools.redact import redact_text
+
 UNTRUSTED_TAG = "tool_output"
 
 # Each pattern is one kind of evidence. Kept separate so the approval card and
@@ -252,6 +254,9 @@ def make_tool_guard(
             and isinstance(result, ToolMessage)
         ):
             text = result.content if isinstance(result.content, str) else str(result.content)
+            # Safety net for tools that don't redact at the source (custom CLI,
+            # MCP): the built-in readers already did (tools/redact.py).
+            text = redact_text(text)
             result = result.model_copy(
                 update={"content": wrap(name, text, scan(text, write_tools))}
             )

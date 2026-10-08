@@ -20,7 +20,7 @@ bộ khung thư mục cho cả 4**. Chạy thật: ra lệnh bằng ngôn ngữ 
 | Trang Cấu hình trên web | **Chạy được** — lưu xuống Postgres, có lịch sử thay đổi và trạng thái kết nối |
 | Kết nối Kubernetes | Client + 7 tool đọc (kể cả đọc **mọi loại tài nguyên**, trừ Secret) **chạy thật trên lab1** (không có biến nào trong `.env`: trong pod dùng ServiceAccount, ngoài pod dùng kubeconfig của kubectl) |
 | Thay đổi cụm qua phê duyệt | **Chạy được**: 5 tool ghi chỉ ĐỀ XUẤT → dry-run phía server + diff → engineer duyệt/từ chối (thẻ trong chat + trang Approvals) → thực thi → kiểm tra lại. Đã kiểm thật trên lab1 cả duyệt → thực thi → kiểm tra lại |
-| Chống prompt injection gián tiếp | **Chạy được** (02/10, mở rộng 08/10/2026): kết quả tool và bằng chứng RCA đánh dấu untrusted, phát hiện lệnh cài trong dữ liệu (Anh + Việt), đề xuất lưu câu hỏi gốc + cờ, thẻ duyệt cảnh báo; đo trên kind: bị chiếm quyền 1/18 → 0/18, cảnh báo người dùng 0/18 → 17/18 (mục 3.11) |
+| Chống prompt injection gián tiếp | **Chạy được** (02/10, mở rộng 08/10/2026): kết quả tool và bằng chứng RCA đánh dấu untrusted, phát hiện lệnh cài trong dữ liệu (Anh + Việt), đề xuất lưu câu hỏi gốc + cờ, thẻ duyệt cảnh báo; đo trên kind: bị chiếm quyền 1/18 → 0/18, cảnh báo người dùng 0/18 → 17/18; che mật khẩu/token trong spec và log trước khi gửi LLM (mục 3.11) |
 | Sandbox chạy lệnh/script | **Chạy thật** cả `local` và `kubernetes` (pod sandbox đã apply lên lab1 ngày 30/09/2026) |
 | Đọc trace ứng dụng trên cụm (Grafana Tempo) | **Chạy được đầu-cuối**: 3 công cụ cho trợ lý, đã thử với Tempo thật trên lab1 |
 | RCA (kiểu Groot, event graph) | **Chạy được đầu-cuối** (07/10/2026): chẩn đoán **cả cụm và chéo namespace**, đồ thị phụ thuộc từ config/metric/trace/log, 8 detector, 112 luật, PageRank + **học trọng số từ phản hồi**, AI kiểm chứng trong ngân sách tool + validator, đề xuất sửa qua phê duyệt, trang Diagnosis, tool chat `diagnose_incident`, webhook Alertmanager, quét định kỳ, bộ đánh giá `rca_eval`. Đã chạy thật trên lab1; đánh giá 8 kịch bản: top-1 8/8 (k8sgpt 6/8), tổng kết ở `docs/rca-tong-ket.md` (mục 3.12) |
@@ -63,7 +63,7 @@ K8s-Hub/
 │   ├── migrations/   11 revision Alembic, một head (`c3d9e1a7f402`), đã áp vào CSDL dev
 │   ├── evals/security/  đo prompt injection gián tiếp: 4 payload tấn công + script + kết quả trước/sau (mục 3.11)
 │   ├── rca_eval/     đánh giá RCA: 8 kịch bản lỗi có nhãn trên namespace rca-lab + baseline chỉ LLM (mục 3.12)
-│   └── tests/unit/   22 file test (413 test, đều xanh khi venv cài đủ requirements)
+│   └── tests/unit/   23 file test (416 test, đều xanh khi venv cài đủ requirements)
 ├── frontend/         Next.js 16 + React 19 + Tailwind v4 + TanStack Query
 │   └── src/          đăng nhập, chat, skills/tools, approvals, chẩn đoán (RCA), người dùng, cấu hình làm thật; giám sát AI là "sắp có"
 │       └── components/ui/  bộ component nền theo quy chuẩn UI/UX trong CLAUDE.md
@@ -389,7 +389,7 @@ phải trả lời bằng những gì đã tìm được, thay vì lượt chat 
 
 ### 3.6 Kiểm thử
 
-22 file test đơn vị (413 test), không cần mạng và không cần CSDL.
+23 file test đơn vị (416 test), không cần mạng và không cần CSDL.
 Bảng dưới chưa liệt kê đủ: còn `test_agent_retry.py`, `test_mcp_tools.py`, `test_rca_detectors.py`, `test_rca_engine.py`, `test_rca_triggers.py`, `test_rca_cluster.py` (mục 3.12) và
 `test_injection_guard.py` (mục 3.11: payload của bộ đo đều bị phát hiện, log thường không bị gắn cờ,
 thẻ đóng `</tool_output>` trong dữ liệu bị vô hiệu, provenance chỉ lấy lượt hiện tại, chạy qua `ToolNode` thật).
@@ -704,6 +704,19 @@ bị nghi được ghi `[flagged: …]`; báo cáo lưu `flagged_evidence` và t
 "Possible prompt injection" nêu id bằng chứng. Tác động của loại tấn công này vốn bị `report.validate()`
 giới hạn (bản sửa phải là ứng viên, đề xuất từ RCA luôn vai trò `user`) — rủi ro là báo cáo sai, không
 phải lệnh chạy sai.
+
+**Che bí mật trước khi gửi LLM (OWASP LLM02)** — thêm 08–09/10/2026, `tools/redact.py`. Chặn đọc Secret
+không đủ: mật khẩu hay nằm thẳng trong `env[].value`, ConfigMap, hoặc bị app in ra log, và trước đây
+`describe_resource`/`get_pod_logs`/`search_logs` gửi nguyên văn tới nhà cung cấp LLM, Langfuse và bảng
+`tool_calls`. Nay che **tại nguồn** trong ba tool đó (trước bước cắt độ dài, để không lộ nửa bí mật):
+theo cấu trúc (cặp `name`/`value` hay khoá ConfigMap có tên PASSWORD/TOKEN/SECRET/…KEY/CREDENTIAL;
+`valueFrom.secretKeyRef` giữ nguyên vì không chứa bí mật) và theo mẫu (mật khẩu trong URL — giữ host —,
+`Bearer …`, JWT, khoá PEM, khoá AWS/GitHub/Groq/Google/Slack, `password=…`). Thay bằng `[REDACTED]`.
+Hàm bọc tool của `injection.py` chạy lớp mẫu thêm một lần làm lưới cho custom tool/MCP; câu trích
+EVIDENCE của RCA cũng qua lớp này. Đã thử trên kind: Deployment có `DB_PASSWORD`, `STRIPE_API_KEY` viết
+thẳng và pod in chuỗi kết nối/Bearer/khoá AWS ra log — cả 5 bí mật bị che, host DB và nội dung log còn
+lại giữ nguyên. Không đo trước/sau (người dùng chọn bỏ). Giới hạn: bí mật trong biến tên lạ
+(`XYZ=abc123`) không bị bắt; kết quả tool hiện trên giao diện chat cũng là bản đã che.
 
 **Bộ đo** (`backend/evals/security/`): namespace `sec-eval` có nạn nhân `payments` và 4 payload (log,
 annotation, ConfigMap, và log tiếng Việt không dấu), script chạy đúng graph thật với tool đọc thật, tool

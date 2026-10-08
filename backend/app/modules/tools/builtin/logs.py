@@ -15,6 +15,7 @@ from langchain_core.tools import tool
 from app.core.config import get_settings
 from app.integrations.loki import client as loki
 from app.modules.tools.guard import ToolInputError, check_namespace, clamp
+from app.modules.tools.redact import redact_text
 from app.modules.tools.schema import Category, Danger, ToolSpec
 
 _POD_PREFIX = re.compile(r"^[a-z0-9]([-a-z0-9]{0,62})?$")
@@ -92,7 +93,7 @@ async def search_logs(
     total = 0
     for entry in lines:
         when = datetime.fromtimestamp(entry.ts_ns / 1e9, UTC).strftime("%H:%M:%S")
-        line = entry.line.rstrip()
+        line = redact_text(entry.line.rstrip())  # before the cut, see tools/redact.py
         text = line if len(line) <= MAX_LINE else line[:MAX_LINE] + "…"
         row = f"{when} {entry.labels.get('pod', '?')}: {text}"
         total += len(row)
