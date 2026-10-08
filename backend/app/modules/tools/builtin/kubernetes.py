@@ -16,6 +16,7 @@ from langchain_core.tools import tool
 
 from app.integrations.k8s import client as k8s
 from app.modules.tools.guard import ToolInputError, check_name, check_namespace, clamp
+from app.modules.tools.redact import redact_text
 from app.modules.tools.schema import Category, Danger, ToolSpec
 
 MAX_LOG_CHARS = 6000
@@ -249,6 +250,8 @@ async def get_pod_logs(
         return _fail(exc)
     if not text.strip():
         return "The log is empty."
+    # Before the cut, so a secret is never split in half with its tail kept.
+    text = redact_text(text)
     if len(text) > MAX_LOG_CHARS:
         # Keep the END: the error that matters is at the bottom of a log.
         text = f"… (earlier lines cut)\n{text[-MAX_LOG_CHARS:]}"
