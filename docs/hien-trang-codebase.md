@@ -1,6 +1,7 @@
 # Hiện trạng codebase K8s Hub
 
-*Báo cáo đọc mã, cập nhật ngày 02/10/2026 (lần 10). Mô tả những gì ĐANG CÓ trong kho, không phải kế hoạch.*
+*Báo cáo đọc mã, cập nhật ngày 08/10/2026 (lần 17). Mô tả những gì ĐANG CÓ trong kho, không phải kế hoạch.
+Kế hoạch nằm ở `docs/ke-hoach/`; mục lục và thứ tự đọc ở `docs/README.md`.*
 
 ---
 
@@ -9,7 +10,7 @@
 K8s Hub được thiết kế quanh 4 use case: ra lệnh Kubernetes bằng ngôn ngữ tự nhiên, phân tích
 nguyên nhân gốc (RCA), thư viện skill/runbook, và giám sát chính con AI. Kho mã đã dựng **đầy đủ
 bộ khung thư mục cho cả 4**. Chạy thật: ra lệnh bằng ngôn ngữ tự nhiên (đọc cụm + đề xuất thay
-đổi qua phê duyệt) và thư viện skill; RCA vẫn là khung.
+đổi qua phê duyệt) thư viện skill, và RCA kiểu Groot (phát hiện sự kiện → đồ thị nhân quả → xếp hạng → AI kiểm chứng + báo cáo → trang Diagnosis).
 
 | Mảng | Tình trạng |
 |---|---|
@@ -22,15 +23,15 @@ bộ khung thư mục cho cả 4**. Chạy thật: ra lệnh bằng ngôn ngữ 
 | Chống prompt injection gián tiếp | **Chạy được** (02/10/2026): kết quả tool đánh dấu untrusted, phát hiện lệnh cài trong dữ liệu, đề xuất lưu câu hỏi gốc + cờ, thẻ duyệt cảnh báo; có bộ đo `evals/security/` (mục 3.11) |
 | Sandbox chạy lệnh/script | **Chạy thật** cả `local` và `kubernetes` (pod sandbox đã apply lên lab1 ngày 30/09/2026) |
 | Đọc trace ứng dụng trên cụm (Grafana Tempo) | **Chạy được đầu-cuối**: 3 công cụ cho trợ lý, đã thử với Tempo thật trên lab1 |
-| RCA | Chỉ có khung file |
+| RCA (kiểu Groot, event graph) | **Chạy được đầu-cuối** (07/10/2026): chẩn đoán **cả cụm và chéo namespace**, đồ thị phụ thuộc từ config/metric/trace/log, 8 detector, 112 luật, PageRank + **học trọng số từ phản hồi**, AI kiểm chứng trong ngân sách tool + validator, đề xuất sửa qua phê duyệt, trang Diagnosis, tool chat `diagnose_incident`, webhook Alertmanager, quét định kỳ, bộ đánh giá `rca_eval`. Đã chạy thật trên lab1; đánh giá 8 kịch bản: top-1 8/8 (k8sgpt 6/8), tổng kết ở `docs/rca-tong-ket.md` (mục 3.12) |
 | Skills (chuẩn Agent Skills) + Tools + custom CLI tool | **Chạy được đầu-cuối** (skill mẫu, tool metrics/logs/traces chạy thật trên lab1, custom tool kiểu kubectl-ai thêm/sửa/xoá trên web). **MCP server bên ngoài**: bỏ 30/09, thêm lại 01/10/2026 — chỉ engineer/admin kết nối, chọn từng tool có cần phê duyệt; đã kiểm đầu-cuối với một MCP server thật chạy cục bộ |
 | Tracing: OTel + Langfuse | **Chạy thật** với Langfuse trên `lab1:30400`, đã kiểm trace đầu-cuối |
 | Audit log, đo lường chất lượng | Bảng `approvals` là nhật ký mọi thay đổi cụm (ai đề xuất, ai duyệt, kết quả); `audit_log.py` và đo lường chất lượng vẫn là khung |
 | Đăng nhập, phân quyền (JWT, 3 vai trò) | **Chạy được đầu-cuối** (backend + frontend), đã kiểm qua HTTP thật |
 | Quản trị người dùng (trang `/users`) | **Chạy được**, đã kiểm bằng trình duyệt thật |
 
-Về khối lượng: backend có 140 file, ~12.700 dòng Python; **32 file chỉ chứa một dòng docstring
-kèm `TODO`** (không tính `__init__.py`), gần hết thuộc RCA. Frontend có 16 component/hook/type ở dạng khung rỗng — nhưng
+Về khối lượng: backend có 146 file, ~20.100 dòng Python; **14 file chỉ chứa docstring kèm `TODO`**
+(không tính `__init__.py`; đếm file ≤ 3 dòng có `TODO`) — chủ yếu hạ tầng chung và schema. Frontend có 7 component/hook/type ở dạng khung rỗng — nhưng
 không còn **trang** nào trắng: trang chưa có tính năng hiện mô tả những gì nó sẽ làm. Nghĩa là cấu
 trúc dự án đã được nghĩ xong và đóng cọc sẵn; phần thịt mới đắp vào một nhánh.
 
@@ -52,22 +53,23 @@ nằm trong migration (`role_hop_le`, `status_hop_le`, `ix_chat_threads_user_moi
 ```
 K8s-Hub/
 ├── backend/          FastAPI + LangGraph + SQLAlchemy async
-│   ├── app/api/v1/   10 router: chat, auth, users, settings, health (thật) + 5 router rỗng
+│   ├── app/api/v1/   11 router: chat, auth, users, settings, health, approvals, rca, skills, tools (thật) + clusters, observability (rỗng)
 │   ├── app/core/     config.py (trung tâm hệ thống), security.py (JWT, bcrypt) + 3 file khung
 │   ├── app/db/       models users/refresh_tokens/chat_threads/messages/tool_calls + session
 │   ├── app/integrations/  llm, k8s (client + resources + diff), prometheus, loki, tempo (xong) · k8s/rbac (khung)
-│   ├── app/modules/  nl_command (agent + pipeline phê duyệt + chống prompt injection), tools, skills, sandbox (xong) · observability (tracing xong) · rca (khung)
+│   ├── app/modules/  nl_command (agent + pipeline phê duyệt + chống prompt injection), tools, skills, sandbox (xong) · observability (tracing xong) · rca (xong; đã đánh giá 8 kịch bản)
 │   ├── app/schemas/  events.py, chat.py, auth.py (xong) + 5 file khung
 │   ├── app/services/ thread, auth, user service (xong) + 2 file khung
-│   ├── migrations/   10 revision Alembic — đang rẽ 2 nhánh (2 head), xem mục 6
+│   ├── migrations/   11 revision Alembic, một head (`c3d9e1a7f402`), đã áp vào CSDL dev
 │   ├── evals/security/  đo prompt injection gián tiếp: 3 kịch bản tấn công + script (mục 3.11)
-│   └── tests/unit/   19 file test (342 test, đều xanh khi venv cài đủ requirements)
+│   ├── rca_eval/     đánh giá RCA: 8 kịch bản lỗi có nhãn trên namespace rca-lab + baseline chỉ LLM (mục 3.12)
+│   └── tests/unit/   22 file test (399 test, đều xanh khi venv cài đủ requirements)
 ├── frontend/         Next.js 16 + React 19 + Tailwind v4 + TanStack Query
-│   └── src/          đăng nhập, chat, skills/tools, approvals, người dùng, cấu hình làm thật; RCA và giám sát AI là "sắp có"
+│   └── src/          đăng nhập, chat, skills/tools, approvals, chẩn đoán (RCA), người dùng, cấu hình làm thật; giám sát AI là "sắp có"
 │       └── components/ui/  bộ component nền theo quy chuẩn UI/UX trong CLAUDE.md
-├── deploy/           dev-workspace/ (pod code-server, chưa apply) · sandbox/ (pod sandbox, đã apply) · chưa có helm/
+├── deploy/           dev-workspace/ (pod code-server, chưa apply) · sandbox/ (pod sandbox, đã apply) · observability/ (values Helm của Alloy) · rca-lab/ (namespace đánh giá + alert nhanh + receiver, đã apply) · chưa có helm/
 ├── .claude/skills/   cap-nhat-hien-trang — quy trình cập nhật chính tài liệu này
-└── docs/             3 file kế hoạch .xlsx + báo cáo này
+└── docs/             ĐỌC TRƯỚC: README.md (mục lục) · báo cáo này · ke-hoach/ (kế hoạch đang làm, ví dụ rca-groot.md) · 3 file .xlsx cũ
 ```
 
 ---
@@ -186,7 +188,9 @@ Các bảng đã có model và migration:
 | `tool_runs` | Lần chạy tool từ trang Skills (tab Tools) |
 | `skills`, `skill_files` | Skill tạo/import trên web (file lưu dạng bytes, đúng bố cục thư mục chuẩn) + trạng thái bật/tắt của cả skill có sẵn |
 | `skill_runs` | Mọi lần chạy script của skill (từ chat hay từ web): ai, script, tham số, exit code, output |
-| `rca_runs`, `rca_evidence`, `rca_hypotheses` | Một lần chẩn đoán (đối tượng, namespace, trạng thái, báo cáo JSONB), bằng chứng (nguồn + dữ liệu JSONB + thời điểm) và giả thuyết (hạng duy nhất trong một lần chạy, độ tin cậy 0–1, `evidence_ids`). An thêm ngày 01/10/2026, có `test_rca_models.py`. **Chưa có code nào ghi hay đọc ba bảng này** — logic RCA vẫn là khung (mục 4) |
+| `rca_runs` | Một lần chẩn đoán: nguồn kích hoạt (cột `trig`: manual/chat/alert/scan), namespace + đối tượng, cửa sổ thời gian, trạng thái, các bước (`steps`, để trang hiện tiến trình kể cả sau khi tải lại), `graph` JSONB (sự kiện kèm bằng chứng + cạnh nhân quả), cảnh báo thiếu dữ liệu, báo cáo AI + `report_status`, `llm_trace_id`, `approval_id` của bản sửa đã đề xuất. Không xoá — là lịch sử sự cố |
+| `rca_hypotheses` | Top-3 nguyên nhân của một run: hạng, sự kiện, điểm, chuỗi nhân quả, luật, verdict của AI, **phản hồi** của engineer (`feedback`, người, thời điểm) |
+| `rca_weights` | Học từ phản hồi: số lần đúng/sai theo `rule:<id>` và `type:<loại>`; hệ số tính lúc phân tích |
 
 Mọi quan hệ đặt `lazy="raise"` — đọc quan hệ chưa nạp sẵn sẽ báo lỗi ngay thay vì lặng lẽ bắn thêm
 truy vấn giữa luồng bất đồng bộ. Quy ước đặt tên ràng buộc cố định trong `db/base.py` để Alembic
@@ -291,8 +295,20 @@ prop nguy hiểm của `ConfirmDialog` là `destructive`.
 
 Thanh điều hướng chia hai nhóm "Vận hành" và "Quản trị"; nhóm Quản trị (Người dùng, Cấu hình) chỉ
 `admin` thấy. Gõ thẳng URL thì `RoleGate` hiện trang "không có quyền" thay vì form sẽ lỗi 403.
-Ba trang Chẩn đoán, Chờ duyệt, Giám sát AI chưa có tính năng — hiện `ComingSoon` liệt kê
-những gì trang sẽ làm, không còn trang trắng.
+Chỉ còn trang Giám sát AI chưa có tính năng — hiện `ComingSoon` liệt kê những gì trang sẽ làm.
+
+- `rca/*` — trang **Diagnosis** (`/rca`): danh sách run (lọc theo nguồn, khung xương khi tải, trống có
+  hướng dẫn, tự làm mới khi có run đang chạy), hộp thoại "New diagnosis" (chọn namespace bằng Radix
+  Select — rơi về ô nhập khi backend không liệt kê được namespace —, workload tuỳ chọn, cửa sổ thời
+  gian, bật/tắt AI report). Trang chi tiết `/rca/[runId]`: tiến trình dạng danh sách bước, cảnh báo
+  thiếu dữ liệu, **báo cáo AI** (tóm tắt, giải thích, bước tiếp theo, "What the AI looked up", phần bị
+  validator sửa, nút "Propose this fix" → thẻ phê duyệt ngay trong trang), **top nguyên nhân** kèm chuỗi
+  nhân quả và lý do từng cạnh, **đồ thị nhân quả** SVG tự vẽ (nguyên nhân trái → triệu chứng phải, nút
+  bấm/Enter được, di chuột lên cạnh xem luật), bảng chi tiết sự kiện (bằng chứng, "Caused by / Leads
+  to"), **dòng thời gian** (thay đổi do người tô tím, lọc "chỉ sự kiện trong đồ thị"), "Run again now".
+  Tiến trình đọc bằng polling run mỗi 1,5 giây (bước lưu trong CSDL) chứ không dùng SSE. Đã kiểm bằng
+  Chrome thật qua Playwright ở 1440px (sáng) và 390px (tối): không lỗi console, không tràn ngang.
+  `PageHeader` từ `sm` trở lên giữ nút chính cùng hàng tiêu đề (trước đây mô tả dài đẩy nút xuống dưới).
 
 ### 3.5 Tool và Skill của trợ lý
 
@@ -308,6 +324,7 @@ Hai tầng tách bạch (quy tắc ở mục "Skill và Tool" trong `CLAUDE.md`)
 | Metrics | `pod_metrics` (cpu, memory, restarts, throttling, kèm % so với limit) | Prometheus | **chạy thật trên lab1** |
 | Logs | `search_logs` | Loki | **chạy thật trên lab1** |
 | Traces | `list_traced_services`, `search_traces`, `get_trace` | Tempo | chạy thật (đã kiểm bằng trace mẫu); Tempo chưa có trace thật |
+| Chẩn đoán | `diagnose_incident` (namespace, workload tuỳ chọn, số phút) | RCA (mục 3.12) | chạy phần tất định (~2 giây trên lab1), trả top-3 + chuỗi + bằng chứng + link `/rca/<id>`; không có CSDL thì vẫn trả kết quả, ghi "Not saved" |
 | Mọi tài nguyên | `get_resources`, `describe_resource` (Service, Ingress, Node, PVC, HPA, CRD…; tên kind/plural/tên tắt như kubectl) | Kubernetes REST + discovery (`k8s/resources.py`) | **chạy thật trên lab1** (kể cả CRD của Cilium); Secret luôn bị từ chối |
 | Đề xuất thay đổi | `scale_workload`, `restart_workload`, `set_image`, `delete_pod`, `delete_resource`, `apply_manifest` | kế hoạch → dry-run → phê duyệt (mục 3.10) | chỉ tạo đề xuất; không có ở chế độ `read_only` |
 | MCP | tool của MCP server bên ngoài, tên `<server>__<tool>` | MCP Streamable HTTP (`mcp` 2.2) | **tắt + cần phê duyệt** tới khi engineer đổi; cần duyệt → đề xuất (thẻ hiện đúng tham số, không dry-run), không cần → gọi thẳng; chính sách đọc lúc gọi |
@@ -372,8 +389,8 @@ phải trả lời bằng những gì đã tìm được, thay vì lượt chat 
 
 ### 3.6 Kiểm thử
 
-19 file test đơn vị (342 test), không cần mạng và không cần CSDL (`test_rca_models.py` dùng SQLite trong bộ nhớ).
-Bảng dưới chưa liệt kê đủ: còn `test_agent_retry.py`, `test_mcp_tools.py`, `test_rca_models.py` và
+22 file test đơn vị (399 test), không cần mạng và không cần CSDL.
+Bảng dưới chưa liệt kê đủ: còn `test_agent_retry.py`, `test_mcp_tools.py`, `test_rca_detectors.py`, `test_rca_engine.py`, `test_rca_triggers.py`, `test_rca_cluster.py` (mục 3.12) và
 `test_injection_guard.py` (mục 3.11: payload của bộ đo đều bị phát hiện, log thường không bị gắn cờ,
 thẻ đóng `</tool_output>` trong dữ liệu bị vô hiệu, provenance chỉ lấy lượt hiện tại, chạy qua `ToolNode` thật).
 Lưu ý: venv thiếu `email-validator` (dù `requirements.txt` khai `pydantic[email]`) thì 1 test đỏ và
@@ -682,11 +699,166 @@ lớp này): model không bị lừa đề xuất, nhưng **giấu payload** —
 có lỗi khác"), gọi lời dặn trong annotation là "ghi chú nội bộ" đúng như payload yêu cầu. **Chưa có
 kết quả đo đầy đủ trước/sau** (02/10/2026): script ghi kết quả vào `evals/security/results/` khi chạy.
 
+### 3.12 RCA kiểu Groot — chạy được đầu-cuối
+
+Xây lại từ 07/10/2026 theo Groot (eBay, ASE'21); kế hoạch và bảng tiến độ ở
+`docs/ke-hoach/rca-groot.md` (giai đoạn 1–4 xong). **Nút đồ thị là SỰ KIỆN**, hai sự kiện chỉ được
+nối khi có luật, xếp hạng tất định; LLM không bao giờ nhận log/metric thô — chỉ top-3, chuỗi nhân quả
+và bằng chứng đã nén, rồi kiểm chứng bằng vài lời gọi tool đọc có giới hạn.
+
+**Tầng dữ liệu** (`backend/app/modules/rca/`):
+
+| File | Làm gì |
+|---|---|
+| `model.py` | `Entity`, `Event`, `Evidence` (≤ 300 ký tự), `CausalEdge`, `Hypothesis`; 29 loại sự kiện kèm trọng số "khả năng là gốc" (thay đổi ~1.0, triệu chứng chung chung 0.2–0.3) |
+| `snapshot.py` | Một lượt đọc API cho cả lần chạy: 12 loại trong namespace + node, song song; lỗi giống nhau gộp thành một cảnh báo |
+| `topology.py` | Đồ thị phụ thuộc từ cấu trúc Kubernetes (owner, node, config/secret, PVC, service → pod/workload, ingress, HPA) + cạnh "gọi" (`callee`/`caller`) từ chú thích `k8s-hub.io/depends-on` hoặc trace. `ensure_pod` tìm workload của pod **đã bị xoá** qua tên |
+| `events_store.py` | Kubernetes events trong cửa sổ: API (≤ 1 giờ) + Loki `{job="kubernetes-events"}` (Alloy trên lab1 đã bật từ 07/10/2026, dạng logfmt có `msg="..."` trong ngoặc kép), khử trùng; giữ lần đầu và lần cuối của event gộp |
+| `detectors/pods.py` | CrashLoop, OOMKilled, ImagePullError, ContainerConfigError, RestartSpike, PodNotReady, Evicted, Unschedulable, ProbeFailed, VolumeMountFailed |
+| `detectors/workloads.py` | ReplicasUnavailable, RolloutStuck, ServiceNoEndpoints, PvcPending, HpaAtMax |
+| `detectors/nodes.py` | NodeNotReady, NodePressure, NodeCordon, NodeSaturated (requests / allocatable ≥ 95%) |
+| `detectors/changes.py` | Rollout (diff với ReplicaSet trước: image, **tên** biến env — không chép giá trị —, resources, command), ScaleChange, ConfigChange (`managedFields`), ApprovalExecuted (bảng `approvals`) |
+| `detectors/metrics.py` | MemoryNearLimit (`max_over_time` để không lọt đỉnh), CpuThrottling, ErrorRateSpike/LatencySpike (Beyla) — 4 truy vấn cho cả namespace |
+| `detectors/logs.py` | LogErrorSpike: Loki đếm dòng lỗi theo pod (bỏ dòng tự ghi `level=info`), gom bằng **Drain3**, giữ mẫu **mới xuất hiện** làm bằng chứng |
+| `detectors/traces.py` | Cạnh "gọi" thật từ span cha/con khác service; DownstreamErrors trên service bị gọi |
+
+**Lõi Groot:**
+- `rules.py` — **65 luật dạng dữ liệu** (nguyên nhân, kết quả, quan hệ trong topology, độ trễ tối đa,
+  điều kiện, trọng số, câu "why"); sai tên loại/quan hệ thì lỗi ngay lúc import. Ví dụ: rollout đổi
+  image → ImagePullError; MemoryNearLimit → CrashLoop khi exit 137; scale về 0 → Service mất endpoint →
+  lỗi ở bên gọi.
+- `causality.py` — BFS ngược từ triệu chứng (độ sâu 5, tối đa 200 nút). Nguyên nhân phải đến trước kết
+  quả (chậm tối đa 3 phút cho độ mịn đo đạc); kết quả bắt đầu **trước cửa sổ** (crash-loop nhiều ngày)
+  vẫn được nối nhưng trọng số × 0,6. Có đích (workload) mà không thấy triệu chứng thì phân tích cả
+  namespace; không có triệu chứng nào thì nói rõ "không phải giải thích một sự cố".
+- `ranking.py` — **thiết kế riêng** (Groot không công bố công thức): Personalized PageRank trên đồ thị
+  đảo chiều (khởi động ở triệu chứng, nút không có nguyên nhân giữ người đi bộ) × trọng số loại sự kiện
+  × 1,3 cho gốc; hoà điểm thì sự kiện sớm hơn thắng; chuỗi nhân quả = đường nặng nhất từ gốc tới triệu
+  chứng.
+- `pipeline.py` — `analyze()` tất định (không CSDL, không LLM); run lưu trong `rca_runs`, mỗi bước ghi
+  vào `steps`; chạy bằng asyncio task trong tiến trình backend (chưa có worker) — khởi động lại giữa
+  chừng thì lúc khởi động `mark_interrupted()` đánh dấu failed.
+
+**AI kiểm chứng + báo cáo** (`report.py`): ngữ cảnh cố định (top-3, chuỗi, bằng chứng có id, dòng thời
+gian ≤ 30 sự kiện, ứng viên sửa lỗi, cảnh báo thiếu dữ liệu); tối đa `RCA_LLM_TOOL_BUDGET` (mặc định 4)
+lời gọi `describe_pod`/`get_pod_logs`/`list_events`/`pod_metrics`/`search_logs`/`describe_resource`,
+chỉ trong namespace của run, kết quả bọc untrusted như chat và thành bằng chứng mới `llm#n`. Trả JSON;
+**validator tất định** bỏ evidence id bịa, verdict cho hạng không tồn tại, nguyên nhân gốc mà chính AI đã
+bác, và bản sửa không nằm trong danh sách ứng viên — phần bị bỏ hiện ra trong báo cáo. Lỗi LLM thì run
+vẫn giữ kết quả tất định (`report_status=failed`, có nút thử lại). Langfuse: session `rca-<id>`, tag `rca`.
+Model gpt-oss trên Groq có lúc trả báo cáo dưới dạng **gọi tool tên `json`** (không có trong danh sách
+tool) và Groq từ chối cả lượt (400 `tool_use_failed`) — gặp thật ở một run từ alert ngày 07/10/2026. Nay
+báo cáo được lấy lại từ `failed_generation` trong lỗi; không lấy được thì hỏi lại không kèm tool; lời
+nhắc ghi rõ báo cáo là văn bản thường. Viết lại báo cáo cho đúng run đó: thành công.
+
+**Sửa lỗi qua phê duyệt** (`remediation.py`): ứng viên suy ra từ chính sự kiện — rollback image về
+image của ReplicaSet trước, scale lại số replica cũ; còn lại là lời khuyên (tăng limit, xem lại
+ConfigMap, node đầy, PVC). AI chỉ được **chọn** một id. "Propose this fix" gọi `approval_service.propose`
+với vai trò `user` nên **không bao giờ tự chạy**, kể cả chế độ `auto`.
+
+**API** (`api/v1/rca.py`): `GET /rca/targets`, `GET /rca/targets/{ns}/workloads`, `POST /rca/runs`
+(mọi vai trò, trong namespace được phép), `GET /rca/runs`, `GET /rca/runs/{id}`,
+`GET /rca/runs/{id}/stream` (SSE `step` → `done`, đọc lại từ bảng), `POST /rca/runs/{id}/report`,
+`POST /rca/runs/{id}/fixes/{fix}/propose`. `user` chỉ thấy run của mình và run hệ thống (alert/scan);
+engineer/admin thấy hết. Cấu hình mới (sửa được trên web): `RCA_LOOKBACK_MINUTES` (120),
+`RCA_LLM_TOOL_BUDGET` (4).
+
+**Đã chạy thật trên lab1** (07/10/2026):
+- `langfuse` (sự cố thật: web liveness probe timeout, worker BackOff): phần tất định **2,1 giây**. AI
+  dùng đủ 4 lời gọi, xác nhận cả 3 giả thuyết bằng bằng chứng có thật, chỉ ra nguyên nhân chung là
+  không kết nối được PostgreSQL `pg-rw.database` (thấy trong log), và tự ghi chú log là dữ liệu
+  untrusted. Validator không phải sửa gì.
+- `monitoring` sau khi Alloy hết lỗi: không có triệu chứng; lần đầu AI vẫn mô tả "ảnh hưởng" → đã thêm
+  cảnh báo "không có triệu chứng" vào dữ liệu và luật trong lời nhắc.
+- Qua HTTP (app thật, CSDL thật, chạy trong tiến trình): 422/400 cho đầu vào sai, SSE ra đủ bước tới
+  `done` (~46 giây gồm báo cáo), `user` thường nhận 404 với run của người khác, fix không tồn tại 404.
+
+**Test:** `test_rca_detectors.py` (14) + `test_rca_engine.py` (15): luật hợp lệ; rollout xấu xếp
+đầu cho ImagePull; chuỗi OOM; không luật không cạnh; nguyên nhân sau kết quả bị loại; kết quả đang diễn
+ra giảm trọng số; scale về 0 qua approval giải thích lỗi bên gọi và cho fix scale lại 2; hoà điểm thì
+sớm hơn; PageRank bảo toàn khối lượng; fix rollback dùng image cũ; validator; vòng gọi tool với model giả
+dừng đúng ngân sách và bọc kết quả untrusted.
+
+**Trigger tự động** (`triggers.py`, `scanner.py`):
+- `POST /api/v1/rca/alerts` — receiver webhook của Alertmanager, xác thực bằng
+  `ALERTMANAGER_WEBHOOK_TOKEN` (chỉ trong `.env`; trống = tắt, trả 503). Mỗi alert đang firing có nhãn
+  `namespace` thành một run (`trig=alert`, người yêu cầu `alertmanager@k8s-hub`) tập trung vào
+  deployment/statefulset/daemonset/pod/service trong nhãn. Chống trùng: bỏ fingerprint đã chẩn đoán trong
+  60 phút, và **mỗi đối tượng một run trong 10 phút** (pod tính là workload của nó, theo tên); các lần gửi
+  xử lý tuần tự (lock); tối đa 5 run mỗi lần gửi; luôn trả 200 để Alertmanager không gửi lại.
+  **Đã chạy thật đầu-cuối** (07/10/2026): đổi image `web` trong `rca-lab` sang tag không tồn tại →
+  Alertmanager trên lab1 (`192.168.1.28`) gọi webhook → run "From alert" xếp `Rollout` đứng đầu, báo cáo
+  AI nêu đúng image sai. Lần đó hai alert (ErrImagePull rồi ImagePullBackOff) đến cùng một giây và tạo hai
+  run trùng → đã thêm chống trùng theo đối tượng + lock.
+- Quét định kỳ: `RCA_SCAN_INTERVAL_MINUTES` (0 = tắt, mặc định) trên `RCA_SCAN_NAMESPACES`, đổi được
+  trên trang Cấu hình. Chỉ tạo run khi có triệu chứng **critical mới**; triệu chứng kéo dài chỉ chẩn đoán
+  một lần, quên sau 60 phút không thấy. Bộ nhớ "đã thấy" nằm trong tiến trình (khởi động lại thì chẩn
+  đoán lại một lần). Chạy như task trong `lifespan`.
+- Prometheus (`/metrics`): `k8shub_rca_runs_total{trigger,outcome}`, `k8shub_rca_run_duration_seconds`.
+- Thay đổi theo kinh nghiệm chạy thật: trạng thái pod **critical** (ImagePullError, ContainerConfigError,
+  Unschedulable, OOMKilled) nay cũng là điểm xuất phát của đồ thị — rolling update giữ pod cũ chạy nên
+  image sai chỉ lộ ra ở pod mới; thêm luật `rollout-unschedulable` (65 luật). Báo cáo AI ghi số token.
+
+**Đánh giá** (`backend/rca_eval/`, `deploy/rca-lab/base.yaml`): 8 kịch bản lỗi có nhãn — image sai,
+OOM, ConfigMap sai, thiếu key, probe sai → mất endpoint, request vượt sức node, PVC sai StorageClass,
+scale về 0 qua phê duyệt của K8s-Hub — mỗi workload chỉ request 5m CPU. Với mỗi kịch bản: dọn lab →
+dựng bản khoẻ → gây lỗi bằng `kubectl` (hoặc qua approvals) → chờ → RCA (lưu như diagnosis thường,
+người yêu cầu `rca-eval@k8s-hub`) → baseline là chính trợ lý chat với cùng tool đọc (bỏ
+`diagnose_incident` và tool ghi), chấm theo dòng `ROOT CAUSE:` → dọn. Kết quả ở
+`backend/rca_eval/results/<thời điểm>.{md,json}`. Không có bộ dữ liệu public dùng được: Groot không công
+bố 952 sự cố; RCAEval/OpenRCA chỉ có telemetry xuất file, thiếu trạng thái Kubernetes.
+
+**Kết quả (07/10/2026, chi tiết và so sánh ở `docs/rca-tong-ket.md`):** lần chạy sạch đủ 8 kịch bản —
+xếp hạng tất định **top-1 8/8**, ~1,3 giây; **k8sgpt v0.4.39** (thêm vào bộ đánh giá bằng `--k8sgpt`) nhắc
+tới nguyên nhân 6/8 (trượt 2 ca mà nguyên nhân là thay đổi: sửa ConfigMap, scale qua phê duyệt). Phần
+LLM chỉ có mẫu nhỏ vì hết hạn mức miễn phí (Groq 200k token/ngày, Gemini 20 request/ngày): báo cáo AI chọn
+đúng 10/10 ca hoàn tất; agent LLM 6/6 nhưng tốn 2–4 lần token và chậm 5–80 lần. Bộ đánh giá có thêm
+`--no-report`, `--rpm` (giới hạn request/phút cho gói miễn phí). Lưu ý vận hành: dừng tác vụ nền bằng
+công cụ của Claude Code **không giết tiến trình Python con** — đã có lần hai bộ đánh giá chạy chồng nhau;
+kết quả các lần đó chỉ dùng tham khảo. Sửa thêm nhờ đánh giá: Deployment mới tạo không còn bị coi là
+"ScaleChange"; lỗi Groq `output_parse_failed` được xử lý như lỗi gọi tool sai.
+
+**Cải tiến 08/10/2026** (kế hoạch `docs/ke-hoach/rca-cai-tien.md`, hạng mục 1–5 xong):
+- **Toàn cụm, chéo namespace.** `snapshot.take()` đọc cả cụm (mỗi loại một lời gọi, vẫn tôn trọng
+  `K8S_ALLOWED_NAMESPACES`); topology dựng cho cả cụm. Chẩn đoán một namespace = namespace đó **+ các
+  namespace nó phụ thuộc** (2 bước theo cạnh "gọi"), và nếu log/trace lộ thêm phụ thuộc thì chạy detector
+  thêm một vòng cho namespace mới. Triệu chứng chỉ lấy ở namespace đang chẩn đoán; namespace phụ thuộc chỉ
+  góp nguyên nhân. Không chọn namespace = cả cụm (`rca_runs.namespace="*"`, API/tool chat/bộ quét đều
+  hỗ trợ; bộ quét để trống danh sách = quét cả cụm). 47 luật mới cho lỗi lan qua phụ thuộc (quan hệ ghép
+  `owner+callee+pods`…). Chạy thật: chẩn đoán `langfuse` tự thêm `database` (env `DATABASE_HOST=pg-rw.database…`).
+- **Đồ thị gọi đa nguồn** (mỗi cạnh ghi nguồn, hiện trên trang chi tiết mục "What was analysed"):
+  config (host trong env và ConfigMap; tên trần chỉ khi tên biến có HOST/URL/ADDR…), metric (Beyla
+  `http_client_*`, `db_client_*`; khớp Service theo tiền tố chỉ khi duy nhất), trace (span cha/con, kể
+  cả khác namespace), log (host trong dòng lỗi, cả pod đang crash), annotation (`ns/name`). lab1: 31 cạnh.
+- **Nguồn thay đổi mới:** rollout StatefulSet/DaemonSet (ControllerRevision), `GitOpsSync` (Argo CD
+  `status.history`), `HelmRelease` (Secret release của Helm), `SecretChange`; ConfigMap/Secret chỉ tính
+  khi có pod dùng; **tạo mới** có prior ×0,4.
+- **Secret: chỉ metadata.** `resources.list_secret_metadata()` xin `PartialObjectMetadataList` (server
+  không gửi `data`), rồi chỉ giữ tên, nhãn, thời điểm tạo, managedFields (manager/operation/time) và **bỏ
+  annotation** (`last-applied-configuration` có thể chứa nguyên Secret). Đây là ngoại lệ có kiểm soát của
+  quy tắc "không đọc Secret" — giá trị không bao giờ tới backend; có test.
+- **Học từ phản hồi:** engineer/admin bấm "Right cause / Not it" trên từng nguyên nhân
+  (`POST /rca/runs/{id}/hypotheses/{rank}/feedback`, `user` nhận 403); `rca_weights` đếm theo loại sự
+  kiện gốc và từng luật trong chuỗi; hệ số `2·(đúng+2)/(tổng+4)` kẹp [0,5; 1,5]; đổi ý không đếm hai lần;
+  `GET /rca/weights`; `rca_eval --feedback` ghi nhãn kịch bản làm phản hồi. Không học từ verdict của AI.
+  Đã kiểm qua HTTP thật (rồi xoá đúng dữ liệu test); **chưa có phản hồi thật**.
+- **Phát hiện bất thường:** change-point (điểm tách hai đoạn khác nhau nhất, theo MAD) thay cho "30% đầu
+  cửa sổ"; lỗi/độ trễ request so với **cùng giờ hôm qua** (bỏ qua nếu ≤ 1,5 lần); `MemoryLeak` (xu hướng
+  tăng đều r² ≥ 0,8, chạm limit trong 2 giờ); mẫu log mới so với **6 giờ trước** cửa sổ.
+- Sửa nhờ chạy thật: Service không có backend và không ai gọi (CNPG `pg-ro` một instance) không còn bị
+  báo mất endpoint; cảnh báo "Loki không có events" chỉ khi cả cụm không có event; scale **xuống** ngay
+  sau khi tạo vẫn là thay đổi.
+- **Đánh giá lại** sau refactor (`20261008-073724`): vẫn **top-1 8/8**, ~1,5 giây (đọc cả cụm), k8sgpt 6/8.
+
+**Giới hạn đã biết:** phụ thuộc chỉ thấy được khi có dấu vết (config, metric, trace, log, chú thích) —
+địa chỉ nằm trong Secret thì không (giá trị Secret không được đọc); trọng số học được chưa có dữ liệu
+phản hồi thật; bộ quét giữ trạng thái trong bộ nhớ.
+
 ---
 
 ## 4. Những gì mới là khung
 
-32 file Python (không tính `__init__.py`) và 16 file TypeScript (component, hook, type cho RCA,
+15 file Python (không tính `__init__.py`) và 16 file TypeScript (component, hook, type cho RCA,
 clusters, observability) hiện chỉ có một dòng mô tả trách nhiệm kèm `TODO`.
 Chúng không vô dụng: mỗi file là một quyết định thiết kế đã chốt về việc "cái gì nằm ở đâu".
 
@@ -697,9 +869,7 @@ Chúng không vô dụng: mỗi file là một quyết định thiết kế đã
 kết thúc sau khi đề xuất, quyết định đến sau qua API, nên `langgraph-checkpoint-postgres` vẫn chưa
 cần.
 
-**RCA.** 15 file rỗng: 1 agent, 5 collector (k8s events, logs, metrics, pod state, rollout history),
-5 analyzer (CrashLoop, OOM, ImagePull, probe, scheduling), correlator, hypothesis, reporter, triggers
-(cùng `state.py`, `schemas/rca.py`, router `api/v1/rca.py`). Đã có tầng lưu trữ (3 bảng, mục 3.3).
+**RCA.** Đã làm đủ 6 giai đoạn (mục 3.12); việc còn lại là chạy đủ 8 kịch bản đánh giá.
 
 **Skills / Tools.** Đã làm (mục 3.5). MCP gỡ ngày 30/09 rồi thêm lại ngày 01/10/2026 với chính sách
 từng tool (mục 3.5, 3.10). Thao tác ghi là `tools/builtin/actions.py`.
@@ -717,7 +887,7 @@ làm gì, còn *cluster thực sự đổi gì* thì không ai ghi lại cả.
 (bảng `approvals` đang đóng vai nhật ký thay đổi cụm), `schemas/approval.py` (schema của approvals
 đang khai ngay trong `api/v1/approvals.py`).
 
-**3 router API rỗng**: `clusters`, `rca`, `observability`. Chúng đã được mount vào `api_router` nên
+**2 router API rỗng**: `clusters`, `observability`. Chúng đã được mount vào `api_router` nên
 hiện ra trong `/docs` nhưng không có endpoint nào.
 
 ---
@@ -750,8 +920,24 @@ Prometheus trên lab1 **tắt cả remote write lẫn OTLP receiver** (`/api/v1/
 backend ra mạng); lúc dev xem thẳng `/metrics`. Khi backend chạy thành pod thì thêm một ServiceMonitor
 cùng lúc với Deployment — đến lúc đó Prometheus mới có số liệu của app.
 
-Cụm còn sẵn Argo CD (`30080`), Jenkins (`30081`), Alertmanager (`30093`) và Alloy (`31245`) — Alloy
-là thứ đang gom log đẩy vào Loki, nên khi cần nguồn log cho RCA thì đường ống đã có sẵn.
+Cụm còn sẵn Argo CD (`30080`), Jenkins (`30081`), Alertmanager (`30093`) và Alloy (`31245`).
+
+**Ai thu gom gì.** Prometheus tự scrape cAdvisor, kube-state-metrics, node-exporter. Alloy (DaemonSet)
+là collector cho phần còn lại: đọc stdout mọi pod đẩy vào Loki, chạy Beyla (eBPF) sinh metric HTTP (đẩy
+vào Prometheus qua remote write) và trace (đẩy vào Tempo). K8s-Hub và RCA **đọc nơi lưu**
+(Prometheus/Loki/Tempo), không đọc Alloy — bảng đầy đủ ở `docs/ke-hoach/rca-groot.md` mục 6.
+
+**Alloy (kiểm ngày 07/10/2026):**
+- Trước đó crash-loop khoảng 1.800 lần trong 7 ngày (exit 137 ở limit 1Gi), log bị mất.
+- Người dùng đã nâng cấp: pod 2/2, 0 restart, limit 2Gi, vị trí đọc lưu trên host. Log pod vào Loki
+  lại; lỗi `timestamp too old` chỉ còn lúc khởi động.
+- Sau đó người dùng bật `loki.source.kubernetes_events` với `job_name = "kubernetes-events"`: Loki có
+  lịch sử Kubernetes events (logfmt) cho RCA. `deploy/observability/alloy-values.yaml` đã đổi theo
+  tên job này. Bản trên cụm vẫn có thể khác file ở khối `instrument` của Beyla — chưa đối chiếu lại.
+
+**Langfuse trên lab1 (07/10/2026):** sáng có lúc `langfuse-web`/`langfuse-worker` ở
+`ErrImagePull`/`ImagePullBackOff`; chiều đã Running lại (web 11 lần restart do liveness probe timeout,
+worker 27 lần do không kết nối được PostgreSQL — chính RCA chẩn đoán ra, mục 3.12). Chưa điều tra sâu.
 
 Langfuse cần **bản 3 trở lên**: SDK 4.x dựng trên OpenTelemetry và gửi vào `/api/public/otel/v1/traces`,
 endpoint bản 2 không có. Trỏ sai bản thì xác thực thất bại lúc khởi động, ứng dụng vẫn chạy nhưng
@@ -771,6 +957,14 @@ workspace mở ra ngoài qua NodePort 30830 (frontend) và 30808 (backend); `env
 `.env` dùng DNS nội bộ của các service (`pg-rw.database.svc`, `…prometheus.monitoring.svc:9090`,
 `loki-gateway.loki.svc`, `tempo.tempo.svc:3200`, `langfuse-web.langfuse.svc:3000`) và
 không cần biến nào cho Kubernetes (tự dùng ServiceAccount của pod). Build image + CI/CD (Jenkins, Argo CD, Docker Hub/GHCR) là bước sau.
+
+**Lab đánh giá RCA** (`deploy/rca-lab/base.yaml`, **đã apply lên lab1** 07/10/2026): namespace
+`rca-lab`, Secret `k8s-hub-rca-webhook` (token, tạo bằng lệnh, không nằm trong repo), PrometheusRule
+`rca-lab-fast` (alert sau 1–2 phút thay vì 15), AlertmanagerConfig `k8s-hub-rca` gửi alert **chỉ của
+rca-lab** (strategy `OnNamespace` mặc định) tới `http://192.168.1.27:8000/api/v1/rca/alerts` — Alertmanager
+đã nạp receiver và gọi tới được. Backend phải chạy `--host 0.0.0.0`; máy dev có luật firewall
+"K8s-Hub backend from lab1" (TCP 8000, chỉ từ 192.168.1.28, tạo ngày 07/10/2026). Đổi IP máy dev thì sửa
+URL trong file rồi apply lại. Xoá hết: `kubectl delete namespace rca-lab`.
 
 **Pod sandbox** (`deploy/sandbox/sandbox.yaml`, **đã apply lên lab1**, pod 2/2 Running): namespace
 `k8s-hub-sandbox`, ServiceAccount `sandbox` + ClusterRole riêng (không Secret), Role `sandbox-exec`
@@ -795,6 +989,11 @@ Chưa có file khoá phiên bản, nên hai máy cài cách nhau vài tháng có
 Sắp theo mức độ nên xử lý sớm.
 
 ### Đã xử lý trong lần cập nhật này
+
+- **Migration chưa áp và Alembic hai head.** Đã áp `9d4b6e1f2a73` và migration RCA mới `b81f0c2d4e57`
+  vào CSDL dev (07/10/2026); lịch sử còn một head.
+- **Không có lịch sử Kubernetes events.** Alloy trên lab1 nay đẩy events vào Loki (`job="kubernetes-events"`,
+  logfmt); `events_store` đọc được cả dạng này (giá trị trong ngoặc kép có dấu cách).
 
 - **Langfuse thiếu người dùng/hội thoại trên các lời gọi model.** Trace vẫn lên đủ (đối chiếu 25/25 lượt
   chat gần nhất), có số token; nhưng Langfuse 4.38 chạy chế độ `events_only` lưu `userId`/`sessionId`
@@ -887,12 +1086,14 @@ Sắp theo mức độ nên xử lý sớm.
 
 ### Còn tồn tại
 
-**00. Migration Alembic rẽ hai nhánh.** `e6f1a9b47c20` (bảng RCA) và `a7c41e9b2d10` (approvals) cùng
-nối vào `df3c82e3549e`, nên `alembic heads` ra hai head — nay là `9d4b6e1f2a73` (cột provenance của
-approvals, nối sau `c5a19f3e7b22`) và `e6f1a9b47c20` — và `alembic upgrade head` báo "Multiple head
-revisions". Chạy `alembic upgrade heads` (số nhiều). Nhóm chủ ý để nguyên ngày 02/10/2026. Khi sửa:
-đổi `down_revision` của migration RCA thành head phía approvals (nếu chưa DB chung nào chạy nó), hoặc
-thêm migration gộp bằng `alembic merge heads`.
+**000. Webhook RCA trỏ thẳng vào IP máy dev** (`192.168.1.27`): đổi mạng/IP hoặc tắt máy là alert
+không tới; khi backend chạy thành pod thì đổi URL sang Service trong cụm.
+
+**00. RCA chạy trong tiến trình backend.** Không có worker/hàng đợi: nhiều diagnosis cùng lúc tranh
+CPU với chat, và khởi động lại backend giữa chừng làm run đó thất bại (được đánh dấu lúc khởi động).
+Nguyên nhân nằm ở namespace khác không vào được đồ thị (mục 3.12).
+
+**00c. Langfuse trên lab1 không ổn định** (mục 5): restart nhiều lần vì mất kết nối PostgreSQL.
 
 **01. Tài khoản admin bootstrap không kiểm định dạng email.** `bootstrap_admin` tạo được tài khoản với
 email như `huy@k8shub.local`, nhưng `EmailStr` ở form đăng nhập từ chối đuôi `.local`, `.localhost`,
@@ -947,7 +1148,8 @@ Xếp theo mức độ mở khoá cho phần còn lại:
    workload để chạy thay đổi đã duyệt; thêm ServiceMonitor. Song song: bật Beyla để Tempo có trace thật.
 3. **`k8s/rbac.py`** — SelfSubjectAccessReview trước khi đề xuất, để báo "không đủ quyền" ngay thay vì
    ở dry-run.
-4. **RCA**, dùng lại tool đọc (kể cả `get_resources`) và đề xuất khắc phục qua đúng luồng phê duyệt.
+4. **RCA:** chạy lại phần LLM của bộ đánh giá khi có quota (hoặc khoá trả phí) để đủ mẫu; rồi theo thứ tự ở
+   `docs/rca-tong-ket.md` mục 5 — mở rộng chéo namespace, đồ thị gọi từ Beyla/Tempo, thêm nguồn thay đổi.
 5. **Đánh giá** (so với kubectl-ai bằng k8s-ai-bench hoặc bộ kịch bản tự soạn) — người dùng tạm hoãn.
 6. **Rate limit cho `/auth/login` và `/auth/register`** (rủi ro số 1 ở mục 6).
 

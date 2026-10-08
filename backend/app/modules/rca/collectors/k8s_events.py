@@ -1,1 +1,0 @@
-"""Collector: Kubernetes Events. TODO."""

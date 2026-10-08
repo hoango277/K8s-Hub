@@ -37,6 +37,8 @@ langchain-groq>=0.2.3
 langchain-google-genai>=2.0.8
 # MCP client for external tool servers (added by engineers, see app/modules/tools/mcp_client.py)
 mcp>=2.2
+# RCA: groups error log lines into templates ("connection refused to <*>"), app/modules/rca/detectors/logs.py
+drain3>=0.9.11
 
 # --- Kubernetes / observability data sources ---
 kubernetes-asyncio>=31.1.0

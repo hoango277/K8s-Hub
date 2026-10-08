@@ -1,0 +1,45 @@
+[
+  {
+    "scenario": "bad-image",
+    "title": "Rollout to an image tag that doesn't exist",
+    "expected": "Rollout on web",
+    "rca_ranked": [
+      "Rollout:Workload/rca-lab/web",
+      "ImagePullError:Pod/rca-lab/web-7887c7b74c-nbgzf"
+    ],
+    "rca_hit_rank": 1,
+    "ai_root": "Rollout:Workload/rca-lab/web",
+    "ai_hit": true,
+    "rca_seconds": 2.46,
+    "report_seconds": 4.01,
+    "rca_tokens": 5633,
+    "run_id": "58db786e-758a-40f9-b482-52ee73f12255",
+    "baseline_answer": "The deployment **web** in namespace **rca‑lab** is configured to use the image `nginx:9.99.99-does-not-exist`. That tag does not exist in Docker Hub, so the pod cannot pull the image and stays in **ImagePullBackOff**. The failing pod is the result of this incorrect image reference.\n\n**ROOT CAUSE:** Deployment `web` specifies a non‑existent image tag (`nginx:9.99.99-does-not-exist`).",
+    "baseline_hit": true,
+    "baseline_seconds": 91.63,
+    "baseline_tokens": 14158,
+    "error": null
+  },
+  {
+    "scenario": "oom",
+    "title": "Container allocates more memory than its limit",
+    "expected": "MemoryNearLimit/OOMKilled on hog",
+    "rca_ranked": [
+      "OOMKilled:Pod/rca-lab/hog-5467d44577-ll8jf",
+      "CrashLoop:Pod/rca-lab/hog-5467d44577-ll8jf",
+      "ReplicasUnavailable:Workload/rca-lab/hog"
+    ],
+    "rca_hit_rank": 1,
+    "ai_root": "OOMKilled:Pod/rca-lab/hog-5467d44577-ll8jf",
+    "ai_hit": true,
+    "rca_seconds": 1.15,
+    "report_seconds": 5.14,
+    "rca_tokens": 8284,
+    "run_id": "9d1a6f74-c3f0-4e7b-a704-c3f649c626da",
+    "baseline_answer": "The pod **hog‑5467d44577‑ll8jf** is repeatedly terminated with **OOMKilled** (exit 137).  \nIts container `hog` runs the image `polinux/stress:1.0.4` and has a memory **limit of 96 Mi** (request 32 Mi). The stress workload quickly exceeds this limit, causing the kernel to kill the container. The pod then enters a back‑off loop, leading to the observed CrashLoopBackOff.\n\n**ROOT CAUSE:** The pod’s memory limit (96 Mi) is too low for the stress workload, causing OOMKilled restarts.",
+    "baseline_hit": true,
+    "baseline_seconds": 245.54,
+    "baseline_tokens": 26147,
+    "error": null
+  }
+]

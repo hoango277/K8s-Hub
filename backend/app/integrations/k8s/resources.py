@@ -166,6 +166,7 @@ async def request(
     query: list[tuple[str, Any]] | None = None,
     body: Any = None,
     content_type: str = "application/json",
+    accept: str = "application/json",
 ) -> tuple[int, dict[str, Any]]:
     """One REST call. Returns (status, JSON body) — errors are NOT raised, so
     callers can tell 404 (absent: create) from 403/422 (refused)."""
@@ -176,7 +177,7 @@ async def request(
                 method,
                 {},
                 list(query or []),
-                {"Accept": "application/json", "Content-Type": content_type},
+                {"Accept": accept, "Content-Type": content_type},
                 body=body,
                 auth_settings=["BearerToken"],
                 _preload_content=False,
@@ -192,6 +193,51 @@ async def request(
     except ValueError:
         data = {"message": raw.decode("utf-8", "replace")[:500]}
     return resp.status, data if isinstance(data, dict) else {"items": data}
+
+
+# Ask the API server for metadata only: it strips `data`/`stringData` itself.
+_METADATA_ONLY = "application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1"
+
+
+async def list_secret_metadata(
+    namespace: str | None = None, *, label_selector: str | None = None, limit: int = 2000
+) -> list[dict[str, Any]]:
+    """WHEN Secrets were created/changed and by whom — never what they contain.
+
+    The one exception to "Secrets are never read", for root-cause analysis
+    (a rotated password breaks the apps that use it; Helm keeps its release
+    history in Secrets). Three layers keep values out:
+      1. the server is asked for PartialObjectMetadataList, which has no data;
+      2. whatever comes back is reduced here to name, namespace, labels,
+         creation time and managedFields (manager/operation/time only);
+      3. annotations are dropped entirely — `kubectl apply` stores the whole
+         object, values included, in last-applied-configuration.
+    """
+    path = f"/api/v1/namespaces/{quote(namespace)}/secrets" if namespace else "/api/v1/secrets"
+    query: list[tuple[str, Any]] = [("limit", limit)]
+    if label_selector:
+        query.append(("labelSelector", label_selector))
+    status, data = await request("GET", path, query=query, accept=_METADATA_ONLY)
+    if status >= 400:
+        raise api_error(status, data, "Secret metadata")
+    out = []
+    for item in data.get("items") or []:
+        m = item.get("metadata") or {}
+        out.append(
+            {
+                "metadata": {
+                    "name": m.get("name"),
+                    "namespace": m.get("namespace"),
+                    "labels": dict(m.get("labels") or {}),
+                    "creationTimestamp": m.get("creationTimestamp"),
+                    "managedFields": [
+                        {k: f.get(k) for k in ("manager", "operation", "time")}
+                        for f in m.get("managedFields") or []
+                    ],
+                }
+            }
+        )
+    return out
 
 
 def api_error(status: int, data: dict[str, Any], what: str) -> K8sError:
@@ -266,6 +312,7 @@ __all__ = [
     "get_object",
     "is_blocked",
     "list_objects",
+    "list_secret_metadata",
     "request",
     "resolve_kind",
 ]

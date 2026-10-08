@@ -1,0 +1,214 @@
+[
+  {
+    "scenario": "bad-image",
+    "title": "Rollout to an image tag that doesn't exist",
+    "expected": "Rollout on web",
+    "rca_ranked": [
+      "Rollout:Workload/rca-lab/web",
+      "ImagePullError:Pod/rca-lab/web-7887c7b74c-vc56k",
+      "ImagePullError:Pod/rca-lab/web-7887c7b74c-6c75k"
+    ],
+    "rca_hit_rank": 1,
+    "ai_root": "Rollout:Workload/rca-lab/web",
+    "ai_hit": true,
+    "rca_seconds": 1.57,
+    "report_seconds": 3.78,
+    "rca_tokens": 3770,
+    "run_id": "e6e4c7a2-eb72-4283-8f5e-c32283a0ba95",
+    "baseline_answer": null,
+    "baseline_hit": null,
+    "baseline_seconds": 0.0,
+    "baseline_tokens": 0,
+    "k8sgpt_findings": [
+      "Pod rca-lab/web-7887c7b74c-6c75k: Back-off pulling image \"nginx:9.99.99-does-not-exist\": ErrImagePull: rpc error: code = NotFound desc = failed to pull and unpack image \"docker.io/library/nginx:9.99.99-does-not-exist\": failed to resolve image: docker.io/library/nginx:9.99.99-does-not-exist: not foun"
+    ],
+    "k8sgpt_hit": true,
+    "error": "RateLimitError: Error code: 429 - {'error': {'message': 'Rate limit reached for model `openai/gpt-oss-120b` in organization `org_01m2esjwndeg297jxxf6hvcs85` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Used 3284, Requested 5794. Please try again in 8.085s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+  },
+  {
+    "scenario": "oom",
+    "title": "Container allocates more memory than its limit",
+    "expected": "MemoryNearLimit/OOMKilled on hog",
+    "rca_ranked": [
+      "OOMKilled:Pod/rca-lab/hog-5467d44577-7nmpl",
+      "CrashLoop:Pod/rca-lab/hog-5467d44577-7nmpl",
+      "ReplicasUnavailable:Workload/rca-lab/hog"
+    ],
+    "rca_hit_rank": 1,
+    "ai_root": "OOMKilled:Pod/rca-lab/hog-5467d44577-7nmpl",
+    "ai_hit": true,
+    "rca_seconds": 1.29,
+    "report_seconds": 9.32,
+    "rca_tokens": 8152,
+    "run_id": "6497f91d-bd09-459b-bf1e-ea57c7bc88eb",
+    "baseline_answer": "The **hog** pod is repeatedly terminated with **OOMKilled** (exit 137). Its container `hog` has a memory request of 32 Mi and a limit of 96 Mi, but the `polinux/stress:1.0.4` image quickly consumes more memory than the 96 Mi limit, causing the kernel to kill the process. The pod then enters a back‑off loop, leading to the observed restarts.\n\n**ROOT CAUSE:** The pod’s memory limit (96 Mi) is too low for the workload, causing OOMKilled terminations.",
+    "baseline_hit": true,
+    "baseline_seconds": 53.86,
+    "baseline_tokens": 14402,
+    "k8sgpt_findings": [
+      "Deployment rca-lab/hog: Deployment rca-lab/hog has 1 replicas but 0 are available with status running",
+      "Pod rca-lab/hog-5467d44577-7nmpl: the termination reason is OOMKilled exitCode=137 container=hog pod=hog-5467d44577-7nmpl"
+    ],
+    "k8sgpt_hit": true,
+    "error": null
+  },
+  {
+    "scenario": "bad-config",
+    "title": "ConfigMap edited to a value the app refuses",
+    "expected": "ConfigChange on app-config",
+    "rca_ranked": [
+      "ConfigChange:ConfigMap/rca-lab/app-config",
+      "RestartSpike:Pod/rca-lab/cfg-577f48797c-wh976",
+      "CrashLoop:Pod/rca-lab/cfg-577f48797c-wh976"
+    ],
+    "rca_hit_rank": 1,
+    "ai_root": null,
+    "ai_hit": null,
+    "rca_seconds": 0.89,
+    "report_seconds": 2.21,
+    "rca_tokens": 0,
+    "run_id": "091626ef-02e5-4b95-9292-91192ca4b578",
+    "baseline_answer": "The pod `cfg-577f48797c-wh976` keeps exiting with `exit 1` because its start‑up script checks the environment variable **MODE** and aborts unless it equals `ok`:\n\n```sh\nif [ \"$MODE\" != ok ]; then\n  echo \"fatal: unsupported MODE=$MODE\" >&2\n  exit 1\nfi\n```\n\nThe deployment mounts the ConfigMap `app‑config`, which currently contains:\n\n```yaml\ndata:\n  MODE: broken\n```\n\nThus the container receives `MODE=broken`, prints the fatal message, and terminates, causing the CrashLoopBackOff and the deployment’s “minimum availability” condition to be false.\n\n**ROOT CAUSE:** The ConfigMap `app-config` was set to `MODE=broken`, causing the container’s entry‑point script to exit with an error.",
+    "baseline_hit": true,
+    "baseline_seconds": 161.48,
+    "baseline_tokens": 30763,
+    "k8sgpt_findings": [
+      "Deployment rca-lab/cfg: Deployment rca-lab/cfg has 1 replicas but 0 are available with status running",
+      "Pod rca-lab/cfg-577f48797c-wh976: the termination reason is Error exitCode=1 container=cfg pod=cfg-577f48797c-wh976"
+    ],
+    "k8sgpt_hit": false,
+    "error": null
+  },
+  {
+    "scenario": "missing-key",
+    "title": "Rollout references a ConfigMap key that doesn't exist",
+    "expected": "Rollout on keys",
+    "rca_ranked": [
+      "Rollout:Workload/rca-lab/keys",
+      "ConfigChange:ConfigMap/rca-lab/keys-config",
+      "ContainerConfigError:Pod/rca-lab/keys-c6c86444b-mz2n9"
+    ],
+    "rca_hit_rank": 1,
+    "ai_root": "Rollout:Workload/rca-lab/keys",
+    "ai_hit": true,
+    "rca_seconds": 1.89,
+    "report_seconds": 6.39,
+    "rca_tokens": 9108,
+    "run_id": "371c03fa-dc72-405e-91c8-54b1dcb5d537",
+    "baseline_answer": null,
+    "baseline_hit": null,
+    "baseline_seconds": 0.0,
+    "baseline_tokens": 0,
+    "k8sgpt_findings": [
+      "Pod rca-lab/keys-c6c86444b-mz2n9: couldn't find key KEY_MISSING in ConfigMap rca-lab/keys-config"
+    ],
+    "k8sgpt_hit": true,
+    "error": "RateLimitError: Error code: 429 - {'error': {'message': 'Rate limit reached for model `openai/gpt-oss-120b` in organization `org_01m2esjwndeg297jxxf6hvcs85` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Used 4168, Requested 3902. Please try again in 525ms. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+  },
+  {
+    "scenario": "bad-probe",
+    "title": "Rollout with a readiness probe on a path that 404s",
+    "expected": "Rollout on api",
+    "rca_ranked": [
+      "Rollout:Workload/rca-lab/api",
+      "ProbeFailed:Pod/rca-lab/api-7c5d7f76c4-b422h",
+      "PodNotReady:Pod/rca-lab/api-7c5d7f76c4-b422h"
+    ],
+    "rca_hit_rank": 1,
+    "ai_root": "Rollout:Workload/rca-lab/api",
+    "ai_hit": true,
+    "rca_seconds": 2.06,
+    "report_seconds": 7.37,
+    "rca_tokens": 10153,
+    "run_id": "87f94fc1-aa3c-4fa8-bf5a-b80f822c11f4",
+    "baseline_answer": null,
+    "baseline_hit": null,
+    "baseline_seconds": 0.0,
+    "baseline_tokens": 0,
+    "k8sgpt_findings": [
+      "Deployment rca-lab/api: Deployment rca-lab/api has 1 replicas but 0 are available with status running",
+      "Service rca-lab/api: Service has not ready endpoints, pods: [Pod/api-7c5d7f76c4-b422h], expected 1",
+      "Pod rca-lab/api-7c5d7f76c4-b422h: Readiness probe failed: HTTP probe failed with statuscode: 404"
+    ],
+    "k8sgpt_hit": true,
+    "error": "RateLimitError: Error code: 429 - {'error': {'message': 'Rate limit reached for model `openai/gpt-oss-120b` in organization `org_01m2esjwndeg297jxxf6hvcs85` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Used 5639, Requested 4426. Please try again in 15.487499999s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+  },
+  {
+    "scenario": "too-big",
+    "title": "Rollout requests more CPU than the node has",
+    "expected": "Rollout on big",
+    "rca_ranked": [
+      "Rollout:Workload/rca-lab/big",
+      "NodeSaturated:Node/-/lab1",
+      "Unschedulable:Pod/rca-lab/big-7fb56dd6f-c9nwj"
+    ],
+    "rca_hit_rank": 1,
+    "ai_root": "Rollout:Workload/rca-lab/big",
+    "ai_hit": true,
+    "rca_seconds": 1.58,
+    "report_seconds": 4.7,
+    "rca_tokens": 6279,
+    "run_id": "51b6a4a1-d9e3-40f8-a58b-b97714e3e3f3",
+    "baseline_answer": null,
+    "baseline_hit": null,
+    "baseline_seconds": 0.0,
+    "baseline_tokens": 0,
+    "k8sgpt_findings": [
+      "Pod rca-lab/big-7fb56dd6f-c9nwj: 0/1 nodes are available: 1 Insufficient cpu. preemption: 0/1 nodes are available: 1 Preemption is not helpful for scheduling."
+    ],
+    "k8sgpt_hit": true,
+    "error": "RateLimitError: Error code: 429 - {'error': {'message': 'Rate limit reached for model `openai/gpt-oss-120b` in organization `org_01m2esjwndeg297jxxf6hvcs85` service tier `on_demand` on tokens per day (TPD): Limit 200000, Used 198101, Requested 4306. Please try again in 17m19.824s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+  },
+  {
+    "scenario": "pvc-pending",
+    "title": "Volume claim with a storage class that doesn't exist",
+    "expected": "PvcPending on data",
+    "rca_ranked": [
+      "PvcPending:PVC/rca-lab/data",
+      "ScaleChange:Workload/rca-lab/store",
+      "Unschedulable:Pod/rca-lab/store-5f977dfd7f-hz98z"
+    ],
+    "rca_hit_rank": 1,
+    "ai_root": null,
+    "ai_hit": null,
+    "rca_seconds": 1.28,
+    "report_seconds": 0.44,
+    "rca_tokens": 0,
+    "run_id": "8c7f9bf5-570f-4081-87b2-5c651eca4eec",
+    "baseline_answer": null,
+    "baseline_hit": null,
+    "baseline_seconds": 0.0,
+    "baseline_tokens": 0,
+    "k8sgpt_findings": [
+      "Deployment rca-lab/store: Deployment rca-lab/store has 1 replicas but 0 are available with status running",
+      "PersistentVolumeClaim rca-lab/data: storageclass.storage.k8s.io \"rca-lab-missing-class\" not found",
+      "Pod rca-lab/store-5f977dfd7f-hz98z: 0/1 nodes are available: pod has unbound immediate PersistentVolumeClaims. not found"
+    ],
+    "k8sgpt_hit": true,
+    "error": "RateLimitError: Error code: 429 - {'error': {'message': 'Rate limit reached for model `openai/gpt-oss-120b` in organization `org_01m2esjwndeg297jxxf6hvcs85` service tier `on_demand` on tokens per day (TPD): Limit 200000, Used 197782, Requested 4321. Please try again in 15m8.496s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+  },
+  {
+    "scenario": "scale-zero",
+    "title": "Approved change through K8s-Hub scales the backend to 0",
+    "expected": "ApprovalExecuted/ScaleChange on api2",
+    "rca_ranked": [
+      "Rollout:Workload/rca-lab/web",
+      "ContainerConfigError:Pod/rca-lab/keys-c6c86444b-mz2n9",
+      "NodeSaturated:Node/-/lab1"
+    ],
+    "rca_hit_rank": null,
+    "ai_root": null,
+    "ai_hit": null,
+    "rca_seconds": 1.34,
+    "report_seconds": 0.49,
+    "rca_tokens": 0,
+    "run_id": "3c704bc0-c658-400c-a92d-137c10dbf2c3",
+    "baseline_answer": null,
+    "baseline_hit": null,
+    "baseline_seconds": 0.0,
+    "baseline_tokens": 0,
+    "k8sgpt_findings": [],
+    "k8sgpt_hit": false,
+    "error": "RateLimitError: Error code: 429 - {'error': {'message': 'Rate limit reached for model `openai/gpt-oss-120b` in organization `org_01m2esjwndeg297jxxf6hvcs85` service tier `on_demand` on tokens per day (TPD): Limit 200000, Used 197612, Requested 3414. Please try again in 7m23.232s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+  }
+]

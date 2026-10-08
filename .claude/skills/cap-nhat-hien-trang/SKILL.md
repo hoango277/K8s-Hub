@@ -29,8 +29,9 @@ khi kết luận. Dữ liệu vắng mặt ở API không có nghĩa là nó v�
 
 ### Bước 1 — Đọc báo cáo cũ như một danh sách giả thuyết
 
-Đọc `docs/hien-trang-codebase.md`. Đừng coi nó là sự thật; coi mỗi khẳng định
-là một điều **cần kiểm lại**. Chú ý mục 6 (rủi ro) và mục 7 (gợi ý bước tiếp) —
+Đọc `docs/README.md` (mục lục), rồi `docs/hien-trang-codebase.md`. Đừng coi nó là sự thật; coi mỗi khẳng định
+là một điều **cần kiểm lại**. Nếu thay đổi thuộc một kế hoạch trong `docs/ke-hoach/`, cập nhật luôn
+bảng "Tiến độ" của kế hoạch đó. Chú ý mục 6 (rủi ro) và mục 7 (gợi ý bước tiếp) —
 đó là hai chỗ lạc hậu nhanh nhất.
 
 ### Bước 2 — Quét lại thực tế

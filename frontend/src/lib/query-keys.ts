@@ -51,6 +51,13 @@ export const qk = {
     templates: ["tools", "templates"] as const,
     servers: ["tools", "servers"] as const,
   },
+  rca: {
+    all: ["rca"] as const,
+    list: (trigger: string | null) => ["rca", "list", trigger] as const,
+    detail: (id: string) => ["rca", "detail", id] as const,
+    targets: ["rca", "targets"] as const,
+    workloads: (ns: string) => ["rca", "workloads", ns] as const,
+  },
   approvals: {
     all: ["approvals"] as const,
     list: (status: string | null) => ["approvals", "list", status] as const,

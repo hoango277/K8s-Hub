@@ -120,8 +120,11 @@ class TraceHit:
     matched_spans: int
 
 
-async def search_traces(query: str, *, since_seconds: int, limit: int) -> list[TraceHit]:
-    end = int(time.time())
+async def search_traces(
+    query: str, *, since_seconds: int, limit: int, end: float | None = None
+) -> list[TraceHit]:
+    """Traces in the `since_seconds` before `end` (unix seconds, default now)."""
+    end = int(time.time() if end is None else end)
     data = await _get(
         "/api/search",
         {"q": query, "start": end - since_seconds, "end": end, "limit": limit},

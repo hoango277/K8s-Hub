@@ -5,6 +5,7 @@ TODO: initialize Redis.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -85,6 +86,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await skill_service.load_into_store(session)
             except Exception:
                 logger.exception("Could not load tools/skills state; using defaults")
+        # Diagnoses run as tasks in this process: any left "running" belong to a
+        # process that is gone and will never finish.
+        try:
+            from app.modules.rca.pipeline import mark_interrupted
+
+            if interrupted := await mark_interrupted():
+                logger.info("Marked %d interrupted diagnoses as failed", interrupted)
+        except Exception:
+            logger.exception("Could not clean up interrupted diagnoses")
 
     # Build the client and TracerProvider. No network calls at this step.
     init_langfuse()
@@ -99,9 +109,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             lf.get("error") or "server rejected the request",
         )
 
+    # Periodic diagnosis scan. Idle (re-checks its settings every minute) until
+    # RCA_SCAN_INTERVAL_MINUTES and RCA_SCAN_NAMESPACES are set.
+    from app.modules.rca import scanner
+
+    scan_task = asyncio.create_task(scanner.loop(), name="rca-scanner")
+
     yield
 
     # --- shutdown ---
+    scan_task.cancel()
     # Flush traces still in the queue BEFORE closing everything, otherwise the
     # last turns will never reach Langfuse.
     shutdown_langfuse()
