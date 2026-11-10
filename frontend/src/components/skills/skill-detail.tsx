@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeft,
   BookOpen,
   Download,
   FileCode,
@@ -22,6 +21,7 @@ import { FileView } from "@/components/skills/file-view";
 import { ErrorPanel, errorMessage, formatBytes } from "@/components/skills/shared";
 import { SourceBadge } from "@/components/skills/skill-card";
 import { SkillRunForm } from "@/components/skills/skill-run-form";
+import { BackLink } from "@/components/ui/back-link";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -214,13 +214,7 @@ export function SkillDetail({ name }: { name: string }) {
 
   return (
     <div className="mx-auto max-w-6xl px-4 pb-16 pt-6 sm:px-6">
-      <Link
-        href="/skills"
-        className="mb-4 inline-flex items-center gap-1.5 rounded-md text-sm text-[var(--muted-foreground)] outline-none hover:text-[var(--foreground)] focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
-      >
-        <ArrowLeft aria-hidden className="size-4" />
-        All skills
-      </Link>
+      <BackLink href="/skills">All skills</BackLink>
 
       <PageHeader
         icon={BookOpen}
@@ -263,7 +257,7 @@ export function SkillDetail({ name }: { name: string }) {
           {files.length} {files.length === 1 ? "file" : "files"}
         </Badge>
         {scripts.length > 0 && (
-          <Badge tone="info">
+          <Badge tone="neutral">
             {scripts.length} {scripts.length === 1 ? "script" : "scripts"}
           </Badge>
         )}

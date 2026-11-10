@@ -102,7 +102,8 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "flex shrink-0 flex-col border-r bg-[var(--muted)]/30 transition-[width] duration-200 ease-out motion-reduce:transition-none",
+        // Same canvas colour as the content, split by a hairline (Groq look).
+        "flex shrink-0 flex-col border-r bg-[var(--canvas)] transition-[width] duration-200 ease-out motion-reduce:transition-none",
         collapsed ? "w-14" : "w-60",
       )}
     >
@@ -115,7 +116,7 @@ export function Sidebar() {
             <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-[var(--primary)] text-[var(--primary-foreground)]">
               <Boxes aria-hidden className="size-4" />
             </span>
-            <span className="truncate text-sm font-semibold tracking-tight">K8s Hub</span>
+            <span className="truncate font-display text-base font-bold tracking-tight">K8s Hub</span>
           </Link>
         )}
 
@@ -142,9 +143,7 @@ export function Sidebar() {
             {collapsed ? (
               <div aria-hidden className="mx-2 mb-2 border-t first:hidden" />
             ) : (
-              <p className="mb-1 px-2.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
-                {group.title}
-              </p>
+              <p className="eyebrow mb-1 px-2.5 text-[var(--muted-foreground)]">{group.title}</p>
             )}
             <ul className="flex flex-col gap-0.5">
               {group.items.map((m) => {
@@ -163,32 +162,35 @@ export function Sidebar() {
                       aria-label={collapsed || count ? label : undefined}
                       aria-current={isActive ? "page" : undefined}
                       className={cn(
-                        "relative flex h-9 items-center gap-2.5 rounded-md text-sm outline-none transition",
+                        "relative flex h-9 items-center gap-2.5 rounded-md text-sm font-medium outline-none transition",
                         "focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
                         collapsed ? "justify-center px-0" : "px-2.5",
+                        // "You are here" in the accent, like groq.com's active nav item;
+                        // the only accent in the sidebar besides the logo.
                         isActive
-                          ? "bg-[var(--accent)] font-medium text-[var(--accent-foreground)]"
-                          : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]/60 hover:text-[var(--foreground)]",
+                          ? "bg-[var(--accent)] font-semibold text-[var(--brand)]"
+                          : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
                       )}
                     >
                       {/* Marker bar for the active item. When collapsed, the light
                           gray background isn't clear enough on a small square, so
                           this extra marker is needed. */}
                       {isActive && (
-                        <span aria-hidden className="absolute left-0 h-5 w-0.5 rounded-r bg-[var(--primary)]" />
+                        <span aria-hidden className="absolute left-0 h-5 w-1 rounded-r bg-[var(--brand)]" />
                       )}
                       <Icon aria-hidden className="size-4 shrink-0" />
                       {!collapsed && <span className="truncate">{m.label}</span>}
                       {count > 0 &&
                         (collapsed ? (
+                          // Waiting approvals need attention, they are not errors: amber, not red.
                           <span
                             aria-hidden
-                            className="absolute right-1.5 top-1.5 size-2 rounded-full bg-[var(--destructive)]"
+                            className="absolute right-1.5 top-1.5 size-2 rounded-full bg-[var(--warning)]"
                           />
                         ) : (
                           <span
                             aria-hidden
-                            className="ml-auto rounded-full bg-[var(--destructive)] px-1.5 text-[11px] font-semibold leading-5 text-[var(--destructive-foreground)]"
+                            className="ml-auto rounded-full bg-[var(--warning)] px-1.5 text-[11px] font-semibold leading-5 text-[var(--warning-foreground)]"
                           >
                             {count > 99 ? "99+" : count}
                           </span>

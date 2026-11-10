@@ -81,3 +81,16 @@ export function useReject() {
 export function useReverify() {
   return useDecision((id: string) => api.post<Approval>(`/approvals/${id}/verify`));
 }
+
+/** Propose the reverse of an executed change. Returns the NEW pending proposal;
+ * the original is refetched so its card shows the revert. */
+export function useRevert() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<Approval>(`/approvals/${id}/revert`),
+    onSuccess: (revert) => {
+      qc.setQueryData(qk.approvals.detail(revert.id), revert);
+      void qc.invalidateQueries({ queryKey: qk.approvals.all });
+    },
+  });
+}

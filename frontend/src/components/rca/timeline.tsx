@@ -45,7 +45,7 @@ export function Timeline({
                 aria-hidden
                 className={cn(
                   "absolute -left-[21px] top-3 size-2.5 rounded-full border-2 border-[var(--background)]",
-                  ev.category === "change" ? "bg-violet-500" : ev.in_graph ? "bg-[var(--foreground)]" : "bg-[var(--border)]",
+                  ev.category === "change" ? "bg-[var(--brand)]" : ev.in_graph ? "bg-[var(--foreground)]" : "bg-[var(--border)]",
                 )}
               />
               <button
@@ -56,7 +56,7 @@ export function Timeline({
                   "flex w-full items-start gap-3 rounded-md px-2 py-2 text-left outline-none transition motion-reduce:transition-none",
                   "hover:bg-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
                   selected === ev.id && "bg-[var(--accent)]",
-                  ev.category === "change" && "bg-violet-500/5",
+                  ev.category === "change" && "bg-[var(--brand)]/5",
                   !ev.in_graph && "opacity-70",
                 )}
               >
@@ -67,7 +67,7 @@ export function Timeline({
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-medium">{ev.title}</span>
-                    {ev.category === "change" && <Badge tone="violet">Change</Badge>}
+                    {ev.category === "change" && <Badge tone="accent">Change</Badge>}
                   </span>
                   <span className="block text-sm text-[var(--muted-foreground)]">
                     {entityLabel(ev.entity)} — {ev.summary}

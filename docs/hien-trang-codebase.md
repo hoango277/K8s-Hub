@@ -1,6 +1,6 @@
 # Hiện trạng codebase K8s Hub
 
-*Báo cáo đọc mã, cập nhật ngày 08/10/2026 (lần 17). Mô tả những gì ĐANG CÓ trong kho, không phải kế hoạch.
+*Báo cáo đọc mã, cập nhật ngày 10/11/2026 (lần 18). Mô tả những gì ĐANG CÓ trong kho, không phải kế hoạch.
 Kế hoạch nằm ở `docs/ke-hoach/`; mục lục và thứ tự đọc ở `docs/README.md`.*
 
 ---
@@ -19,11 +19,11 @@ bộ khung thư mục cho cả 4**. Chạy thật: ra lệnh bằng ngôn ngữ 
 | Lưu hội thoại vào PostgreSQL + migration | **Chạy được** |
 | Trang Cấu hình trên web | **Chạy được** — lưu xuống Postgres, có lịch sử thay đổi và trạng thái kết nối |
 | Kết nối Kubernetes | Client + 7 tool đọc (kể cả đọc **mọi loại tài nguyên**, trừ Secret) **chạy thật trên lab1** (không có biến nào trong `.env`: trong pod dùng ServiceAccount, ngoài pod dùng kubeconfig của kubectl) |
-| Thay đổi cụm qua phê duyệt | **Chạy được**: 5 tool ghi chỉ ĐỀ XUẤT → dry-run phía server + diff → engineer duyệt/từ chối (thẻ trong chat + trang Approvals) → thực thi → kiểm tra lại. Đã kiểm thật trên lab1 cả duyệt → thực thi → kiểm tra lại |
+| Thay đổi cụm qua phê duyệt | **Chạy được**: 5 tool ghi chỉ ĐỀ XUẤT → dry-run phía server + diff → engineer duyệt/từ chối (thẻ trong chat + trang Approvals) → thực thi → kiểm tra lại. Đã kiểm thật trên lab1 cả duyệt → thực thi → kiểm tra lại. **Hoàn tác** (10/11/2026): thay đổi đã chạy có nút Revert = đề xuất ngược qua đúng luồng duyệt (mục 3.10) — đã chạy thật trên lab1 (scale, sửa và tạo bằng apply) |
 | Chống prompt injection gián tiếp | **Chạy được** (02/10/2026): kết quả tool đánh dấu untrusted, phát hiện lệnh cài trong dữ liệu, đề xuất lưu câu hỏi gốc + cờ, thẻ duyệt cảnh báo; có bộ đo `evals/security/` (mục 3.11) |
 | Sandbox chạy lệnh/script | **Chạy thật** cả `local` và `kubernetes` (pod sandbox đã apply lên lab1 ngày 30/09/2026) |
 | Đọc trace ứng dụng trên cụm (Grafana Tempo) | **Chạy được đầu-cuối**: 3 công cụ cho trợ lý, đã thử với Tempo thật trên lab1 |
-| RCA (kiểu Groot, event graph) | **Chạy được đầu-cuối** (07/10/2026): chẩn đoán **cả cụm và chéo namespace**, đồ thị phụ thuộc từ config/metric/trace/log, 8 detector, 112 luật, PageRank + **học trọng số từ phản hồi**, AI kiểm chứng trong ngân sách tool + validator, đề xuất sửa qua phê duyệt, trang Diagnosis, tool chat `diagnose_incident`, webhook Alertmanager, quét định kỳ, bộ đánh giá `rca_eval`. Đã chạy thật trên lab1; đánh giá 8 kịch bản: top-1 8/8 (k8sgpt 6/8), tổng kết ở `docs/rca-tong-ket.md` (mục 3.12) |
+| RCA (kiểu Groot, event graph) | **Chạy được đầu-cuối** (07/10/2026): chẩn đoán **cả cụm và chéo namespace**, đồ thị phụ thuộc từ config/metric/trace/log, 8 detector, 112 luật, PageRank + **học trọng số từ phản hồi**, AI kiểm chứng trong ngân sách tool + validator, đề xuất sửa qua phê duyệt, trang Diagnosis, tool chat `diagnose_incident`, webhook Alertmanager, quét định kỳ, bộ đánh giá `rca_eval`. Đã chạy thật trên lab1; đánh giá 8 kịch bản: top-1 8/8 (k8sgpt 6/8), tổng kết ở `docs/rca-tong-ket.md` (mục 3.12). Từ 10/11/2026 nối với chat ("Ask in chat", tool `get_diagnosis`) và gợi ý skill theo loại sự kiện |
 | Skills (chuẩn Agent Skills) + Tools + custom CLI tool | **Chạy được đầu-cuối** (skill mẫu, tool metrics/logs/traces chạy thật trên lab1, custom tool kiểu kubectl-ai thêm/sửa/xoá trên web). **MCP server bên ngoài**: bỏ 30/09, thêm lại 01/10/2026 — chỉ engineer/admin kết nối, chọn từng tool có cần phê duyệt; đã kiểm đầu-cuối với một MCP server thật chạy cục bộ |
 | Tracing: OTel + Langfuse | **Chạy thật** với Langfuse trên `lab1:30400`, đã kiểm trace đầu-cuối |
 | Audit log, đo lường chất lượng | Bảng `approvals` là nhật ký mọi thay đổi cụm (ai đề xuất, ai duyệt, kết quả); `audit_log.py` và đo lường chất lượng vẫn là khung |
@@ -60,10 +60,10 @@ K8s-Hub/
 │   ├── app/modules/  nl_command (agent + pipeline phê duyệt + chống prompt injection), tools, skills, sandbox (xong) · observability (tracing xong) · rca (xong; đã đánh giá 8 kịch bản)
 │   ├── app/schemas/  events.py, chat.py, auth.py (xong) + 5 file khung
 │   ├── app/services/ thread, auth, user service (xong) + 2 file khung
-│   ├── migrations/   11 revision Alembic, một head (`c3d9e1a7f402`), đã áp vào CSDL dev
+│   ├── migrations/   12 revision Alembic, một head (`7e2a9c4d1b60`), đã áp vào CSDL dev
 │   ├── evals/security/  đo prompt injection gián tiếp: 3 kịch bản tấn công + script (mục 3.11)
 │   ├── rca_eval/     đánh giá RCA: 8 kịch bản lỗi có nhãn trên namespace rca-lab + baseline chỉ LLM (mục 3.12)
-│   └── tests/unit/   22 file test (399 test, đều xanh khi venv cài đủ requirements)
+│   └── tests/unit/   24 file test (442 test, đều xanh khi venv cài đủ requirements)
 ├── frontend/         Next.js 16 + React 19 + Tailwind v4 + TanStack Query
 │   └── src/          đăng nhập, chat, skills/tools, approvals, chẩn đoán (RCA), người dùng, cấu hình làm thật; giám sát AI là "sắp có"
 │       └── components/ui/  bộ component nền theo quy chuẩn UI/UX trong CLAUDE.md
@@ -176,7 +176,7 @@ Các bảng đã có model và migration:
 |---|---|
 | `users` | Chủ sở hữu hội thoại. Có `password_hash` (nullable — tài khoản OAuth-only sau này sẽ không có), `role`, `last_login_at` |
 | `refresh_tokens` | Phiên đăng nhập có thể thu hồi — xem mục 3.8 |
-| `chat_threads` | Một hội thoại. `last_message_at` tách khỏi `updated_at` để sửa tiêu đề không làm hội thoại nhảy lên đầu |
+| `chat_threads` | Một hội thoại. `last_message_at` tách khỏi `updated_at` để sửa tiêu đề không làm hội thoại nhảy lên đầu. `rca_run_id` (10/11/2026): hội thoại mở bằng "Ask in chat" từ một chẩn đoán |
 | `messages` | Có `reasoning` (và `reasoning_steps`: suy nghĩ chia theo từng lần gọi tool, để hiện đúng thứ tự sau khi tải lại), `trace_id`, `provider`, `model`, `prompt_tokens`, `completion_tokens`, `latency_ms` |
 | `tool_calls` | Bảng riêng chứ không nhét JSON vào `messages`, để thống kê "công cụ nào hay lỗi nhất" chỉ cần một câu truy vấn. `approval_id` nối lời gọi với đề xuất nó tạo ra |
 | `settings_overrides` | Giá trị đổi trên trang Cấu hình (JSONB; khoá API lưu dạng `{"enc": ...}`), `updated_by` |
@@ -184,7 +184,7 @@ Các bảng đã có model và migration:
 | `tool_settings` | Bật/tắt từng tool có sẵn |
 | `mcp_servers`, `mcp_tools` | MCP server engineer đã kết nối (token **mã hoá**), tool nó báo lần gần nhất, và **chính sách từng tool**: `enabled`, `requires_approval` (mặc định tắt + cần duyệt), ai đổi lần cuối. Làm mới server giữ nguyên chính sách của tool cũ |
 | `custom_tools` | Custom CLI tool tạo trên web: chương trình, mô tả, cách dùng, danh sách lệnh con chỉ đọc, giới hạn thời gian |
-| `approvals` | Mỗi thay đổi cụm được đề xuất: kế hoạch chính xác (`plan`), diff, kết quả dry-run, trạng thái, ai đề xuất/duyệt, kết quả chạy, kết quả kiểm tra lại, hội thoại gốc. Từ 02/10/2026 thêm `request_text` (câu người dùng hỏi trong lượt sinh ra đề xuất) và `risk_flags` (kết quả tool trong lượt đó bị nghi cài lệnh) — mục 3.11. Không bao giờ xoá |
+| `approvals` | Mỗi thay đổi cụm được đề xuất: kế hoạch chính xác (`plan`), diff, kết quả dry-run, trạng thái, ai đề xuất/duyệt, kết quả chạy, kết quả kiểm tra lại, hội thoại gốc. Từ 02/10/2026 thêm `request_text` (câu người dùng hỏi trong lượt sinh ra đề xuất) và `risk_flags` (kết quả tool trong lượt đó bị nghi cài lệnh) — mục 3.11. Từ 10/11/2026: `before_state` (đối tượng ngay trước khi chạy + phiên bản ngay sau, để hoàn tác) và `reverts_id` (dòng này hoàn tác dòng nào) — mục 3.10. Không bao giờ xoá |
 | `tool_runs` | Lần chạy tool từ trang Skills (tab Tools) |
 | `skills`, `skill_files` | Skill tạo/import trên web (file lưu dạng bytes, đúng bố cục thư mục chuẩn) + trạng thái bật/tắt của cả skill có sẵn |
 | `skill_runs` | Mọi lần chạy script của skill (từ chat hay từ web): ai, script, tham số, exit code, output |
@@ -208,7 +208,41 @@ Giao diện theo bộ quy chuẩn UI/UX ghi trong `CLAUDE.md` (mục "Quy chuẩ
 chung, đủ bốn trạng thái tải/lỗi/trống/có dữ liệu, thao tác phá huỷ qua hộp xác nhận, hỗ trợ bàn
 phím và "giảm chuyển động". Bộ component nền ở `src/components/ui/`: `button`, `badge`, `input`
 (kèm `PasswordInput`, `Field`), `page-header`, `empty-state`, `spinner`, `avatar`, `confirm-dialog`,
-`select`. Đã kiểm bằng cách chụp màn hình Chrome thật qua Playwright ở cả 1440px và 390px.
+`select`, `chip-group`, `back-link`, `switch`, `toast`, `dialog`. Đã kiểm bằng cách chụp màn hình Chrome thật qua Playwright ở cả 1440px và 390px.
+
+**Hệ màu (10/11/2026, theo Groq — quy tắc ở `docs/ke-hoach/he-mau-giao-dien.md`):** token mới trong
+`globals.css`: `--canvas` (nền `<main>`, sidebar, header), `--brand` (cam cho chữ/icon/dải),
+`--success-foreground`, `--warning-foreground`; `--primary` thành cam `#d63601` (nút, chip/switch đang bật, logo,
+bong bóng chat của người dùng), `--ring` cam; trạng thái: ô-liu (thành công), mù tạt (cần để ý), đỏ thẫm (lỗi).
+Trung tính **tương phản cao theo console.groq.com** (đổi cùng ngày: bản nền giấy be `#f3f3ee` + chữ nâu `#302b28` của
+groq.com vẫn bị người dùng chê "khó nhìn"): nền `#fafaf9`, thẻ trắng, chữ `#0c0a09`, chữ phụ `#57534e` (7,6:1, trước
+5:1), đường kẻ `#e7e5e4`; ô nhập, ô chọn, nút viền, chip lọc và khung soạn tin chat viền `--input` (`#d6d3d1`) đậm hơn
+đường kẻ; mục sidebar chữ đậm vừa. Chế độ tối theo cùng bảng *stone* (nền `#0c0a09`, thẻ `#1c1917`). Tiện ích CSS
+`eyebrow` (Space Grotesk 12px đậm 600, viết hoa; trước là mono 11px) cho nhãn nhỏ. `Badge` còn 5
+tone `neutral | accent | success | warning | danger` (bỏ `info`, `violet`; `accent` là viền cam); vai trò: Admin =
+`accent`, Engineer/User = `neutral`. Sidebar: mục đang mở chữ cam + vạch cam; số phê duyệt đang chờ màu mù tạt
+(trước là đỏ — chờ không phải lỗi). Thẻ phê duyệt: nền thẻ, dải trái mù tạt khi chờ (đỏ thẫm nếu nguy hiểm), đỏ
+thẫm khi thất bại. Thẻ tool trong chat: đang chạy dùng màu nhấn (trước là hổ phách). Các màu cứng `emerald-*`,
+`amber-*` ở account, users, settings, skills, toast, coming-soon đã thay bằng token; chỉ avatar còn bộ màu phân
+loại riêng. Đã xem trong Chrome thật (sáng; tối bằng class `.dark`) các trang RCA, Approvals, Chat, Skills,
+Users, Settings. Lần thử màu chủ đạo xanh dương trước đó đã bỏ theo ý người dùng.
+
+**Font, hình dạng và rà soát UI/UX (10/11/2026, kế hoạch `docs/ke-hoach/ra-soat-ui-ux.md`):** font **Inter** (chữ
+giao diện) + **Space Grotesk** (`h1`–`h3` qua lớp base, lớp `font-display`, nhãn `eyebrow`) + JetBrains Mono (mã, tên
+tài nguyên) — đúng bộ font đo được trên console.groq.com; bản đầu trong ngày là Plus Jakarta Sans, nét mảnh trên
+Windows — qua `next/font` trong `app/layout.tsx`, cả ba có bộ ký tự tiếng Việt, tự phục vụ (trình duyệt không gọi
+Google Fonts); `--font-sans`/`--font-display`/`--font-mono` trong `@theme`. Đã xem trong Chrome sau khi đổi: Skills,
+Diagnosis (danh sách + run thật), Chat có tiếng Việt (sáng và tối); ba font đều tải, typecheck + lint sạch. Nút (`Button`) và chip bo tròn kiểu viên thuốc. Component mới: `ui/chip-group.tsx` (bộ lọc một lựa
+chọn, nút `aria-pressed`) thay ba bộ lọc tự viết ở Diagnosis, Approvals, Users (bộ của Users trước là
+`radiogroup` thiếu phím mũi tên); `ui/back-link.tsx` (link quay lại, vùng bấm 32px) ở chi tiết RCA và skill;
+link dạng nút dùng `buttonVariants`. Chat: ô nhập có `aria-label`, `h1` ẩn, danh sách hội thoại có thời gian
+tương đối (phân biệt các chat trùng tên), vùng focus thấy được, nút xoá 32px và luôn hiện ở chat đang mở; lỗi
+cũ lưu nguyên exception (`RateLimitError: Error code: 429 - {…}`) được đổi sang đúng câu backend đang dùng
+(`lib/chat-errors.ts`), không hiện chi tiết thô. Skills: thẻ skill có nền thẻ; mô tả tool (viết cho AI, dài)
+gập 2 dòng với "Show more" — chỉ hiện khi chữ thật sự bị cắt (đo bằng `ResizeObserver`). Điều hướng con của
+Skills và Settings: mục đang mở chữ cam như sidebar. Đã rà mọi trang trong Chrome + script kiểm tự động (nút
+không tên, ô nhập không nhãn, vùng bấm < 24px, tiêu đề) và Playwright cho Đăng nhập/Đăng ký ở 1440px/420px
+(không tràn ngang); không còn lỗi tự động nào ngoài link nằm trong câu văn (được WCAG miễn trừ).
 
 Giao diện bằng tiếng Anh, `<html lang="en">`, ngày giờ theo locale mặc định en-US của `date-fns`
 (dạng `MMM d, yyyy`). Hook lưu localStorage nay là `hooks/use-local-storage.ts` (`useLocalStorage`);
@@ -300,14 +334,37 @@ Chỉ còn trang Giám sát AI chưa có tính năng — hiện `ComingSoon` li�
 - `rca/*` — trang **Diagnosis** (`/rca`): danh sách run (lọc theo nguồn, khung xương khi tải, trống có
   hướng dẫn, tự làm mới khi có run đang chạy), hộp thoại "New diagnosis" (chọn namespace bằng Radix
   Select — rơi về ô nhập khi backend không liệt kê được namespace —, workload tuỳ chọn, cửa sổ thời
-  gian, bật/tắt AI report). Trang chi tiết `/rca/[runId]`: tiến trình dạng danh sách bước, cảnh báo
-  thiếu dữ liệu, **báo cáo AI** (tóm tắt, giải thích, bước tiếp theo, "What the AI looked up", phần bị
-  validator sửa, nút "Propose this fix" → thẻ phê duyệt ngay trong trang), **top nguyên nhân** kèm chuỗi
-  nhân quả và lý do từng cạnh, **đồ thị nhân quả** SVG tự vẽ (nguyên nhân trái → triệu chứng phải, nút
-  bấm/Enter được, di chuột lên cạnh xem luật), bảng chi tiết sự kiện (bằng chứng, "Caused by / Leads
-  to"), **dòng thời gian** (thay đổi do người tô tím, lọc "chỉ sự kiện trong đồ thị"), "Run again now".
+  gian, bật/tắt AI report). Trang chi tiết `/rca/[runId]` (**làm lại 10/11/2026** theo góp ý người dùng
+  thử trên cụm khác: "nhiều chữ quá, ít khi đọc log, Show in graph xa đồ thị, mũi tên chỉ tô một đoạn,
+  next step nên theo từng nguyên nhân"): tiến trình dạng danh sách bước; **tóm tắt AI** 1–2 câu, thẻ phê
+  duyệt nếu đã đề xuất sửa, còn giải thích + "What the AI looked up" + phần validator đã bỏ thu vào một
+  dropdown "How the AI checked this"; cảnh báo thiếu dữ liệu thu thành một dòng. Bên dưới chia **hai
+  cột** (màn ≥ 1024px): trái là **top nguyên nhân** — mỗi thẻ có các **bước tiếp theo riêng** (của AI +
+  lời khuyên của engine cho đúng nguyên nhân đó) và nút **Propose** cho fix cụ thể (đánh dấu "AI pick"),
+  lý do AI/chuỗi/bằng chứng trong dropdown "Why and evidence", nút Yes/No phản hồi; phải là **đồ thị
+  nhân quả dính (sticky)**, xếp **từ trên xuống** (nguyên nhân trên → triệu chứng dưới, vừa cột hẹp).
+  Bấm một thẻ (hoặc mặc định: nguyên nhân AI chọn, không thì #1) là **tô cả chuỗi** từ gốc tới triệu
+  chứng, làm mờ phần còn lại, cạnh được tô vẽ đè lên nút; màn hẹp thì tự cuộn tới đồ thị. Bấm một nút
+  trong đồ thị mở chi tiết sự kiện và chuyển sang chuỗi chứa nó. **Dòng thời gian** và "What was
+  analysed" thu vào dropdown cuối trang. "Run again now". Sau khi xem run thật trên lab1 (đồ thị 13
+  sự kiện rất rối, ba thẻ cùng tên "Container restarted"): đồ thị **mặc định chỉ vẽ chuỗi của nguyên
+  nhân đang chọn**, nút chuyển "Path of #n / All N events"; thẻ hiện **tên đối tượng** (font mono, đậm)
+  ngay dưới tiêu đề. Danh sách `/rca` hiện tên loại sự kiện dễ đọc và màu theo nhóm — API tóm tắt run
+  có thêm `top_cause_title`, `top_cause_category` (lấy từ `model.EVENT_TYPES`, thay bảng tự chép ở
+  frontend); mô tả dự phòng thành "Container restarted on Pod langfuse/x". Màu (theo hệ màu mới): tóm tắt AI
+  có dải + nhãn cam trên nền thẻ, nguyên nhân gốc dải ô-liu, các bước đánh số trung tính, nhóm sự kiện chỉ
+  hiện trên icon/thanh nút đồ thị/badge (Change cam, Resource mù tạt, Symptom đỏ thẫm, State/Dependency trung
+  tính), đường đi đang chọn và vòng chọn thẻ màu cam, khối "gaps" mù tạt.
   Tiến trình đọc bằng polling run mỗi 1,5 giây (bước lưu trong CSDL) chứ không dùng SSE. Đã kiểm bằng
-  Chrome thật qua Playwright ở 1440px (sáng) và 390px (tối): không lỗi console, không tràn ngang.
+  Chrome thật qua Playwright ở 1440px (sáng) và 390px (tối): không lỗi console, không tràn ngang. Bản
+  làm lại 10/11/2026 kiểm bằng Playwright với **API giả lập** (dữ liệu mẫu giống ca `dcim/netbox-worker`)
+  ở 1440px và 420px, chế độ tối, báo cáo kiểu cũ (danh sách bước chung), bấm Propose (URL giữ nguyên id
+  có `/`, có thông báo), chỉ dùng bàn phím (Enter trên thẻ đổi chuỗi được tô, Enter trên nút đồ thị mở
+  chi tiết). **Run thật** (10/11/2026, `langfuse`, 2 giờ, run `65deb42b…`, chạy trong tiến trình): AI trả
+  đủ 3 bước riêng cho mỗi nguyên nhân, validator không phải bỏ gì; dữ liệu thật hiện trên trang không
+  lỗi console, không tràn ngang ở 1440px và 420px. Đồ thị của cụm thật rộng (nhiều triệu chứng một hàng)
+  nên cuộn ngang trong khung và khá rối cạnh mờ; chuỗi được tô vẫn đọc rõ. Run này không có fix đề xuất
+  được nên chưa dry-run kế hoạch fix thật.
   `PageHeader` từ `sm` trở lên giữ nút chính cùng hàng tiêu đề (trước đây mô tả dài đẩy nút xuống dưới).
 
 ### 3.5 Tool và Skill của trợ lý
@@ -325,6 +382,7 @@ Hai tầng tách bạch (quy tắc ở mục "Skill và Tool" trong `CLAUDE.md`)
 | Logs | `search_logs` | Loki | **chạy thật trên lab1** |
 | Traces | `list_traced_services`, `search_traces`, `get_trace` | Tempo | chạy thật (đã kiểm bằng trace mẫu); Tempo chưa có trace thật |
 | Chẩn đoán | `diagnose_incident` (namespace, workload tuỳ chọn, số phút) | RCA (mục 3.12) | chạy phần tất định (~2 giây trên lab1), trả top-3 + chuỗi + bằng chứng + link `/rca/<id>`; không có CSDL thì vẫn trả kết quả, ghi "Not saved" |
+| Chẩn đoán | `get_diagnosis` (id run hoặc link `/rca/<id>`) | bảng `rca_runs` | đọc một chẩn đoán đã lưu: tóm tắt AI, top nguyên nhân (chuỗi, lý do + bước tiếp theo của AI, một bằng chứng, skill gợi ý, phản hồi engineer), bản sửa, khoảng trống dữ liệu; ≤ 5.000 ký tự; quyền xem như trang Diagnosis (`rca/access.py`). Đã gọi trên CSDL thật (10/11/2026) |
 | Mọi tài nguyên | `get_resources`, `describe_resource` (Service, Ingress, Node, PVC, HPA, CRD…; tên kind/plural/tên tắt như kubectl) | Kubernetes REST + discovery (`k8s/resources.py`) | **chạy thật trên lab1** (kể cả CRD của Cilium); Secret luôn bị từ chối |
 | Đề xuất thay đổi | `scale_workload`, `restart_workload`, `set_image`, `delete_pod`, `delete_resource`, `apply_manifest` | kế hoạch → dry-run → phê duyệt (mục 3.10) | chỉ tạo đề xuất; không có ở chế độ `read_only` |
 | MCP | tool của MCP server bên ngoài, tên `<server>__<tool>` | MCP Streamable HTTP (`mcp` 2.2) | **tắt + cần phê duyệt** tới khi engineer đổi; cần duyệt → đề xuất (thẻ hiện đúng tham số, không dry-run), không cần → gọi thẳng; chính sách đọc lúc gọi |
@@ -389,7 +447,11 @@ phải trả lời bằng những gì đã tìm được, thay vì lượt chat 
 
 ### 3.6 Kiểm thử
 
-22 file test đơn vị (399 test), không cần mạng và không cần CSDL.
+24 file test đơn vị (442 test), không cần mạng và không cần CSDL. Mới 10/11/2026: `test_revert.py` (22 —
+chụp trạng thái không bao giờ đọc Secret, kế hoạch ngược cho scale/set_image/apply/delete, các trường hợp
+không hoàn tác được, hoàn tác luôn chờ duyệt và chỉ một cái chờ một lúc), `test_rca_chat.py` (14 —
+`metadata.rca-events`, khớp skill theo chuỗi, `get_diagnosis`, mục ngữ cảnh không mang dữ liệu cụm, luật
+xem run), thêm 3 test trả lời rỗng trong `test_agent_retry.py`.
 Bảng dưới chưa liệt kê đủ: còn `test_agent_retry.py`, `test_mcp_tools.py`, `test_rca_detectors.py`, `test_rca_engine.py`, `test_rca_triggers.py`, `test_rca_cluster.py` (mục 3.12) và
 `test_injection_guard.py` (mục 3.11: payload của bộ đo đều bị phát hiện, log thường không bị gắn cờ,
 thẻ đóng `</tool_output>` trong dữ liệu bị vô hiệu, provenance chỉ lấy lượt hiện tại, chạy qua `ToolNode` thật).
@@ -664,7 +726,56 @@ modal bị vẽ phía sau hộp thoại — nay render vào container của dial
   `kubernetes` trên trang Cấu hình.
 
 API: `GET /approvals` (lọc trạng thái), `GET /approvals/summary`, `GET /approvals/{id}`, `POST
-/approvals/{id}/approve|reject|verify` (engineer+). Mọi vai trò xem được hàng đợi.
+/approvals/{id}/approve|reject|verify` (engineer+), `POST /approvals/{id}/revert` (mọi vai trò — chỉ tạo đề
+xuất). Mọi vai trò xem được hàng đợi.
+
+**Hoàn tác thay đổi đã chạy** (10/11/2026, kế hoạch `docs/ke-hoach/hoan-tac-thay-doi.md`):
+- **Chụp trạng thái lúc chạy**, không phải lúc đề xuất (duyệt có thể đến sau 60 phút):
+  `executor.snapshot()` GET từng đối tượng của kế hoạch ngay trước khi chạy, làm sạch (bỏ `status`, `uid`,
+  `resourceVersion`, `managedFields`, annotation revision của controller) rồi lưu `approvals.before_state`;
+  `record_after()` ghi `generation`/`resourceVersion` ngay sau khi chạy. Kind Secret thì bỏ qua, không GET.
+  Đối tượng > 256 KB hoặc chụp lỗi thì thay đổi vẫn chạy, chỉ là không hoàn tác được.
+- **`nl_command/revert.py`** dựng kế hoạch ngược với trạng thái cụm hiện tại:
+  - scale → `plan_scale` về số cũ;
+  - set_image → image cũ của đúng container;
+  - apply: xoá đối tượng nó tạo; khôi phục đối tượng nó sửa bằng PUT bản trước kèm `resourceVersion`
+    hiện tại (ai sửa xen giữa thì 409, không ghi đè âm thầm);
+  - delete: tạo lại bằng server-side apply, bỏ `ownerReferences`, Service bỏ `clusterIP` (trừ headless),
+    Pod bỏ `nodeName`.
+- **Không hoàn tác được** (restart, lệnh custom tool, MCP, xoá namespace, pod có controller, thay đổi chạy
+  trước khi có tính năng): `blocker()` trả lý do mà không gọi cụm.
+- **Ghi chú trên thẻ:** đối tượng đã bị sửa tiếp thì có ghi chú (so `generation`, loại không có thì so
+  `resourceVersion`); không còn gì để hoàn tác thì báo lý do và không tạo đề xuất.
+- **Đề xuất ngược:** đi qua `approval_service.propose_revert` → `propose` (dry-run + diff) với vai trò
+  `user`, nên **không bao giờ tự chạy**, kể cả `auto`. `source="revert"`, `reverts_id` trỏ về gốc,
+  `thread_id` của gốc (kết quả ghi vào đúng hội thoại). Mỗi thay đổi chỉ có một hoàn tác đang chờ hoặc
+  đang chạy. Verify kiểu mới `reverted` (thứ khôi phục có mặt, thứ đã xoá đi rồi).
+- **API trả thêm:** `reverts_id`, `revert` (hoàn tác mới nhất, một truy vấn cho cả trang), `revertible`,
+  `revert_blocker`.
+- **Giao diện:**
+  - Thẻ đã chạy có nút **Revert** (mọi vai trò). Nút ẩn khi đã có hoàn tác đang chờ, đang chạy hoặc đã
+    chạy; muốn làm lại thì Revert chính thẻ hoàn tác.
+  - Không hoàn tác được thì một dòng xám nói lý do; mọi thay đổi đã chạy trên CSDL dev hiện đều thuộc
+    loại "ran before K8s-Hub recorded the previous state".
+  - Trong chat, thẻ đề xuất hoàn tác ("Proposed revert") hiện ngay dưới thẻ gốc, duyệt được tại chỗ.
+  - Trên trang Approvals, thẻ gốc chỉ hiện "Revert #… · trạng thái"; thẻ hoàn tác đã là một mục riêng
+    trong danh sách.
+- **Đã kiểm:** 22 test đơn vị; giao diện trên Chrome thật với API giả lập (nút, thông báo, thẻ lồng trong
+  chat, dòng lý do) và với dữ liệu thật.
+- **Chạy thật trên lab1** (10/11/2026, người dùng đồng ý), qua đúng `propose` → `approve`, Deployment tạm
+  `rca-lab/revert-check`:
+  1. apply tạo mới;
+  2. scale 1→2, Revert về 1 (rollout xong);
+  3. apply thêm nhãn, Revert = PUT bản trước (nhãn mất, diff chỉ một dòng);
+  4. Revert bước 1 = xoá (kèm ghi chú "đã bị sửa sau khi tạo").
+
+  Cả 6 dòng `approvals` (người yêu cầu `revert-check@k8s-hub`) đều executed và kiểm tra lại đạt; `rca-lab`
+  trống trở lại. Phát hiện lúc xem dữ liệu thật và đã sửa: thẻ gốc đã được hoàn tác vẫn hiện nút Revert.
+
+**Trả lời rỗng** (10/11/2026): Gemini 2.5 Flash có lượt chỉ "nghĩ" rằng đã nạp skill rồi dừng — không gọi
+tool, không chữ, người dùng thấy câu trả lời trống. `agent.py` thấy trả lời không có chữ lẫn lời gọi tool thì
+hỏi lại model **một lần** (bỏ câu rỗng khỏi lịch sử). Chạy lại câu đó: trợ lý gọi đủ `load_skill` →
+`describe_pod` → script giải thích exit code → log lần chạy trước, rồi kết luận.
 
 ### 3.11 Chống prompt injection gián tiếp (OWASP LLM01)
 
@@ -750,18 +861,58 @@ Model gpt-oss trên Groq có lúc trả báo cáo dưới dạng **gọi tool t�
 tool) và Groq từ chối cả lượt (400 `tool_use_failed`) — gặp thật ở một run từ alert ngày 07/10/2026. Nay
 báo cáo được lấy lại từ `failed_generation` trong lỗi; không lấy được thì hỏi lại không kèm tool; lời
 nhắc ghi rõ báo cáo là văn bản thường. Viết lại báo cáo cho đúng run đó: thành công.
+Từ 10/11/2026 mỗi verdict có `next_steps` riêng (≤ 3 bước ngắn cho đúng nguyên nhân đó); `next_steps`
+chung chỉ cho việc của cả sự cố (thường rỗng; báo cáo cũ vẫn hiện danh sách chung). Validator **sửa lỗi
+định dạng** thay vì bỏ: id bằng chứng có tiền tố (`EVIDENCE:<id>`) hoặc id sự kiện thiếu `#n`, và
+`fix_id` là cả dòng `<id>: <tiêu đề>` hay id hỏng kèm đúng tiêu đề (khớp duy nhất một ứng viên) — cả
+hai gặp thật trên cụm của người dùng thử (gpt-oss), trước đây làm rơi hết bằng chứng và bản sửa.
 
 **Sửa lỗi qua phê duyệt** (`remediation.py`): ứng viên suy ra từ chính sự kiện — rollback image về
 image của ReplicaSet trước, scale lại số replica cũ; còn lại là lời khuyên (tăng limit, xem lại
-ConfigMap, node đầy, PVC). AI chỉ được **chọn** một id. "Propose this fix" gọi `approval_service.propose`
-với vai trò `user` nên **không bao giờ tự chạy**, kể cả chế độ `auto`.
+ConfigMap, node đầy, PVC). AI chỉ được **chọn** một id. "Propose" gọi `approval_service.propose`
+với vai trò `user` nên **không bao giờ tự chạy**, kể cả chế độ `auto`. Route là
+`/fixes/{fix_id:path}/propose` vì id fix chứa id sự kiện có `/` (`rollback:Rollout:Workload/ns/x:c`) —
+trước 10/11/2026 route thường không khớp id nào nên mọi đề xuất từ trang đều 404 (trước đó chỉ thử qua
+HTTP với id không tồn tại). Đã kiểm route khớp id thật; chưa bấm thử đầu-cuối trên cụm. Lời khuyên Argo CD không còn
+"revision before ?" khi Application nhiều nguồn (đọc `revisions[0]`, thiếu thì "previous revision").
 
 **API** (`api/v1/rca.py`): `GET /rca/targets`, `GET /rca/targets/{ns}/workloads`, `POST /rca/runs`
 (mọi vai trò, trong namespace được phép), `GET /rca/runs`, `GET /rca/runs/{id}`,
 `GET /rca/runs/{id}/stream` (SSE `step` → `done`, đọc lại từ bảng), `POST /rca/runs/{id}/report`,
 `POST /rca/runs/{id}/fixes/{fix}/propose`. `user` chỉ thấy run của mình và run hệ thống (alert/scan);
 engineer/admin thấy hết. Cấu hình mới (sửa được trên web): `RCA_LOOKBACK_MINUTES` (120),
-`RCA_LLM_TOOL_BUDGET` (4).
+`RCA_LLM_TOOL_BUDGET` (4). Luật xem này nay nằm ở `modules/rca/access.py` (10/11/2026), dùng chung cho API, chat
+và tool `get_diagnosis`.
+
+**Nối với Chat và Skills** (10/11/2026, kế hoạch `docs/ke-hoach/noi-rca-chat-skills.md`):
+- **Skill gợi ý:** SKILL.md khai loại sự kiện trong `metadata.rca-events` (parser từ chối tên không có trong
+  `EVENT_TYPES`); `skills/matching.py` gợi ý tối đa 2 skill **đang bật** khớp bất kỳ sự kiện nào trong chuỗi
+  của nguyên nhân (gốc trước), tính lúc đọc run nên skill gắn sau vẫn hiện cho run cũ. `HypothesisOut.skills`.
+  Ba skill mẫu đã gắn: `diagnose-crashloop` (CrashLoop, RestartSpike, OOMKilled, ProbeFailed,
+  ContainerConfigError), `investigate-slow-requests` (LatencySpike, ErrorRateSpike, DownstreamErrors),
+  `namespace-health-check` (ReplicasUnavailable, PodNotReady, RolloutStuck, MemoryNearLimit, MemoryLeak,
+  CpuThrottling).
+- **"Ask in chat":** `POST /chat/threads {rca_run_id}` (kiểm quyền xem như trên; 404 nếu không thấy) tạo
+  hội thoại "Diagnosis: <đối tượng>".
+  - Mỗi lượt của hội thoại đó, system prompt có thêm mục CONVERSATION CONTEXT, chỉ gồm id run, đối tượng
+    (tên phải đúng DNS-1123, không thì thay bằng chữ chung) và cửa sổ thời gian, kèm lời dặn gọi
+    `get_diagnosis`.
+  - Bằng chứng và lý do AI trích dữ liệu cụm nên **không bao giờ** vào system prompt, chỉ đi qua tool
+    (được bọc untrusted).
+  - Quyền được kiểm lại mỗi lượt.
+- **Giao diện:**
+  - Trang chi tiết có nút "Ask in chat"; dưới "Next steps" của mỗi nguyên nhân có "Suggested skill" (link
+    tới skill) và "Investigate in chat". Nút này soạn sẵn câu "Use the <skill> skill to investigate cause #n
+    (…)" trong ô nhập, **không tự gửi**.
+  - Hai nút dùng lại hội thoại đã có của run.
+  - Chat: mở theo `?thread=` (đọc bằng `useSearchParams`, trang bọc `Suspense`; đọc `window.location` lúc
+    đầu bị lỗi vì URL chưa đổi lúc render), rồi dọn URL.
+  - Hội thoại có dải "About the diagnosis of … · Open diagnosis" và icon ống nghe trong danh sách; màn
+    hình trống gợi ý 4 câu riêng cho chẩn đoán (cần `get_diagnosis`).
+- **Đã kiểm trên Chrome thật:** skill gợi ý trên run `langfuse`, câu soạn sẵn, dải ngữ cảnh. Một lượt chat
+  thật với Gemini 2.5 Flash: lần đầu trả lời rỗng (đã chặn ở `agent.py`, mục 3.10), lần sau làm đúng các
+  bước của `diagnose-crashloop`. `get_diagnosis` gọi trên CSDL thật trả đủ nội dung; `user` không phải
+  người chạy thì nhận "not found".
 
 **Đã chạy thật trên lab1** (07/10/2026):
 - `langfuse` (sự cố thật: web liveness probe timeout, worker BackOff): phần tất định **2,1 giây**. AI
@@ -773,7 +924,8 @@ engineer/admin thấy hết. Cấu hình mới (sửa được trên web): `RCA_
 - Qua HTTP (app thật, CSDL thật, chạy trong tiến trình): 422/400 cho đầu vào sai, SSE ra đủ bước tới
   `done` (~46 giây gồm báo cáo), `user` thường nhận 404 với run của người khác, fix không tồn tại 404.
 
-**Test:** `test_rca_detectors.py` (14) + `test_rca_engine.py` (15): luật hợp lệ; rollout xấu xếp
+**Test:** `test_rca_detectors.py` (14) + `test_rca_engine.py` (19, thêm: sửa id có tiền tố/fix theo
+tiêu đề/bước theo nguyên nhân, lời khuyên GitOps không có "?"): luật hợp lệ; rollout xấu xếp
 đầu cho ImagePull; chuỗi OOM; không luật không cạnh; nguyên nhân sau kết quả bị loại; kết quả đang diễn
 ra giảm trọng số; scale về 0 qua approval giải thích lỗi bên gọi và cho fix scale lại 2; hoà điểm thì
 sớm hơn; PageRank bảo toàn khối lượng; fix rollback dùng image cũ; validator; vòng gọi tool với model giả

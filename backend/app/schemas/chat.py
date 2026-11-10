@@ -27,6 +27,10 @@ class ThreadCreate(BaseModel):
         description="Leave empty to use the first question as the title",
     )
     cluster: str | None = Field(default=None, max_length=120)
+    rca_run_id: uuid.UUID | None = Field(
+        default=None,
+        description="Open the conversation about this diagnosis (\"Ask in chat\")",
+    )
 
 
 class ThreadUpdate(BaseModel):
@@ -47,6 +51,9 @@ class ThreadOut(BaseModel):
     archived: bool
     created_at: datetime
     last_message_at: datetime | None
+    rca_run_id: uuid.UUID | None = Field(
+        default=None, description="The diagnosis this conversation was opened from"
+    )
 
 
 class ToolCallOut(BaseModel):

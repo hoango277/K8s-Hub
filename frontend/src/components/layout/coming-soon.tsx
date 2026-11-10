@@ -26,7 +26,7 @@ export function ComingSoon({ icon, title, description, feature }: Props) {
 
       <section className="overflow-hidden rounded-xl border">
         <div className="flex items-center gap-3 border-b bg-[var(--muted)]/40 px-5 py-4">
-          <span className="flex size-9 items-center justify-center rounded-lg bg-amber-500/15 text-amber-700 dark:text-amber-400">
+          <span className="flex size-9 items-center justify-center rounded-lg bg-[var(--warning)]/12 text-[var(--warning)]">
             <Construction aria-hidden className="size-4" />
           </span>
           <div>

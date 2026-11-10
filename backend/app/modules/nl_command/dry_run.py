@@ -54,7 +54,8 @@ async def _dry_run_op(op: K8sOp) -> tuple[str | None, str | None]:
         return None, str(res.api_error(status, before, _label(op)))
     else:
         before_obj = before
-    if op.method in ("PATCH", "DELETE") and op.content_type != "application/apply-patch+yaml":
+    is_apply = op.content_type == "application/apply-patch+yaml"  # creates when missing
+    if op.method in ("PATCH", "PUT", "DELETE") and not is_apply:
         if before_obj is None:
             return None, f"{_label(op)} does not exist (any more)."
     status, after = await res.request(

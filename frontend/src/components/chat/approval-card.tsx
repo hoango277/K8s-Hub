@@ -9,9 +9,11 @@ import {
   CircleCheck,
   CircleX,
   Clock,
+  Info,
   RefreshCw,
   ShieldAlert,
   ShieldCheck,
+  Undo2,
   type LucideIcon,
 } from "lucide-react";
 
@@ -23,7 +25,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { useToast } from "@/components/ui/toast";
-import { useApproval, useApprove, useReject, useReverify } from "@/hooks/use-approvals";
+import { useApproval, useApprove, useReject, useReverify, useRevert } from "@/hooks/use-approvals";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { hasRole } from "@/lib/roles";
 import { cn } from "@/lib/utils";
@@ -33,10 +35,10 @@ const REASON_MAX = 1000;
 
 const STATUS: Record<
   ApprovalStatus,
-  { label: string; tone: "neutral" | "success" | "warning" | "danger" | "info"; icon: LucideIcon }
+  { label: string; tone: "neutral" | "success" | "warning" | "danger" | "accent"; icon: LucideIcon }
 > = {
   pending: { label: "Awaiting approval", tone: "warning", icon: Clock },
-  executing: { label: "Running", tone: "info", icon: RefreshCw },
+  executing: { label: "Running", tone: "accent", icon: RefreshCw },
   executed: { label: "Executed", tone: "success", icon: CircleCheck },
   failed: { label: "Failed", tone: "danger", icon: CircleX },
   rejected: { label: "Rejected", tone: "neutral", icon: Ban },
@@ -198,16 +200,20 @@ function RejectDialog({
 export function ApprovalCard({
   approvalId,
   compact = false,
+  nested = false,
 }: {
   approvalId: string;
   /** In the chat: diff collapsed, with a link to the Approvals page. */
   compact?: boolean;
+  /** Shown inside another card (the revert under the change it undoes). */
+  nested?: boolean;
 }) {
   const { data: approval, isLoading, error, refetch } = useApproval(approvalId);
   const { data: me } = useCurrentUser();
   const canDecide = me ? hasRole(me.role, ["engineer"]) : false;
   const approve = useApprove();
   const reverify = useReverify();
+  const revert = useRevert();
   const toast = useToast();
   const [confirming, setConfirming] = useState(false);
   const [rejecting, setRejecting] = useState(false);
@@ -239,6 +245,18 @@ export function ApprovalCard({
   const flags = a.risk_flags ?? [];
   const flagged = flags.length > 0;
   const flaggedTools = [...new Set(flags.map((f) => f.tool))].join(", ");
+  // One revert at a time, and none once it ran: its card (or status line) replaces the
+  // button. A rejected, failed or expired revert can be proposed again. To redo the
+  // change, revert the revert — its own card has the button.
+  const revertTaken = ["pending", "executing", "executed"].includes(a.revert?.status ?? "");
+
+  function doRevert() {
+    revert.mutate(a.id, {
+      onSuccess: () =>
+        toast({ kind: "ok", message: "Revert proposed. It runs only after an engineer approves it." }),
+      onError: (err) => toast({ kind: "error", message: errorMessage(err, "Couldn't propose the revert.") }),
+    });
+  }
 
   function doApprove() {
     setConfirming(false);
@@ -257,14 +275,20 @@ export function ApprovalCard({
     <section
       aria-label={`Proposed change: ${a.title}`}
       className={cn(
-        "k8s-fade-in space-y-3 rounded-lg border p-4 text-sm",
-        pending && (dangerous ? "border-[var(--destructive)]/50" : "border-[var(--warning)]/50"),
+        "k8s-fade-in space-y-3 rounded-lg border bg-[var(--card)] p-4 text-sm",
+        // A left stripe marks what needs someone: waiting (amber; red when dangerous)
+        // or failed. Decided, uneventful cards stay plain.
+        pending &&
+          (dangerous
+            ? "border-[var(--destructive)]/40 border-l-4 border-l-[var(--destructive)]"
+            : "border-[var(--warning)]/40 border-l-4 border-l-[var(--warning)]"),
+        a.status === "failed" && "border-l-4 border-l-[var(--destructive)]",
       )}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 space-y-1">
-          <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
-            Proposed change
+          <p className="eyebrow text-[var(--muted-foreground)]">
+            {a.reverts_id ? "Proposed revert" : "Proposed change"}
           </p>
           <p className="break-words font-medium">{a.title}</p>
         </div>
@@ -353,25 +377,60 @@ export function ApprovalCard({
               </span>
             </p>
           )}
-          {a.status === "executed" && a.verify_ok === false && canDecide && (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={reverify.isPending}
-              onClick={() =>
-                reverify.mutate(a.id, {
-                  onSuccess: (r) =>
-                    toast({ kind: r.verify_ok ? "ok" : "error", message: r.verify_message ?? "Checked." }),
-                  onError: (err) => toast({ kind: "error", message: errorMessage(err, "Couldn't check again.") }),
-                })
-              }
-            >
-              {reverify.isPending ? <Spinner /> : <RefreshCw aria-hidden />}
-              Check again
-            </Button>
+          {a.status === "executed" && (
+            <div className="flex flex-wrap items-center gap-2">
+              {a.verify_ok === false && canDecide && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={reverify.isPending}
+                  onClick={() =>
+                    reverify.mutate(a.id, {
+                      onSuccess: (r) =>
+                        toast({ kind: r.verify_ok ? "ok" : "error", message: r.verify_message ?? "Checked." }),
+                      onError: (err) => toast({ kind: "error", message: errorMessage(err, "Couldn't check again.") }),
+                    })
+                  }
+                >
+                  {reverify.isPending ? <Spinner /> : <RefreshCw aria-hidden />}
+                  Check again
+                </Button>
+              )}
+              {/* Proposing is open to every role (an engineer still approves), as in the chat. */}
+              {a.revertible && !revertTaken && (
+                <Button variant="outline" size="sm" disabled={revert.isPending} onClick={doRevert}>
+                  {revert.isPending ? <Spinner /> : <Undo2 aria-hidden />}
+                  {revert.isPending ? "Preparing the revert…" : "Revert"}
+                </Button>
+              )}
+            </div>
+          )}
+          {a.status === "executed" && !a.revertible && a.revert_blocker && (
+            <p className="flex items-start gap-1.5 text-xs text-[var(--muted-foreground)]">
+              <Info aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+              <span>
+                <span className="sr-only">Can&apos;t be reverted: </span>
+                {a.revert_blocker}
+              </span>
+            </p>
           )}
         </div>
       )}
+
+      {/* The revert of this change. In the chat it shows in full here (diff, Approve);
+          on the Approvals page it is its own card in the list, so only its status. */}
+      {a.revert &&
+        (compact ? (
+          <div className="border-t pt-3">
+            <ApprovalCard approvalId={a.revert.id} compact nested />
+          </div>
+        ) : (
+          <p className="flex flex-wrap items-center gap-2 border-t pt-3 text-xs text-[var(--muted-foreground)]">
+            <Undo2 aria-hidden className="size-3.5" />
+            Revert #{a.revert.id.slice(0, 8)}
+            <ApprovalStatusBadge status={a.revert.status} />
+          </p>
+        ))}
 
       {a.status === "rejected" && (
         <p className="text-[var(--muted-foreground)]">
@@ -409,7 +468,7 @@ export function ApprovalCard({
           </p>
         ))}
 
-      {compact && (
+      {compact && !nested && (
         <Link
           href="/approvals"
           className="inline-flex items-center gap-1 rounded text-xs text-[var(--muted-foreground)] underline underline-offset-2 outline-none hover:text-[var(--foreground)] focus-visible:ring-2 focus-visible:ring-[var(--ring)]"

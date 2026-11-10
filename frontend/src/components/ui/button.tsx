@@ -10,7 +10,8 @@ import { cn } from "@/lib/utils";
  */
 export const buttonVariants = cva(
   [
-    "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md",
+    // Pill shape, like groq.com's buttons (docs/ke-hoach/he-mau-giao-dien.md).
+    "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full",
     "text-sm font-medium transition outline-none select-none",
     "focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2",
     "focus-visible:ring-offset-[var(--background)]",
@@ -22,7 +23,7 @@ export const buttonVariants = cva(
       variant: {
         primary: "bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm hover:opacity-90",
         outline:
-          "border bg-[var(--background)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]",
+          "border border-[var(--input)] bg-[var(--background)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]",
         ghost:
           "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
         destructive:

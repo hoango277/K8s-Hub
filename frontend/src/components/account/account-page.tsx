@@ -119,7 +119,7 @@ function ProfileName({ user }: { user: User }) {
         </div>
         <p className="truncate text-sm text-[var(--muted-foreground)]">{user.email}</p>
         {saved && (
-          <p role="status" className="mt-1 flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-400">
+          <p role="status" className="mt-1 flex items-center gap-1.5 text-xs text-[var(--success)]">
             <CircleCheck aria-hidden className="size-3.5" />
             Name saved.
           </p>
@@ -285,7 +285,7 @@ function ChangePassword() {
         {done && (
           <div
             role="status"
-            className="flex items-start gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-sm text-emerald-700 dark:text-emerald-400"
+            className="flex items-start gap-2 rounded-md border border-[var(--success)]/30 bg-[var(--success)]/10 px-3 py-2.5 text-sm text-[var(--success)]"
           >
             <CircleCheck aria-hidden className="mt-0.5 size-4 shrink-0" />
             Password changed. Other devices have been signed out.

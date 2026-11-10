@@ -6,14 +6,14 @@ import { ClipboardCheck, Inbox, MessagesSquare } from "lucide-react";
 
 import { ApprovalCard } from "@/components/chat/approval-card";
 import { ErrorPanel, LoadingRow } from "@/components/skills/shared";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { ChipGroup } from "@/components/ui/chip-group";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Spinner } from "@/components/ui/spinner";
 import { useApprovals } from "@/hooks/use-approvals";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { hasRole } from "@/lib/roles";
-import { cn } from "@/lib/utils";
 import type { ApprovalStatus } from "@/types/approval";
 
 const FILTERS: { id: ApprovalStatus | null; label: string; empty: string }[] = [
@@ -50,28 +50,13 @@ export function ApprovalsPage() {
         }
       />
 
-      <div role="group" aria-label="Filter by status" className="mb-6 flex flex-wrap gap-1.5">
-        {FILTERS.map((f) => {
-          const active = f.id === filter;
-          return (
-            <button
-              key={f.label}
-              type="button"
-              aria-pressed={active}
-              onClick={() => setFilter(f.id)}
-              className={cn(
-                "h-8 rounded-md border px-3 text-sm outline-none transition",
-                "focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
-                active
-                  ? "border-transparent bg-[var(--primary)] text-[var(--primary-foreground)]"
-                  : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-              )}
-            >
-              {f.label}
-            </button>
-          );
-        })}
-      </div>
+      <ChipGroup
+        label="Filter by status"
+        className="mb-6"
+        options={FILTERS.map((f) => ({ value: f.id, label: f.label }))}
+        value={filter}
+        onChange={setFilter}
+      />
 
       {isLoading ? (
         <LoadingRow label="Loading approvals…" />
@@ -80,10 +65,7 @@ export function ApprovalsPage() {
       ) : items.length === 0 ? (
         <EmptyState icon={Inbox} title={`No ${current.label.toLowerCase()} changes`} description={current.empty}>
           {filter === "pending" && (
-            <Link
-              href="/chat"
-              className="inline-flex h-8 items-center gap-2 rounded-md border px-3 text-sm outline-none transition hover:bg-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
-            >
+            <Link href="/chat" className={buttonVariants({ variant: "outline", size: "sm" })}>
               <MessagesSquare aria-hidden className="size-4" />
               Open the chat
             </Link>

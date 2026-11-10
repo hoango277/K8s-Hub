@@ -59,7 +59,7 @@ function ConnectionItem({ c }: { c: ConnectionStatus }) {
         aria-hidden
         className={cn(
           "mt-0.5 size-5 shrink-0",
-          state === "up" && "text-emerald-600 dark:text-emerald-400",
+          state === "up" && "text-[var(--success)]",
           state === "down" && "text-[var(--destructive)]",
           state === "off" && "text-[var(--muted-foreground)]",
         )}

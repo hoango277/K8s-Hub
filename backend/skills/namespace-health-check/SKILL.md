@@ -1,6 +1,8 @@
 ---
 name: namespace-health-check
 description: Give a quick health report of one namespace — unhealthy pods, deployments not fully ready, recent warning events, and containers close to their resource limits. Use when a user asks "is everything OK in X", "check namespace X", or wants a status overview.
+metadata:
+  rca-events: ReplicasUnavailable, PodNotReady, RolloutStuck, MemoryNearLimit, MemoryLeak, CpuThrottling
 ---
 
 # Namespace health check

@@ -1,25 +1,21 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import { CATEGORY } from "@/components/rca/shared";
 import { cn } from "@/lib/utils";
 import type { EventCategory, RcaEdge, RcaEvent } from "@/types/rca";
 
-const NODE_W = 208;
-const NODE_H = 58;
-const COL_GAP = 76;
-const ROW_GAP = 18;
+const NODE_W = 200;
+const NODE_H = 54;
+const COL_GAP = 16;
+const ROW_GAP = 44;
 const PAD = 12;
 
 // Accent bar per category — the same hues as the category badges.
-const BAR: Record<EventCategory, string> = {
-  change: "fill-violet-500",
-  resource: "fill-amber-500",
-  state: "fill-sky-500",
-  symptom: "fill-[var(--destructive)]",
-  dependency: "fill-[var(--muted-foreground)]",
-};
+const BAR: Record<EventCategory, string> = Object.fromEntries(
+  Object.entries(CATEGORY).map(([c, v]) => [c, v.bar]),
+) as Record<EventCategory, string>;
 
 function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
@@ -32,9 +28,11 @@ interface Placed {
 }
 
 /**
- * Columns by causal depth: an event sits one column right of its latest cause,
- * so root causes are on the left and symptoms on the right — reading order is
- * cause → effect. Within a column, earlier events first.
+ * Rows by causal depth: an event sits one row below its latest cause, so root
+ * causes are on top and symptoms at the bottom — the same reading order as the
+ * chain in each cause card. Top-down because the graph shares the page with the
+ * cause list: chains are long and narrow, a left-to-right layout overflowed the
+ * column. Within a row, events sit under their causes (mean position), then by time.
  */
 function layout(events: RcaEvent[], edges: RcaEdge[]) {
   const ids = new Set(events.map((e) => e.id));
@@ -52,22 +50,31 @@ function layout(events: RcaEvent[], edges: RcaEdge[]) {
     }
     if (!changed) break;
   }
-  const columns = new Map<number, RcaEvent[]>();
+  const layers = new Map<number, RcaEvent[]>();
   for (const ev of events) {
     const d = depth.get(ev.id)!;
-    columns.set(d, [...(columns.get(d) ?? []), ev]);
+    layers.set(d, [...(layers.get(d) ?? []), ev]);
   }
+  const ordered = [...layers.entries()].sort((a, b) => a[0] - b[0]).map(([, row]) => row);
+  const widest = Math.max(1, ...ordered.map((row) => row.length));
+  const width = PAD * 2 + widest * NODE_W + (widest - 1) * COL_GAP;
   const placed = new Map<string, Placed>();
-  let rows = 0;
-  for (const [d, col] of [...columns.entries()].sort((a, b) => a[0] - b[0])) {
-    col.sort((a, b) => a.start.localeCompare(b.start));
-    rows = Math.max(rows, col.length);
-    col.forEach((ev, i) => {
-      placed.set(ev.id, { event: ev, x: PAD + d * (NODE_W + COL_GAP), y: PAD + i * (NODE_H + ROW_GAP) });
+  const slot = new Map<string, number>(); // index within its row, for the next row's ordering
+  ordered.forEach((row, r) => {
+    const parents = (id: string) => live.filter((e) => e.effect === id && slot.has(e.cause)).map((e) => slot.get(e.cause)!);
+    const pos = (id: string) => {
+      const p = parents(id);
+      return p.length ? p.reduce((s, v) => s + v, 0) / p.length : Number.POSITIVE_INFINITY;
+    };
+    row.sort((a, b) => pos(a.id) - pos(b.id) || a.start.localeCompare(b.start));
+    const rowWidth = row.length * NODE_W + (row.length - 1) * COL_GAP;
+    const left = (width - rowWidth) / 2;
+    row.forEach((ev, i) => {
+      slot.set(ev.id, i + (widest - row.length) / 2); // centred rows: compare on the same scale
+      placed.set(ev.id, { event: ev, x: left + i * (NODE_W + COL_GAP), y: PAD + r * (NODE_H + ROW_GAP) });
     });
-  }
-  const width = PAD * 2 + columns.size * NODE_W + Math.max(0, columns.size - 1) * COL_GAP;
-  const height = PAD * 2 + rows * NODE_H + Math.max(0, rows - 1) * ROW_GAP;
+  });
+  const height = PAD * 2 + ordered.length * NODE_H + Math.max(0, ordered.length - 1) * ROW_GAP;
   return { placed, edges: live, width, height };
 }
 
@@ -75,6 +82,7 @@ export function CausalGraph({
   events,
   edges,
   ranks,
+  path,
   selected,
   onSelect,
 }: {
@@ -82,60 +90,52 @@ export function CausalGraph({
   edges: RcaEdge[];
   /** event id → hypothesis rank, for the "#1" markers. */
   ranks: Map<string, number>;
+  /** The focused cause's chain, root first: every link on it is highlighted, the rest dimmed. */
+  path: string[];
   selected: string | null;
   onSelect: (id: string) => void;
 }) {
   const { placed, edges: live, width, height } = useMemo(() => layout(events, edges), [events, edges]);
+  const box = useRef<HTMLDivElement>(null);
+  const onPath = useMemo(() => new Set(path), [path]);
+  const pathLinks = useMemo(() => new Set(path.slice(1).map((id, i) => `${path[i]}→${id}`)), [path]);
+
+  // A very wide row still scrolls sideways: bring the focused root to the middle,
+  // so "focus a cause" never needs a hunt across the graph.
+  const root = path[0];
+  useEffect(() => {
+    const el = box.current;
+    const node = root ? placed.get(root) : undefined;
+    if (!el || !node || el.scrollWidth <= el.clientWidth) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollTo({ left: Math.max(0, node.x + NODE_W / 2 - el.clientWidth / 2), behavior: reduce ? "auto" : "smooth" });
+  }, [root, placed]);
 
   return (
-    <div className="overflow-x-auto rounded-lg border bg-[var(--card)]">
+    <div ref={box} className="overflow-x-auto rounded-lg border bg-[var(--card)]">
       <svg
         width={width}
         height={height}
         viewBox={`0 0 ${width} ${height}`}
         role="group"
-        aria-label={`Causal graph: ${events.length} events, ${live.length} causal links. Causes on the left, symptoms on the right.`}
-        className="block"
+        aria-label={`Causal graph: ${events.length} events, ${live.length} causal links. Causes on top, symptoms below.`}
+        className="mx-auto block"
       >
         <defs>
           <marker id="rca-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
             <path d="M0,0 L10,5 L0,10 z" className="fill-[var(--muted-foreground)]" />
           </marker>
+          <marker id="rca-arrow-on" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" className="fill-[var(--brand)]" />
+          </marker>
         </defs>
 
-        {live.map((e) => {
-          const a = placed.get(e.cause)!;
-          const b = placed.get(e.effect)!;
-          const x1 = a.x + NODE_W;
-          const y1 = a.y + NODE_H / 2;
-          const x2 = b.x;
-          const y2 = b.y + NODE_H / 2;
-          // Same column (a cycle or same depth): loop around the right side.
-          const path =
-            x2 > x1
-              ? `M${x1},${y1} C${x1 + COL_GAP / 2},${y1} ${x2 - COL_GAP / 2},${y2} ${x2 - 2},${y2}`
-              : `M${x1},${y1} C${x1 + 40},${y1} ${x1 + 40},${y2} ${b.x + NODE_W + 2},${y2}`;
-          const active = selected === e.cause || selected === e.effect;
-          return (
-            <path
-              key={`${e.cause}→${e.effect}`}
-              d={path}
-              fill="none"
-              markerEnd="url(#rca-arrow)"
-              strokeWidth={1 + e.weight * 2}
-              className={cn(
-                active ? "stroke-[var(--foreground)]" : "stroke-[var(--muted-foreground)]",
-                active ? "opacity-90" : "opacity-50",
-              )}
-            >
-              <title>{`${e.rule} (weight ${e.weight.toFixed(2)}): ${e.why}`}</title>
-            </path>
-          );
-        })}
+        {live.filter((e) => !isActive(e)).map(edge)}
 
         {[...placed.values()].map(({ event, x, y }) => {
           const rank = ranks.get(event.id);
           const isSelected = selected === event.id;
+          const dimmed = onPath.size > 0 && !onPath.has(event.id) && !isSelected;
           const label = `${event.title}: ${event.summary}${rank ? `. Root-cause candidate #${rank}` : ""}`;
           return (
             <g
@@ -151,7 +151,10 @@ export function CausalGraph({
                   onSelect(event.id);
                 }
               }}
-              className="group cursor-pointer outline-none"
+              className={cn(
+                "group cursor-pointer outline-none transition-opacity motion-reduce:transition-none",
+                dimmed && "opacity-40 hover:opacity-100",
+              )}
             >
               <rect
                 x={x}
@@ -162,16 +165,17 @@ export function CausalGraph({
                 className={cn(
                   "fill-[var(--background)] stroke-[var(--border)] transition-[stroke] motion-reduce:transition-none",
                   "group-hover:stroke-[var(--muted-foreground)] group-focus-visible:stroke-[var(--ring)]",
+                  onPath.has(event.id) && "stroke-[var(--brand)]",
                   isSelected && "stroke-[var(--foreground)]",
                 )}
-                strokeWidth={isSelected ? 2 : 1}
+                strokeWidth={isSelected ? 2.5 : onPath.has(event.id) ? 2 : 1}
               />
               <rect x={x} y={y} width={5} height={NODE_H} rx={2} className={BAR[event.category]} />
               <text x={x + 14} y={y + 22} className="fill-[var(--foreground)] text-[12px] font-semibold">
-                {clip(event.title, 27)}
+                {clip(event.title, 24)}
               </text>
-              <text x={x + 14} y={y + 41} className="fill-[var(--muted-foreground)] text-[11px]">
-                {clip(`${event.entity.sub || event.entity.kind} ${event.entity.name}`, 30)}
+              <text x={x + 14} y={y + 40} className="fill-[var(--muted-foreground)] text-[11px]">
+                {clip(`${event.entity.sub || event.entity.kind} ${event.entity.name}`, 29)}
               </text>
               {rank !== undefined && (
                 <g>
@@ -189,9 +193,48 @@ export function CausalGraph({
             </g>
           );
         })}
+
+        {/* The highlighted path goes over the nodes, so a link that skips a row stays readable. */}
+        {live.filter(isActive).map(edge)}
       </svg>
     </div>
   );
+
+  function isActive(e: RcaEdge): boolean {
+    if (pathLinks.size) return pathLinks.has(`${e.cause}→${e.effect}`);
+    return selected === e.cause || selected === e.effect;
+  }
+
+  function edge(e: RcaEdge) {
+    const a = placed.get(e.cause)!;
+    const b = placed.get(e.effect)!;
+    const x1 = a.x + NODE_W / 2;
+    const y1 = a.y + NODE_H;
+    const x2 = b.x + NODE_W / 2;
+    const y2 = b.y;
+    // Same row or upwards (a cycle): loop around the right side.
+    const d =
+      y2 > y1
+        ? `M${x1},${y1} C${x1},${y1 + ROW_GAP / 2} ${x2},${y2 - ROW_GAP / 2} ${x2},${y2 - 2}`
+        : `M${a.x + NODE_W},${a.y + NODE_H / 2} C${a.x + NODE_W + 40},${a.y + NODE_H / 2} ${b.x + NODE_W + 40},${b.y + NODE_H / 2} ${b.x + NODE_W + 2},${b.y + NODE_H / 2}`;
+    const active = isActive(e);
+    return (
+      <path
+        key={`${e.cause}→${e.effect}`}
+        d={d}
+        fill="none"
+        markerEnd={active ? "url(#rca-arrow-on)" : "url(#rca-arrow)"}
+        strokeWidth={active ? 2.5 + e.weight * 1.5 : 1 + e.weight * 2}
+        className={cn(
+          "transition-opacity motion-reduce:transition-none",
+          active ? "stroke-[var(--brand)] opacity-100" : "stroke-[var(--muted-foreground)]",
+          !active && (pathLinks.size ? "opacity-20" : "opacity-50"),
+        )}
+      >
+        <title>{`${e.rule} (weight ${e.weight.toFixed(2)}): ${e.why}`}</title>
+      </path>
+    );
+  }
 }
 
 export function GraphLegend() {
@@ -205,7 +248,7 @@ export function GraphLegend() {
           {CATEGORY[c].label}
         </li>
       ))}
-      <li>Thicker arrow = stronger rule. Hover an arrow to see why it links two events.</li>
+      <li>Highlighted: the selected cause&apos;s path. Hover an arrow for its rule.</li>
     </ul>
   );
 }

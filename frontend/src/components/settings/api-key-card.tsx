@@ -150,7 +150,7 @@ export function ApiKeyCard({ field, meta, draft, onDraft, onRestore, busy }: Pro
           role="status"
           className={
             testOk
-              ? "mt-3 flex items-start gap-2 rounded-md bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-400"
+              ? "mt-3 flex items-start gap-2 rounded-md bg-[var(--success)]/10 px-3 py-2 text-xs text-[var(--success)]"
               : "mt-3 flex items-start gap-2 rounded-md bg-[var(--destructive)]/10 px-3 py-2 text-xs text-[var(--destructive)]"
           }
         >

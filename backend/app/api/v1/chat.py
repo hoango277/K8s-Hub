@@ -57,6 +57,8 @@ from app.modules.nl_command.agent import (
 from app.modules.nl_command.tools import get_tools
 from app.modules.observability.langfuse_client import get_callback_handler, trace_attributes
 from app.modules.observability.tracing import new_trace_id
+from app.modules.rca import access as rca_access
+from app.modules.tools.builtin.rca import conversation_context, target_label
 from app.schemas.chat import (
     ChatRequest,
     MessageOut,
@@ -103,8 +105,16 @@ async def _thread_or_404(db: Any, user: Any, thread_id: uuid.UUID) -> ChatThread
 
 @router.post("/threads", response_model=ThreadOut, status_code=status.HTTP_201_CREATED)
 async def create_thread(payload: ThreadCreate, db: DbSession, user: CurrentUser) -> Any:
+    title = payload.title
+    if payload.rca_run_id is not None:
+        # Same rule as the Diagnosis page; 404 either way, so the answer never
+        # reveals that someone else's run exists.
+        run = await rca_access.get_visible(db, payload.rca_run_id, user)
+        if run is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Diagnosis not found")
+        title = title or f"Diagnosis: {target_label(run)}"
     thread = await svc.create_thread(
-        db, user, title=payload.title, cluster=payload.cluster
+        db, user, title=title, cluster=payload.cluster, rca_run_id=payload.rca_run_id
     )
     # Commit NOW; do not wait for `get_session` to commit during teardown.
     #
@@ -276,6 +286,13 @@ async def stream_reply(
 
     model_name = payload.model or config.llm_model_name(provider=provider_name)
 
+    # A thread opened from a diagnosis tells the assistant which run it is about.
+    # Checked again on every turn: a user demoted since must not keep the access.
+    context = None
+    if thread.rca_run_id is not None:
+        run = await rca_access.get_visible(db, thread.rca_run_id, user)
+        context = conversation_context(run) if run is not None else None
+
     # Generate the trace id FIRST, then force Langfuse to use it (see
     # tracing.py). That way the id in the `messages` table always equals the id
     # in Langfuse — required for `impact.py` to join traces with the audit log.
@@ -308,7 +325,9 @@ async def stream_reply(
         callbacks = [handler] if handler is not None else []
 
         try:
-            graph = build_chat_graph(provider=payload.provider, model=payload.model)
+            graph = build_chat_graph(
+                provider=payload.provider, model=payload.model, context=context
+            )
         except Exception as exc:
             # Missing API key, provider package not installed… The stream is
             # already open, so the only way to report it is an event.

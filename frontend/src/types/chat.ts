@@ -19,6 +19,15 @@ export interface Thread {
   archived: boolean;
   created_at: string;
   last_message_at: string | null;
+  /** The diagnosis this conversation was opened from ("Ask in chat"). */
+  rca_run_id?: string | null;
+}
+
+/** Body of `POST /chat/threads`. */
+export interface ThreadCreate {
+  title?: string;
+  /** Open the conversation about this diagnosis; the backend checks the user may see it. */
+  rca_run_id?: string;
 }
 
 export interface ToolCall {

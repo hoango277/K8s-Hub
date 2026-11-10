@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 import { qk } from "@/lib/query-keys";
-import type { Thread, ThreadDetail, ToolInfo } from "@/types/chat";
+import type { Thread, ThreadCreate, ThreadDetail, ToolInfo } from "@/types/chat";
 
 export function useThreads(includeArchived = false) {
   return useQuery({
@@ -35,7 +35,7 @@ export function useThread(id: string | null) {
 export function useCreateThread() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api.post<Thread>("/chat/threads", {}),
+    mutationFn: (body: ThreadCreate = {}) => api.post<Thread>("/chat/threads", body),
     onSuccess: (thread) => {
       // A freshly created thread certainly has no messages — seed the cache
       // directly to avoid an extra request just to receive an empty list.

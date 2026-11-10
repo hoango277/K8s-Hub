@@ -69,6 +69,14 @@ NOT_CALLED = (
 )
 NUDGED = "k8s_hub_nudged"
 
+# Gemini 2.5 Flash on lab1 (10/11/2026): asked to "use the diagnose-crashloop skill",
+# it THOUGHT "I've just loaded the skill" and stopped — no tool call, no text.
+# The user saw an empty answer. One corrected retry, like the other nudges here.
+EMPTY_REPLY = (
+    "Your previous reply was empty: no answer and no tool call reached the user. If you meant "
+    "to use a tool (e.g. load_skill or get_diagnosis), call it now; otherwise answer in text."
+)
+
 OUT_OF_BUDGET = (
     "You have used all the tool calls allowed for this question. Do NOT call any tool. "
     "Answer now with what you found, say clearly what is still unknown, and suggest what "
@@ -81,6 +89,7 @@ def build_chat_graph(
     provider: str | None = None,
     model: str | None = None,
     tools: Sequence[BaseTool] | None = None,
+    context: str | None = None,
 ) -> Any:
     """Build the graph for one chat turn.
 
@@ -88,6 +97,9 @@ def build_chat_graph(
         provider: Force the provider for this turn. If empty, follow the configuration.
         model:    Force the model name for this turn.
         tools:    Force the tool list. Mainly used by tests.
+        context:  What this conversation is about (e.g. the diagnosis it was opened
+                  from), appended to the system prompt. K8s-Hub's own text only —
+                  never cluster data, which must come through a tool.
     """
     tool_list = list(get_tools() if tools is None else tools)
     llm = get_llm(provider=provider, model=model)
@@ -97,7 +109,7 @@ def build_chat_graph(
     # given an empty list.
     bound_llm = llm.bind_tools(tool_list) if tool_list else llm
 
-    system_message = SystemMessage(content=build_system_prompt(tool_list))
+    system_message = SystemMessage(content=build_system_prompt(tool_list, context=context))
 
     async def assistant(state: ChatState, config: RunnableConfig) -> dict[str, list[AnyMessage]]:
         """Ask the model.
@@ -137,6 +149,13 @@ def build_chat_graph(
                 )
             )
             reply = await bound_llm.ainvoke([*messages, nudge], config)
+
+        if _is_empty(reply) and not _nudged_this_turn(state["messages"]):
+            logger.warning("Model replied with neither text nor a tool call; asking once more")
+            # The empty reply is left out: some providers reject an empty message in history.
+            retry = await bound_llm.ainvoke([*messages, SystemMessage(content=EMPTY_REPLY)], config)
+            retry.additional_kwargs[NUDGED] = True
+            return {"messages": [retry]}
 
         if write_tools and _narrates_without_calling(reply, state["messages"], write_tools):
             logger.warning("Model described a change without calling a write tool; nudging once")
@@ -224,6 +243,28 @@ def _narrates_without_calling(
             if any(tc["name"] in write_tools for tc in m.tool_calls):
                 return False  # it did propose
     return True
+
+
+def _is_empty(reply: AnyMessage) -> bool:
+    """No tool call and no visible text. Thinking blocks (Gemini's content parts of
+    type "thinking"/"reasoning") don't count: the user can't act on them."""
+    if not isinstance(reply, AIMessage) or reply.tool_calls:
+        return False
+    content = reply.content
+    if isinstance(content, str):
+        return not content.strip()
+    texts = [
+        part if isinstance(part, str) else str(part.get("text") or "")
+        for part in content
+        if isinstance(part, str) or (isinstance(part, dict) and part.get("type") == "text")
+    ]
+    return not "".join(texts).strip()
+
+
+def _nudged_this_turn(messages: Sequence[AnyMessage]) -> bool:
+    return any(
+        isinstance(m, AIMessage) and m.additional_kwargs.get(NUDGED) for m in _this_turn(messages)
+    )
 
 
 def _tool_rounds(messages: Sequence[AnyMessage]) -> int:

@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.db.models.approval import Approval
 from app.db.session import get_sessionmaker
-from app.modules.nl_command import executor, verifier
+from app.modules.nl_command import executor, revert, verifier
 from app.modules.nl_command.dry_run import dry_run
 from app.modules.nl_command.guardrails import check_execution_allowed
 from app.modules.nl_command.planner import ActionPlan
@@ -98,6 +98,7 @@ async def propose(
     tool_call_id: str | None = None,
     request_text: str | None = None,
     risk_flags: list[dict[str, Any]] | None = None,
+    reverts_id: uuid.UUID | None = None,
 ) -> Approval:
     """Dry-run the plan and store it as pending (or run it, in auto mode).
 
@@ -139,6 +140,7 @@ async def propose(
             tool_call_id=tool_call_id,
             request_text=(request_text or "")[:REQUEST_TEXT_MAX] or None,
             risk_flags=risk_flags or None,
+            reverts_id=reverts_id,
             expires_at=_now() + timedelta(minutes=settings.APPROVAL_TTL_MINUTES),
         )
         db.add(row)
@@ -199,11 +201,25 @@ async def _decide_and_run(
     await db.commit()  # visible as "executing" while it runs
 
     plan = ActionPlan.from_json(row.plan)
+    # The objects as they are right before running — what a revert would restore.
+    # Taken now, not at proposal: the approval may have waited an hour. A failed
+    # snapshot doesn't stop an approved change; it only can't be reverted later.
+    before = None
+    try:
+        before = await executor.snapshot(plan)
+    except Exception:
+        logger.warning("Could not record the state before change %s", row.id, exc_info=True)
     try:
         ok, output = await executor.execute(plan)
     except Exception as exc:  # never leave a row stuck in "executing"
         logger.exception("Executing approval %s crashed", row.id)
         ok, output = False, f"Execution crashed: {type(exc).__name__}: {exc}"
+    if before is not None:
+        try:
+            await executor.record_after(before)
+        except Exception:
+            logger.warning("Could not record the state after change %s", row.id, exc_info=True)
+        row.before_state = before
     row.executed_at = _now()
     row.result = output
     row.status = "executed" if ok else "failed"
@@ -249,6 +265,65 @@ async def reject(db: AsyncSession, approval_id: uuid.UUID, actor: Any, reason: s
     )
     await db.refresh(row)
     return row
+
+
+async def propose_revert(db: AsyncSession, approval_id: uuid.UUID, actor: Any) -> Approval:
+    """Propose the reverse of an executed change (nl_command/revert.py).
+
+    A new pending row pointing back at the original (`reverts_id`), reported into
+    the same conversation; the original stays as it is — rows are the audit log.
+    Never auto-executed: the reverse plan is built by K8s-Hub, not asked for in
+    words, so someone must read its diff (role "user", as for fixes from RCA).
+    """
+    original = await db.get(Approval, approval_id)
+    if original is None:
+        raise ApprovalError("Approval not found.")
+    active = (
+        await db.execute(
+            select(Approval)
+            .where(
+                Approval.reverts_id == approval_id,
+                Approval.status.in_(("pending", "executing")),
+            )
+            .order_by(Approval.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if active is not None and not (active.status == "pending" and active.expires_at <= _now()):
+        state = "waiting for approval" if active.status == "pending" else "running"
+        raise ApprovalError(f"A revert of this change is already {state} (#{str(active.id)[:8]}).")
+    try:
+        plan = await revert.plan_revert(original)
+    except revert.RevertError as exc:
+        raise ApprovalError(str(exc)) from exc
+    return await propose(
+        plan,
+        actor=Actor(id=actor.id, email=actor.email, role="user"),
+        source="revert",
+        thread_id=original.thread_id,
+        reverts_id=original.id,
+    )
+
+
+async def latest_reverts(
+    db: AsyncSession, ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, tuple[uuid.UUID, str]]:
+    """For each change, its most recent revert: (id, status). One query for a page."""
+    if not ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(Approval.id, Approval.reverts_id, Approval.status, Approval.expires_at)
+            .where(Approval.reverts_id.in_(list(ids)))
+            .order_by(Approval.created_at.desc())
+        )
+    ).all()
+    out: dict[uuid.UUID, tuple[uuid.UUID, str]] = {}
+    for rid, original, status, expires_at in rows:
+        if status == "pending" and expires_at <= _now():
+            status = "expired"
+        out.setdefault(original, (rid, status))
+    return out
 
 
 async def reverify(db: AsyncSession, approval_id: uuid.UUID) -> Approval:
@@ -386,10 +461,12 @@ __all__ = [
     "can_decide",
     "event_payload",
     "get",
+    "latest_reverts",
     "list_approvals",
     "message_for_model",
     "pending_count",
     "propose",
+    "propose_revert",
     "reject",
     "reverify",
 ]

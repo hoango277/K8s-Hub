@@ -117,7 +117,7 @@ export function ModelPicker({
           title={warning}
           className={cn(
             "hidden items-center gap-1 text-xs sm:flex",
-            "text-amber-600 dark:text-amber-400",
+            "text-[var(--warning)]",
           )}
         >
           <TriangleAlert aria-hidden className="size-3.5 shrink-0" />

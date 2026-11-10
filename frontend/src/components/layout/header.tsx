@@ -22,7 +22,7 @@ export function Header() {
   if (!user) return null;
 
   return (
-    <header className="flex h-12 shrink-0 items-center justify-end gap-3 border-b px-4">
+    <header className="flex h-12 shrink-0 items-center justify-end gap-3 border-b bg-[var(--canvas)] px-4">
       <Link
         href="/account"
         title="My account"

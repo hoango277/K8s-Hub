@@ -53,6 +53,7 @@ SAMPLE_ARGS: dict[str, dict] = {
     "delete_pod": {"namespace": "default", "name": "web-1"},
     "delete_resource": {"kind": "configmap", "name": "web", "namespace": "default"},
     "diagnose_incident": {"namespace": "default"},
+    "get_diagnosis": {"run_id": "65deb42b-747a-4d76-bff7-8d3ac6944889"},
     "apply_manifest": {
         "manifest": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata: {a: b}\n"
     },
@@ -76,13 +77,15 @@ def offline(monkeypatch):
     monkeypatch.setattr(k8s, "_kubeconfig_files", lambda: [])
     assert k8s.config_problem() is not None
 
-    # No database either (diagnose_incident stores its runs).
+    # No database either (diagnose_incident stores its runs, get_diagnosis reads them).
     from app.modules.rca import pipeline
+    from app.modules.tools.builtin import rca as rca_tools
 
     def no_database():
         raise RuntimeError("no database in unit tests")
 
     monkeypatch.setattr(pipeline, "get_sessionmaker", no_database)
+    monkeypatch.setattr(rca_tools, "get_sessionmaker", no_database)
 
 
 @pytest.mark.parametrize("tool", ALL_TOOLS, ids=lambda t: t.name)

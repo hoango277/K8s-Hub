@@ -44,6 +44,14 @@ export interface Approval {
   thread_id: string | null;
   created_at: string;
   expires_at: string;
+  /** This change is the revert of that one. */
+  reverts_id?: string | null;
+  /** The latest revert proposed for this change. */
+  revert?: { id: string; status: ApprovalStatus } | null;
+  /** An executed change K8s-Hub knows how to revert (a reverse proposal, approved like any other). */
+  revertible?: boolean;
+  /** Why this executed change can't be reverted. */
+  revert_blocker?: string | null;
 }
 
 export interface ApprovalPage {

@@ -20,8 +20,8 @@ export function PageHeader({ title, description, icon: Icon, actions, className 
     <header className={cn("mb-8 flex flex-wrap items-start justify-between gap-4 sm:flex-nowrap", className)}>
       <div className="flex min-w-0 items-start gap-3">
         {Icon && (
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-[var(--accent)]">
-            <Icon aria-hidden className="size-5 text-[var(--foreground)]" />
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-[var(--brand)]/20 bg-[var(--brand)]/10">
+            <Icon aria-hidden className="size-5 text-[var(--brand)]" />
           </div>
         )}
         <div className="min-w-0">

@@ -3,21 +3,23 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Network, Repeat, SearchX, Stethoscope, TriangleAlert } from "lucide-react";
+import { MessagesSquare, Network, Repeat, SearchX, Stethoscope, TriangleAlert } from "lucide-react";
 
 import { CausalGraph, GraphLegend } from "@/components/rca/causal-graph";
 import { EventDetails } from "@/components/rca/event-details";
 import { Dependencies } from "@/components/rca/dependencies";
 import { Hypotheses } from "@/components/rca/hypotheses";
 import { ReportPanel } from "@/components/rca/report-panel";
-import { PendingIcon, RunStatus, StepIcon, TRIGGER, targetLabel, windowLabel } from "@/components/rca/shared";
+import { Fold, PendingIcon, RunStatus, StepIcon, TRIGGER, targetLabel, windowLabel } from "@/components/rca/shared";
 import { Timeline } from "@/components/rca/timeline";
 import { ErrorPanel, LoadingRow, errorMessage } from "@/components/skills/shared";
-import { Button } from "@/components/ui/button";
+import { BackLink } from "@/components/ui/back-link";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Spinner } from "@/components/ui/spinner";
 import { useToast } from "@/components/ui/toast";
+import { useAskInChat } from "@/hooks/use-ask-in-chat";
 import { isActive, useRcaRun, useStartRca } from "@/hooks/use-rca";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { ApiError } from "@/lib/api";
@@ -54,10 +56,7 @@ export function RunDetail({ id }: { id: string }) {
             title="Diagnosis not found"
             description="It may belong to someone else, or the link is wrong."
           >
-            <Link
-              href="/rca"
-              className="inline-flex h-8 items-center gap-2 rounded-md border px-3 text-sm outline-none transition hover:bg-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
-            >
+            <Link href="/rca" className={buttonVariants({ variant: "outline", size: "sm" })}>
               All diagnoses
             </Link>
           </EmptyState>
@@ -72,32 +71,61 @@ export function RunDetail({ id }: { id: string }) {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mx-auto max-w-5xl px-4 pb-16 pt-6 sm:px-6">
-      <Link
-        href="/rca"
-        className="mb-4 inline-flex items-center gap-1.5 rounded-sm text-sm text-[var(--muted-foreground)] outline-none hover:text-[var(--foreground)] focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
-      >
-        <ArrowLeft aria-hidden className="size-4" /> All diagnoses
-      </Link>
+    <div className="mx-auto max-w-7xl px-4 pb-16 pt-6 sm:px-6">
+      <BackLink href="/rca">All diagnoses</BackLink>
       {children}
     </div>
   );
 }
 
+/** On narrow screens the graph sits below the causes; bring it up when a cause is picked. */
+function revealGraph() {
+  const el = document.getElementById("rca-graph");
+  if (!el || window.matchMedia("(min-width: 1024px)").matches) return; // side by side: already visible
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+}
+
 function Loaded({ run }: { run: RcaRun }) {
+  // Node whose details are open, and the cause whose path is highlighted. Separate:
+  // opening an event's details shouldn't lose the chain being followed.
   const [selected, setSelected] = useState<string | null>(null);
+  const [focusRank, setFocusRank] = useState<number | null>(null);
   const { data: me } = useCurrentUser();
   const canJudge = me ? hasRole(me.role, ["engineer"]) : false;
   const graph = run.graph;
+  const hyps = run.hypotheses;
   const events = useMemo(() => new Map((graph?.events ?? []).map((e) => [e.id, e])), [graph]);
   const inGraph = useMemo(() => (graph?.events ?? []).filter((e) => e.in_graph), [graph]);
-  const ranks = useMemo(() => new Map(run.hypotheses.map((h) => [h.event_id, h.rank])), [run.hypotheses]);
+  const ranks = useMemo(() => new Map(hyps.map((h) => [h.event_id, h.rank])), [hyps]);
   const analysing = run.status === "pending" || run.status === "running";
   const selectedEvent = selected ? events.get(selected) : undefined;
+  // Until someone picks a cause, follow the AI's pick, else the top-ranked one.
+  const rank = focusRank ?? run.report?.root_cause_rank ?? hyps[0]?.rank ?? null;
+  const focused = hyps.find((h) => h.rank === rank);
+  const path = useMemo(() => (focused ? (focused.chain.length ? focused.chain : [focused.event_id]) : []), [focused]);
+  // A real cluster's graph has dozens of events and crossing links; by default draw only
+  // the focused cause's path, which is what a reader follows anyway.
+  const [showAll, setShowAll] = useState(false);
+  const shown = useMemo(() => {
+    if (showAll || path.length === 0) return inGraph;
+    const keep = new Set([...path, ...(selected ? [selected] : [])]);
+    return inGraph.filter((e) => keep.has(e.id));
+  }, [showAll, path, selected, inGraph]);
 
-  function show(id: string) {
+  function focusCause(r: number) {
+    setFocusRank(r);
+    setSelected(null);
+    revealGraph();
+  }
+
+  function selectEvent(id: string) {
     setSelected(id);
-    document.getElementById("rca-graph")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    // Follow the chain this event belongs to, unless it's on the one already shown.
+    if (!path.includes(id)) {
+      const owner = hyps.find((h) => h.chain.includes(id) || h.event_id === id);
+      if (owner) setFocusRank(owner.rank);
+    }
   }
 
   return (
@@ -113,7 +141,14 @@ function Loaded({ run }: { run: RcaRun }) {
             </span>
           </span>
         }
-        actions={!isActive(run) && <RunAgain run={run} />}
+        actions={
+          !isActive(run) && (
+            <>
+              <AskInChat runId={run.id} />
+              <RunAgain run={run} />
+            </>
+          )
+        }
       />
 
       {(analysing || run.status === "failed") && <Progress run={run} />}
@@ -126,109 +161,141 @@ function Loaded({ run }: { run: RcaRun }) {
       )}
 
       {run.status === "completed" && (
-        <div className="space-y-8">
+        <div className="space-y-6">
+          <ReportPanel run={run} />
+
           {run.warnings.length > 0 && (
-            <div className="flex gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
-              <TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
-              <div>
-                <p className="font-medium">Gaps in what could be checked</p>
-                <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[var(--muted-foreground)]">
+            <div className="rounded-lg border border-[var(--warning)]/40 bg-[var(--warning)]/5 px-3 py-1">
+              <Fold
+                summary={
+                  <span className="flex items-center gap-2 text-[var(--warning)]">
+                    <TriangleAlert aria-hidden className="size-4" />
+                    {run.warnings.length} gap{run.warnings.length === 1 ? "" : "s"} in what could be checked
+                  </span>
+                }
+              >
+                <ul className="list-disc space-y-0.5 pb-2 pl-4 text-sm text-[var(--muted-foreground)]">
                   {run.warnings.map((w) => (
                     <li key={w} className="break-words">
                       {w}
                     </li>
                   ))}
                 </ul>
-              </div>
+              </Fold>
             </div>
           )}
 
-          <section aria-labelledby="rca-report">
-            <h2 id="rca-report" className="mb-3 text-lg font-semibold">
-              AI report
-            </h2>
-            <ReportPanel run={run} />
-          </section>
+          {hyps.length === 0 ? (
+            <EmptyState
+              icon={SearchX}
+              title="No cause found"
+              description="Nothing anomalous was detected in this window. Try a longer look-back, or check that metrics, logs and events are collected."
+            />
+          ) : (
+            <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+              <section aria-labelledby="rca-causes">
+                <h2 id="rca-causes" className="mb-1 text-lg font-semibold">
+                  Likely root causes
+                </h2>
+                <p className="mb-3 text-xs text-[var(--muted-foreground)]">
+                  Ranked by causal rules. Select one to trace it in the graph. Fixes go to approval first.
+                </p>
+                <Hypotheses
+                  hypotheses={hyps}
+                  events={events}
+                  edges={graph?.edges ?? []}
+                  report={run.report}
+                  focused={rank}
+                  onFocus={focusCause}
+                  runId={run.id}
+                  canJudge={canJudge}
+                />
+              </section>
 
-          <section aria-labelledby="rca-causes">
-            <h2 id="rca-causes" className="mb-1 text-lg font-semibold">
-              Likely root causes
-            </h2>
-            <p className="mb-3 text-sm text-[var(--muted-foreground)]">
-              Ranked by causal rules and timing, not by the AI. A cause is only linked to a symptom when a rule allows it.
-            </p>
-            {run.hypotheses.length === 0 ? (
-              <EmptyState
-                icon={SearchX}
-                title="No cause found"
-                description="Nothing anomalous was detected in this window. Try a longer look-back, or check that metrics, logs and events are collected."
-              />
-            ) : (
-              <Hypotheses
-                hypotheses={run.hypotheses}
-                events={events}
-                edges={graph?.edges ?? []}
-                report={run.report}
-                onShow={show}
-                runId={run.id}
-                canJudge={canJudge}
-              />
-            )}
-          </section>
-
-          {inGraph.length > 0 && (
-            <section aria-labelledby="rca-graph-title" id="rca-graph" className="scroll-mt-4">
-              <h2 id="rca-graph-title" className="mb-1 flex items-center gap-2 text-lg font-semibold">
-                <Network aria-hidden className="size-5" /> Causal graph
-              </h2>
-              <p className="mb-3 text-sm text-[var(--muted-foreground)]">
-                Causes on the left, symptoms on the right. Select an event to see its evidence.
-              </p>
-              <CausalGraph
-                events={inGraph}
-                edges={graph?.edges ?? []}
-                ranks={ranks}
-                selected={selected}
-                onSelect={setSelected}
-              />
-              <div className="mt-2">
-                <GraphLegend />
-              </div>
-              {selectedEvent && (
-                <div className="mt-4">
-                  <EventDetails
-                    event={selectedEvent}
-                    events={events}
+              {inGraph.length > 0 && (
+                <section
+                  aria-labelledby="rca-graph-title"
+                  id="rca-graph"
+                  className="scroll-mt-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto"
+                >
+                  <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                    <h2 id="rca-graph-title" className="flex items-center gap-2 text-lg font-semibold">
+                      <Network aria-hidden className="size-5" /> Causal graph
+                    </h2>
+                    {path.length > 0 && path.length < inGraph.length && (
+                      <div role="group" aria-label="Graph view" className="flex rounded-md border p-0.5">
+                        <Button
+                          size="sm"
+                          variant={showAll ? "ghost" : "primary"}
+                          aria-pressed={!showAll}
+                          onClick={() => setShowAll(false)}
+                        >
+                          Path of #{focused?.rank}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant={showAll ? "primary" : "ghost"}
+                          aria-pressed={showAll}
+                          onClick={() => setShowAll(true)}
+                        >
+                          All {inGraph.length} events
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                  <p className="mb-3 text-xs text-[var(--muted-foreground)]">
+                    Causes on top, symptoms below. Select an event for its evidence.
+                  </p>
+                  <CausalGraph
+                    events={shown}
                     edges={graph?.edges ?? []}
-                    onSelect={setSelected}
-                    onClose={() => setSelected(null)}
+                    ranks={ranks}
+                    path={path}
+                    selected={selected}
+                    onSelect={selectEvent}
+                  />
+                  <div className="mt-2">
+                    <GraphLegend />
+                  </div>
+                  {selectedEvent && (
+                    <div className="mt-4">
+                      <EventDetails
+                        event={selectedEvent}
+                        events={events}
+                        edges={graph?.edges ?? []}
+                        onSelect={selectEvent}
+                        onClose={() => setSelected(null)}
+                      />
+                    </div>
+                  )}
+                </section>
+              )}
+            </div>
+          )}
+
+          <div className="space-y-1 border-t pt-3">
+            {(graph?.events.length ?? 0) > 0 && (
+              <Fold summary={`Timeline (${graph!.events.length} events)`}>
+                <div className="pb-3">
+                  <Timeline
+                    events={graph!.events}
+                    selected={selected}
+                    onSelect={(id) => {
+                      selectEvent(id);
+                      document.getElementById("rca-graph")?.scrollIntoView({ block: "start" });
+                    }}
                   />
                 </div>
-              )}
-            </section>
-          )}
-
-          {graph?.namespaces && (
-            <section aria-labelledby="rca-scope">
-              <h2 id="rca-scope" className="mb-1 text-lg font-semibold">
-                What was analysed
-              </h2>
-              <p className="mb-3 text-sm text-[var(--muted-foreground)]">
-                Who calls whom, from configuration, metrics, traces and logs. A cause in a dependency can explain a
-                symptom here.
-              </p>
-              <Dependencies namespaces={graph.namespaces} dependencies={graph.dependencies ?? []} />
-            </section>
-          )}
-
-          {(graph?.events.length ?? 0) > 0 && (
-            <section aria-labelledby="rca-timeline">
-              <h2 id="rca-timeline" className="mb-3 text-lg font-semibold">
-                Timeline
-              </h2>
-              <Timeline events={graph!.events} selected={selected} onSelect={show} />
-            </section>
-          )}
+              </Fold>
+            )}
+            {graph?.namespaces && (
+              <Fold summary="What was analysed (namespaces and who calls whom)">
+                <div className="pb-3">
+                  <Dependencies namespaces={graph.namespaces} dependencies={graph.dependencies ?? []} />
+                </div>
+              </Fold>
+            )}
+          </div>
         </div>
       )}
     </Shell>
@@ -250,6 +317,17 @@ function Progress({ run }: { run: RcaRun }) {
         );
       })}
     </ol>
+  );
+}
+
+/** Continue in the chat with this run as context (the assistant reads it with get_diagnosis). */
+function AskInChat({ runId }: { runId: string }) {
+  const { ask, busy } = useAskInChat();
+  return (
+    <Button variant="outline" disabled={busy} onClick={() => void ask(runId)}>
+      {busy ? <Spinner /> : <MessagesSquare aria-hidden />}
+      Ask in chat
+    </Button>
   );
 }
 

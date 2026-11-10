@@ -53,11 +53,14 @@ async def create_thread(
     *,
     title: str | None = None,
     cluster: str | None = None,
+    rca_run_id: uuid.UUID | None = None,
 ) -> ChatThread:
+    """`rca_run_id` must already be checked as visible to `user` (modules/rca/access.py)."""
     thread = ChatThread(
         user_id=user.id,
         title=(title or DEFAULT_TITLE)[:TITLE_MAX],
         cluster=cluster,
+        rca_run_id=rca_run_id,
     )
     db.add(thread)
     await db.flush()

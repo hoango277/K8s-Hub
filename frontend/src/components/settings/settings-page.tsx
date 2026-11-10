@@ -215,15 +215,16 @@ export function SettingsPage() {
                     className={cn(
                       "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm outline-none transition",
                       "focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+                      // Same "you are here" as the main sidebar: accent text on a neutral tint.
                       active
-                        ? "bg-[var(--accent)] font-medium text-[var(--foreground)]"
-                        : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]/60 hover:text-[var(--foreground)]",
+                        ? "bg-[var(--accent)] font-semibold text-[var(--brand)]"
+                        : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
                     )}
                   >
                     <s.icon aria-hidden className="size-4 shrink-0" />
                     <span className="flex-1">{s.label}</span>
                     {dirtySections.has(s.id) && (
-                      <span className="size-1.5 rounded-full bg-amber-500" title="Unsaved changes">
+                      <span className="size-1.5 rounded-full bg-[var(--warning)]" title="Unsaved changes">
                         <span className="sr-only">(unsaved changes)</span>
                       </span>
                     )}
@@ -318,12 +319,12 @@ export function SettingsPage() {
                     </>
                   ) : hasErrors ? (
                     <>
-                      <TriangleAlert aria-hidden className="size-4 shrink-0 text-amber-600" />
+                      <TriangleAlert aria-hidden className="size-4 shrink-0 text-[var(--warning)]" />
                       Fix the highlighted {Object.keys(errors).length === 1 ? "field" : "fields"} before saving.
                     </>
                   ) : (
                     <>
-                      <span aria-hidden className="size-2 shrink-0 rounded-full bg-amber-500" />
+                      <span aria-hidden className="size-2 shrink-0 rounded-full bg-[var(--warning)]" />
                       {changed.length} unsaved {changed.length === 1 ? "change" : "changes"}
                       {dirtySections.size > 1 && (
                         <span className="text-[var(--muted-foreground)]">across {dirtySections.size} sections</span>
@@ -360,7 +361,7 @@ export function SettingsPage() {
             className={cn(
               "k8s-fade-in pointer-events-auto flex max-w-sm items-center gap-2 rounded-lg border bg-[var(--background)] px-4 py-3 text-sm shadow-lg",
               toast.kind === "ok"
-                ? "border-emerald-500/30 text-emerald-700 dark:text-emerald-400"
+                ? "border-[var(--success)]/30 text-[var(--success)]"
                 : "border-[var(--destructive)]/40 text-[var(--destructive)]",
             )}
           >
@@ -444,7 +445,7 @@ function SettingRow({
             {meta.label}
           </label>
           {unsaved && <Badge tone="warning">Unsaved</Badge>}
-          {!unsaved && field.overridden && <Badge tone="info">Changed from default</Badge>}
+          {!unsaved && field.overridden && <Badge tone="accent">Changed from default</Badge>}
         </div>
         <p id={`${id}-help`} className="mt-1 max-w-2xl text-xs leading-relaxed text-[var(--muted-foreground)]">
           {meta.help ?? field.description}

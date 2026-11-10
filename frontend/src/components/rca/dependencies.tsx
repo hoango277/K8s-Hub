@@ -65,7 +65,7 @@ export function Dependencies({
                 <ArrowRight aria-label="calls" className="size-3.5 text-[var(--muted-foreground)]" />
                 <span className="font-mono text-xs">{keyLabel(d.callee)}</span>
                 {d.sources.map((s) => (
-                  <Badge key={s} tone={s === "config" || s === "annotation" ? "neutral" : "info"} title={SOURCE[s]?.title}>
+                  <Badge key={s} tone="neutral" title={SOURCE[s]?.title}>
                     {SOURCE[s]?.label ?? s}
                   </Badge>
                 ))}

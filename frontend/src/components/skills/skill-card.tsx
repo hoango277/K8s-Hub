@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import type { SkillSummary } from "@/types/skill";
 
 export function SourceBadge({ source }: { source: SkillSummary["source"] }) {
-  return source === "builtin" ? <Badge tone="neutral">Built-in</Badge> : <Badge tone="violet">Custom</Badge>;
+  return source === "builtin" ? <Badge tone="neutral">Built-in</Badge> : <Badge tone="neutral">Custom</Badge>;
 }
 
 /** One skill in the catalog. The name is the link; the switch sits outside
@@ -29,9 +29,9 @@ export function SkillCard({
   return (
     <li
       className={cn(
-        "relative flex min-w-0 flex-col rounded-lg border p-4 transition hover:border-[var(--ring)]",
+        "relative flex min-w-0 flex-col rounded-lg border bg-[var(--card)] p-4 transition hover:border-[var(--ring)]",
         "has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-[var(--ring)]",
-        !skill.enabled && "bg-[var(--muted)]/40",
+        !skill.enabled && "bg-[var(--muted)]",
       )}
     >
       <div className="flex items-start justify-between gap-3">

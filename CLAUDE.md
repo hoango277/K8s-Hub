@@ -66,12 +66,31 @@ tính năng. Đối chiếu danh sách này trước khi coi một trang là xon
 - Chỉ dùng token màu trong `src/app/globals.css` (`var(--primary)`,
   `var(--muted-foreground)`, `var(--destructive)`...). Không viết mã màu cứng —
   token là thứ giữ cho chế độ sáng/tối khớp nhau.
+- **Hệ màu theo Groq** (người dùng chọn 10/11/2026; quy tắc + nguồn tra cứu:
+  `docs/ke-hoach/he-mau-giao-dien.md`). **Tương phản cao như console.groq.com**: chữ
+  gần đen `--foreground` trên nền gần trắng (`--canvas`), thẻ trắng `--card` + đường kẻ
+  mảnh thay bóng đổ, chữ phụ `--muted-foreground` ≈ 7:1; viền thứ gõ/bấm được (ô nhập,
+  ô chọn, nút viền, chip) dùng `--input` đậm hơn `--border`. Nền giấy be + chữ nâu của
+  groq.com đã thử và bị chê "khó nhìn" — đừng quay lại tông nhạt. **Một màu nhấn cam**
+  (`--primary` nút, `--brand` chữ/icon/dải)
+  chỉ cho nút chính, thứ đang chọn, focus, kết luận chính — 3–5 chỗ mỗi màn hình.
+  **Không dùng xanh dương làm màu chủ đạo** (đã thử, bị từ chối). Màu trạng thái chỉ
+  khi có nghĩa và khác cam: ô-liu `--success`, mù tạt `--warning`, đỏ thẫm
+  `--destructive`; thông tin thụ động để trung tính. Màu nằm trên dấu nhỏ (icon, badge,
+  dải trái), không tô cả thẻ theo loại. Badge 5 tone: `neutral`, `accent` (viền cam),
+  `success`, `warning`, `danger`. Nhãn nhỏ phía trên khối dùng tiện ích `eyebrow`.
 - Dùng lại component có sẵn trong `src/components/ui/` trước khi viết mới:
   `button`, `badge`, `page-header`, `empty-state`, `spinner`, `confirm-dialog`,
-  `select`. Không tự viết lại chuỗi class cho nút — dùng `Button`.
-- Khoảng cách theo thang 4px của Tailwind; bo góc `rounded-lg` cho khối,
-  `rounded-md` cho nút/ô nhập. Nội dung trang giới hạn `max-w-*` và căn giữa,
-  không trải hết màn hình rộng.
+  `select`, `chip-group` (bộ lọc một lựa chọn), `back-link` (link quay lại).
+  Không tự viết lại chuỗi class cho nút — dùng `Button`; link trông như nút dùng
+  `buttonVariants(...)`.
+- Font như console.groq.com: **Inter** cho chữ giao diện, **Space Grotesk** cho tiêu đề
+  (`h1`–`h3` tự nhận, hoặc lớp `font-display`) và nhãn `eyebrow`, JetBrains Mono cho
+  mã/tên tài nguyên (`next/font` trong `src/app/layout.tsx`, cả ba có bộ ký tự tiếng Việt).
+- Khoảng cách theo thang 4px của Tailwind; bo góc: **nút và chip bo tròn hẳn kiểu
+  viên thuốc** (`rounded-full`, như groq.com — đổi 10/11/2026), ô nhập/ô chọn
+  `rounded-md`/`rounded-lg`, khối `rounded-lg`. Nội dung trang giới hạn `max-w-*`
+  và căn giữa, không trải hết màn hình rộng.
 - Mỗi trang mở đầu bằng `PageHeader`: tiêu đề, một câu mô tả trang dùng để làm
   gì, và nút hành động chính (nếu có) ở góc phải.
 
@@ -160,6 +179,10 @@ Ba vai trò: `admin` (toàn quyền), `engineer` (sau này thêm/sửa/xoá skil
   qua `run_skill_script`.
 - Skill mẫu nằm trong repo (`backend/skills/<name>/`, chỉ đọc trên web); skill tạo
   hoặc import trên web lưu CSDL, có Import/Export `.zip` đúng chuẩn.
+- Skill khai loại sự kiện RCA nó giúp điều tra bằng `metadata.rca-events` trong front
+  matter (trường `metadata` của chuẩn, skill vẫn dùng được ở agent khác). RCA gợi ý skill
+  cho một nguyên nhân bằng **bảng khớp tất định** theo chuỗi nhân quả
+  (`skills/matching.py`), không để LLM chọn; tên loại sai thì parser từ chối.
 - **MCP server bên ngoài: chỉ admin/engineer thêm, và họ chọn từng tool có cần
   phê duyệt hay không** (bỏ ngày 30/09, thêm lại 01/10/2026 theo yêu cầu người
   dùng). Tool mới **tắt + cần phê duyệt**, mặc kệ server tự nhận `readOnlyHint`.
@@ -195,6 +218,14 @@ Ba vai trò: `admin` (toàn quyền), `engineer` (sau này thêm/sửa/xoá skil
   (rollout xong chưa…). Dòng `approvals` không bao giờ xoá — nó là nhật ký.
 - `K8S_EXECUTION_MODE`: `read_only` không đưa tool ghi cho LLM; `auto` chỉ bỏ
   qua phê duyệt khi người yêu cầu là engineer/admin.
+- **Hoàn tác (Revert) cũng là một đề xuất**, không phải nút chạy ngay
+  (`nl_command/revert.py`): lúc chạy, trạng thái các đối tượng ngay trước đó được chụp
+  vào `approvals.before_state` (không bao giờ Secret); Revert dựng kế hoạch ngược từ đó
+  rồi đi đúng đường propose (dry-run, diff, duyệt), dòng mới trỏ về gốc bằng
+  `reverts_id`. **Luôn chờ duyệt** (vai trò `user`, như fix RCA), kể cả `auto`. Khôi
+  phục đối tượng bằng PUT kèm `resourceVersion` hiện tại, để ai sửa xen giữa thì 409
+  chứ không bị ghi đè âm thầm. Không hoàn tác: restart, lệnh custom tool, MCP, xoá
+  namespace, pod có controller.
 
 ## Giám sát: mỗi thứ đúng một chỗ
 
@@ -240,6 +271,12 @@ Kế hoạch đầy đủ: `docs/ke-hoach/rca-groot.md`. Những điểm không 
   giờ in ra). Để Alertmanager trên lab1 gọi được, backend phải chạy `--host 0.0.0.0`.
 - `python -m rca_eval.run` **ghi vào cụm** (namespace `rca-lab`) và tạo dòng `approvals` — chỉ chạy khi
   người dùng đồng ý, không đưa vào CI.
+- **Ai xem được run nào: một luật duy nhất** ở `modules/rca/access.py` (`user`: run của mình + run hệ
+  thống; engineer+: tất cả) — API, hội thoại mở từ chẩn đoán và tool `get_diagnosis` đều dùng nó.
+- **Kết quả RCA không bao giờ vào system prompt của chat.** Hội thoại mở bằng "Ask in chat"
+  (`chat_threads.rca_run_id`) chỉ đưa id run + đối tượng (tên đã kiểm DNS-1123) vào mục CONVERSATION
+  CONTEXT; bằng chứng, lý do AI… trích dữ liệu cụm nên chỉ đi qua tool `get_diagnosis` và được bọc
+  untrusted như mọi dữ liệu cụm.
 
 ## Quy ước viết mã
 

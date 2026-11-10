@@ -210,7 +210,7 @@ function TryForm({ tool, run, onClose }: { tool: Tool; run: ReturnType<typeof us
           <section aria-label="Result" className="k8s-fade-in space-y-2">
             <p className="flex flex-wrap items-center gap-2 text-sm">
               {result.ok ? (
-                <span className="flex items-center gap-1.5 font-medium text-emerald-700 dark:text-emerald-400">
+                <span className="flex items-center gap-1.5 font-medium text-[var(--success)]">
                   <CircleCheck aria-hidden className="size-4" /> Succeeded
                 </span>
               ) : (

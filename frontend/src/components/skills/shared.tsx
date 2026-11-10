@@ -244,7 +244,7 @@ export function OutputBlock({ text, className }: { text: string; className?: str
 }
 
 export const textareaClass =
-  "w-full rounded-md border bg-[var(--background)] px-3 py-2 text-sm outline-none transition " +
+  "w-full rounded-md border border-[var(--input)] bg-[var(--background)] px-3 py-2 text-sm outline-none transition " +
   "placeholder:text-[var(--muted-foreground)] focus-visible:border-[var(--ring)] focus-visible:ring-2 " +
   "focus-visible:ring-[var(--ring)]/40 disabled:cursor-not-allowed disabled:opacity-50 " +
   "aria-[invalid=true]:border-[var(--destructive)]";

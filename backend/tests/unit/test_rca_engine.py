@@ -249,11 +249,43 @@ def test_validator_drops_invented_evidence_fix_and_refuted_root():
     fix = remediation.Fix("scale:x", "x", "scale", "Scale back", {})
     out, notes = report.validate(draft, ranks={1, 2}, evidence_ids={"ev#1"}, fixes={fix.id: fix})
     assert out["verdicts"] == [
-        {"rank": 1, "status": "refuted", "reason": "", "evidence_ids": ["ev#1"]}
+        {"rank": 1, "status": "refuted", "reason": "", "evidence_ids": ["ev#1"], "next_steps": []}
     ]
     assert out["root_cause_rank"] is None
     assert out["fix"] is None
     assert len(notes) == 4
+
+
+def test_validator_repairs_prefixed_ids_and_fix_lines_and_keeps_steps_per_cause():
+    """Seen on a real run: "EVIDENCE:<id>" and the whole "<event id>: <title>" line as fix_id."""
+    eid = "Rollout:Workload/dcim/netbox-worker"
+    fix = remediation.Fix(f"rollback:{eid}:worker", eid, "set_image", "Roll back netbox-worker", {})
+    draft = report.Draft(
+        summary="s",
+        verdicts=[
+            report.Verdict(
+                rank=1,
+                status="confirmed",
+                evidence_ids=[f"EVIDENCE:{eid}#1", eid, "llm#1"],
+                next_steps=["Diff revision 12 and 13", "Diff revision 12 and 13", "", "a", "b"],
+            )
+        ],
+        fix_id=f"{eid}: Roll back netbox-worker",
+    )
+    out, notes = report.validate(
+        draft, ranks={1}, evidence_ids={f"{eid}#1", "llm#1"}, fixes={fix.id: fix}
+    )
+    assert out["verdicts"][0]["evidence_ids"] == [f"{eid}#1", "llm#1"]
+    assert out["verdicts"][0]["next_steps"] == ["Diff revision 12 and 13", "a", "b"]
+    assert out["fix"]["id"] == fix.id
+    assert notes == []
+
+
+def test_gitops_advice_without_revision_has_no_question_mark():
+    f = Found()
+    ev = f.add("GitOpsSync", POD, at(0), "s", application="netbox")
+    (fix,) = remediation.candidates({"events": [ev.to_json()]}, [[ev.id]])
+    assert "?" not in fix.title and "previous revision" in fix.title
 
 
 class FakeTool:
