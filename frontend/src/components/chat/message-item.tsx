@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Info } from "lucide-react";
+import { CircleAlert, Info } from "lucide-react";
 
 import { Markdown } from "@/components/chat/markdown";
 import { ActivityBlock, type ThoughtStep } from "@/components/chat/activity-block";
@@ -9,6 +9,7 @@ import { ApprovalCard } from "@/components/chat/approval-card";
 import { type ToolCallView } from "@/components/chat/tool-call-card";
 import { WaitingIndicator } from "@/components/chat/waiting-indicator";
 import { Spinner } from "@/components/ui/spinner";
+import { friendlyChatError } from "@/lib/chat-errors";
 import { cn } from "@/lib/utils";
 import type { Message } from "@/types/chat";
 
@@ -150,11 +151,12 @@ export function MessageItem({
       {error && (
         <p
           className={cn(
-            "k8s-fade-in rounded-md bg-[var(--destructive)]/10 px-3 py-2 text-sm",
+            "k8s-fade-in flex gap-2 rounded-md border border-[var(--destructive)]/30 bg-[var(--destructive)]/10 px-3 py-2 text-sm",
             "text-[var(--destructive)]",
           )}
         >
-          {error}
+          <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
+          <span>{friendlyChatError(error)}</span>
         </p>
       )}
 

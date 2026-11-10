@@ -31,7 +31,7 @@ export function SelectTrigger({
   return (
     <RadixSelect.Trigger
       className={cn(
-        "flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5",
+        "flex items-center gap-1.5 rounded-lg border border-[var(--input)] px-2.5 py-1.5",
         "bg-[var(--background)] text-xs font-medium outline-none transition",
         "hover:border-[var(--ring)] hover:bg-[var(--accent)]",
         "focus-visible:border-[var(--ring)] focus-visible:ring-2 focus-visible:ring-[var(--ring)]",

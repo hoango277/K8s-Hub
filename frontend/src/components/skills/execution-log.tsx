@@ -116,7 +116,7 @@ export function ToolRunItem({ run }: { run: ToolRun }) {
       actor={run.actor_email}
       title={<code className="text-xs">{run.tool}</code>}
       meta={
-        <Badge tone={run.trigger === "chat" ? "info" : "neutral"}>
+        <Badge tone="neutral">
           <TriggerIcon aria-hidden className="size-3" />
           {run.trigger === "chat" ? "From chat" : "Manual"}
         </Badge>

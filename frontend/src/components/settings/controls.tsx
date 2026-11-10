@@ -252,7 +252,7 @@ export function NamespaceControl({ id, value, onChange, describedBy }: ControlPr
     <div className="w-full">
       <div
         className={cn(
-          "flex min-h-9 w-full flex-wrap items-center gap-1.5 rounded-md border bg-[var(--background)] px-2 py-1.5",
+          "flex min-h-9 w-full flex-wrap items-center gap-1.5 rounded-md border border-[var(--input)] bg-[var(--background)] px-2 py-1.5",
           "focus-within:border-[var(--ring)] focus-within:ring-2 focus-within:ring-[var(--ring)]/40",
           error && "border-[var(--destructive)]",
         )}

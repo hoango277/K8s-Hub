@@ -12,19 +12,20 @@ import type { Role } from "@/types/auth";
 export interface RoleInfo {
   label: string;
   description: string;
-  tone: "violet" | "info" | "neutral";
+  /** Only admin stands out; the label tells engineer from user (colour is never alone). */
+  tone: "accent" | "neutral";
 }
 
 export const ROLES: Record<Role, RoleInfo> = {
   admin: {
     label: "Admin",
     description: "Full access: everything an Engineer can do, plus system settings and accounts",
-    tone: "violet",
+    tone: "accent",
   },
   engineer: {
     label: "Engineer",
     description: "Add, edit and delete skills and runbooks",
-    tone: "info",
+    tone: "neutral",
   },
   user: {
     label: "User",

@@ -95,6 +95,23 @@ async def _verify_exists(check: dict[str, Any]) -> tuple[bool, str]:
     return True, f"{len(check.get('objects') or [])} object(s) present in the cluster."
 
 
+async def _verify_reverted(check: dict[str, Any]) -> tuple[bool, str]:
+    """A revert: what it restored is there, what it deleted is gone (or terminating)."""
+    problems = []
+    for o in check.get("exists") or []:
+        status, _ = await res.request("GET", o["path"])
+        if status >= 400:
+            problems.append(f"{o['kind']}/{o['name']} is missing")
+    for o in check.get("gone") or []:
+        status, data = await res.request("GET", o["path"])
+        if status < 400 and not (data.get("metadata") or {}).get("deletionTimestamp"):
+            problems.append(f"{o['kind']}/{o['name']} still exists")
+    if problems:
+        return False, f"Not reverted yet: {', '.join(problems)}."
+    count = len(check.get("exists") or []) + len(check.get("gone") or [])
+    return True, f"{count} object(s) back to how they were."
+
+
 async def verify(check: dict[str, Any] | None, *, ok: bool, wait: int = WAIT_SECONDS) -> tuple[
     bool | None, str
 ]:
@@ -108,6 +125,8 @@ async def verify(check: dict[str, Any] | None, *, ok: bool, wait: int = WAIT_SEC
             return await _verify_deleted(check)
         if check["type"] == "exists":
             return await _verify_exists(check)
+        if check["type"] == "reverted":
+            return await _verify_reverted(check)
         if check["type"] == "call_ok":
             return ok, "The tool call succeeded." if ok else "The tool call failed."
         if check["type"] == "exit_code":

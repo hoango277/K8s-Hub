@@ -9,6 +9,7 @@ import { NewDiagnosisDialog } from "@/components/rca/new-diagnosis-dialog";
 import { ErrorPanel } from "@/components/skills/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ChipGroup } from "@/components/ui/chip-group";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Spinner } from "@/components/ui/spinner";
@@ -23,15 +24,6 @@ const FILTERS: { id: RcaTrigger | null; label: string }[] = [
   { id: "alert", label: "From alerts" },
   { id: "scan", label: "Periodic scan" },
 ];
-
-// Event type → category, for the colour of the top cause. Only the common ones;
-// anything else shows neutral.
-const TYPE_CATEGORY: Record<string, EventCategory> = {
-  Rollout: "change", ConfigChange: "change", ScaleChange: "change", ApprovalExecuted: "change",
-  NodeCordon: "change", MemoryNearLimit: "resource", CpuThrottling: "resource",
-  NodePressure: "resource", NodeSaturated: "resource", NodeNotReady: "resource",
-  PvcPending: "resource", HpaAtMax: "resource",
-};
 
 export function RcaListPage() {
   const [filter, setFilter] = useState<RcaTrigger | null>(null);
@@ -52,28 +44,13 @@ export function RcaListPage() {
         }
       />
 
-      <div role="group" aria-label="Filter by origin" className="mb-6 flex flex-wrap gap-1.5">
-        {FILTERS.map((f) => {
-          const active = f.id === filter;
-          return (
-            <button
-              key={f.label}
-              type="button"
-              aria-pressed={active}
-              onClick={() => setFilter(f.id)}
-              className={cn(
-                "h-8 rounded-md border px-3 text-sm outline-none transition motion-reduce:transition-none",
-                "focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
-                active
-                  ? "border-transparent bg-[var(--primary)] text-[var(--primary-foreground)]"
-                  : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-              )}
-            >
-              {f.label}
-            </button>
-          );
-        })}
-      </div>
+      <ChipGroup
+        label="Filter by origin"
+        className="mb-6"
+        options={FILTERS.map((f) => ({ value: f.id, label: f.label }))}
+        value={filter}
+        onChange={setFilter}
+      />
 
       {isLoading ? (
         <ul aria-busy="true" aria-label="Loading diagnoses" className="space-y-3">
@@ -129,7 +106,7 @@ export function RcaListPage() {
 }
 
 function RunRow({ run }: { run: RcaRunSummary }) {
-  const category = run.top_cause_type ? TYPE_CATEGORY[run.top_cause_type] ?? "symptom" : null;
+  const category: EventCategory | null = run.top_cause_type ? (run.top_cause_category ?? "symptom") : null;
   return (
     <Link
       href={`/rca/${run.id}`}
@@ -143,7 +120,7 @@ function RunRow({ run }: { run: RcaRunSummary }) {
           <span className="font-medium">{targetLabel(run)}</span>
           <RunStatus run={run} />
           {category && run.status === "completed" && (
-            <Badge tone={CATEGORY[category].tone}>{run.top_cause_type}</Badge>
+            <Badge tone={CATEGORY[category].tone}>{run.top_cause_title ?? run.top_cause_type}</Badge>
           )}
         </div>
         <p className="mt-1 line-clamp-2 text-sm text-[var(--muted-foreground)]">

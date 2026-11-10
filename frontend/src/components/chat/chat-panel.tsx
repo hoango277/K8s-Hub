@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MessageSquarePlus, MessagesSquare, Trash2 } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { formatDistanceToNow } from "date-fns";
+import { MessageSquarePlus, MessagesSquare, Stethoscope, Trash2 } from "lucide-react";
 
 import { Composer } from "@/components/chat/composer";
 import { MessageList } from "@/components/chat/message-list";
 import { ModelPicker } from "@/components/chat/model-picker";
+import { RcaContext } from "@/components/chat/rca-context";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -20,14 +23,34 @@ import {
   useThreads,
 } from "@/hooks/use-threads";
 import { useLocalStorage } from "@/hooks/use-local-storage";
+import { clearDraft, peekDraft } from "@/lib/chat-drafts";
 import { cn } from "@/lib/utils";
 
 /** Storage key for the open thread, so reloading the page keeps your place. */
 const THREAD_KEY = "k8shub.thread";
 
 export function ChatPanel() {
+  const router = useRouter();
+  // `/chat?thread=<id>` is how "Ask in chat" on a diagnosis opens its conversation.
+  // From the router, NOT window.location: after a client-side navigation the
+  // browser URL is updated only after this first render (seen: the old chat opened).
+  const params = useSearchParams();
+
   // Thread the user just clicked in this session.
   const [clickedId, setClickedId] = useState<string | null>(null);
+
+  // Thread named in the URL, read ONCE when the page opens. Kept as state, so
+  // cleaning the URL below doesn't move the user to another chat. The prepared
+  // question comes with it (the panel only renders in the browser, behind AuthGate).
+  const [linkedId, setLinkedId] = useState<string | null>(() => params.get("thread"));
+  const [draft] = useState<string | null>(() => (linkedId ? peekDraft(linkedId) : null));
+
+  useEffect(() => {
+    if (!linkedId) return;
+    clearDraft(linkedId);
+    // A reload or a shared link then opens the stored thread, not this one forever.
+    router.replace("/chat", { scroll: false });
+  }, [linkedId, router]);
 
   // Thread from the previous visit.
   const [storedId, storeThread] = useLocalStorage(THREAD_KEY);
@@ -47,6 +70,7 @@ export function ChatPanel() {
   const threadList = threads.data;
   const threadId =
     clickedId ??
+    linkedId ??
     (threadList
       ? storedId && threadList.some((t) => t.id === storedId)
         ? storedId
@@ -69,7 +93,7 @@ export function ChatPanel() {
   }, [threadId, storedId, storeThread]);
 
   async function newThread() {
-    const t = await create.mutateAsync();
+    const t = await create.mutateAsync({});
     setClickedId(t.id);
   }
 
@@ -79,14 +103,21 @@ export function ChatPanel() {
     if (!id) return;
     await remove.mutateAsync(id);
     if (id === clickedId) setClickedId(null);
+    if (id === linkedId) setLinkedId(null);
   }
 
   const toolNames = tools.data?.tools.map((t) => t.name) ?? [];
   const pendingDeleteTitle = threadList?.find((t) => t.id === pendingDeleteId)?.title ?? "";
+  // The list knows it before the conversation itself has loaded.
+  const rcaRunId =
+    detail.data?.rca_run_id ?? threadList?.find((t) => t.id === threadId)?.rca_run_id ?? null;
 
   return (
     <div className="flex h-full">
-      <aside className="flex w-64 shrink-0 flex-col border-r">
+      {/* The chat has no visible page header (the space goes to the conversation);
+          screen readers still need to know which page this is. */}
+      <h1 className="sr-only">Chat</h1>
+      <aside aria-label="Your chats" className="flex w-64 shrink-0 flex-col border-r">
         <div className="p-2">
           <Button
             variant="outline"
@@ -129,40 +160,54 @@ export function ChatPanel() {
               </p>
             )}
 
-            {threadList?.map((t) => (
-              <div
-                key={t.id}
-                className={cn(
-                  "group flex items-center rounded-lg transition",
-                  t.id === threadId
-                    ? "bg-[var(--accent)] text-[var(--accent-foreground)]"
-                    : "hover:bg-[var(--accent)]/50",
-                )}
-              >
-                <button
-                  type="button"
-                  onClick={() => setClickedId(t.id)}
-                  className="min-w-0 flex-1 px-2.5 py-2 text-left text-sm"
-                  title={t.title}
-                >
-                  <span className="block truncate">{t.title}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPendingDeleteId(t.id)}
-                  aria-label={`Delete ${t.title}`}
-                  title="Delete chat"
+            {threadList?.map((t) => {
+              const open = t.id === threadId;
+              return (
+                <div
+                  key={t.id}
                   className={cn(
-                    "mr-1.5 rounded p-1 opacity-0 transition",
-                    "hover:text-[var(--destructive)] focus-visible:opacity-100",
-                    "group-hover:opacity-100",
+                    "group flex items-center rounded-lg transition motion-reduce:transition-none",
+                    open ? "bg-[var(--accent)] text-[var(--accent-foreground)]" : "hover:bg-[var(--accent)]/60",
                   )}
                 >
-                  <Trash2 aria-hidden className="size-3.5" />
-                </button>
-              </div>
-            ))}
+                  <button
+                    type="button"
+                    onClick={() => setClickedId(t.id)}
+                    aria-current={open ? "page" : undefined}
+                    className="min-w-0 flex-1 rounded-lg px-2.5 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)]"
+                    title={t.title}
+                  >
+                    <span className={cn("flex items-center gap-1.5 text-sm", open && "font-medium")}>
+                      {/* Decorative: the title already says "Diagnosis: …". */}
+                      {t.rca_run_id && (
+                        <Stethoscope aria-hidden className="size-3.5 shrink-0 text-[var(--muted-foreground)]" />
+                      )}
+                      <span className="truncate">{t.title}</span>
+                    </span>
+                    {/* Many chats share a title ("Is everything healthy…"); when tells them apart. */}
+                    <span className="block truncate text-xs text-[var(--muted-foreground)]">
+                      {formatDistanceToNow(new Date(t.last_message_at ?? t.created_at), { addSuffix: true })}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPendingDeleteId(t.id)}
+                    aria-label={`Delete ${t.title}`}
+                    title="Delete chat"
+                    className={cn(
+                      // 32px target; hidden until hover or focus, but always shown on the
+                      // open chat so touch screens (no hover) can still reach it.
+                      "mr-1 flex size-8 shrink-0 items-center justify-center rounded-full text-[var(--muted-foreground)] outline-none transition motion-reduce:transition-none",
+                      "hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+                      open ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+                    )}
+                  >
+                    <Trash2 aria-hidden className="size-4" />
+                  </button>
+                </div>
+              );
+            })}
         </div>
       </aside>
 
@@ -170,6 +215,7 @@ export function ChatPanel() {
       <div className="flex min-w-0 flex-1 flex-col">
         {threadId ? (
           <>
+            {rcaRunId && <RcaContext runId={rcaRunId} />}
             <div className="flex-1 overflow-y-auto">
               {detail.isLoading ? (
                 <div className="flex h-full items-center justify-center gap-2 text-sm text-[var(--muted-foreground)]">
@@ -181,6 +227,7 @@ export function ChatPanel() {
                   live={live}
                   toolNames={toolNames}
                   onSuggestion={isStreaming ? undefined : (q) => void send(q)}
+                  aboutDiagnosis={Boolean(rcaRunId)}
                 />
               )}
             </div>
@@ -189,6 +236,7 @@ export function ChatPanel() {
               onSend={(c) => void send(c)}
               onStop={stop}
               isStreaming={isStreaming}
+              initialText={draft ?? undefined}
               toolbar={
                 <ModelPicker
                   provider={llm.provider}

@@ -54,6 +54,14 @@ class ChatThread(Base, TimestampMixin):
 
     archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
+    # Opened with "Ask in chat" from a diagnosis: every turn of this thread tells
+    # the assistant which run it is about (chat.py → CONVERSATION CONTEXT). Only
+    # the run's id travels in the prompt; its findings come through the
+    # get_diagnosis tool, marked untrusted like any cluster data.
+    rca_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("rca_runs.id", ondelete="SET NULL"), nullable=True
+    )
+
     # Separate from updated_at: renaming a conversation must not bump it to the top.
     last_message_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

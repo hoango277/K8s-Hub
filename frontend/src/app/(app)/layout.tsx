@@ -13,7 +13,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <Sidebar />
           <div className="flex flex-1 flex-col overflow-hidden">
             <Header />
-            <main className="flex-1 overflow-y-auto">{children}</main>
+            {/* Faint grey canvas: white cards, sidebar and header read as surfaces. */}
+            <main className="flex-1 overflow-y-auto bg-[var(--canvas)]">{children}</main>
           </div>
         </div>
       </ToastProvider>

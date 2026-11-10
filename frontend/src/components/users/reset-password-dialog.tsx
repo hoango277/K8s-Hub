@@ -165,7 +165,7 @@ export function ResetPasswordDialog({ user, onClose, onDone }: Props) {
             </Button>
           </div>
 
-          <p className="rounded-md bg-amber-500/10 px-3 py-2.5 text-xs leading-relaxed text-amber-800 dark:text-amber-300">
+          <p className="rounded-md border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-3 py-2.5 text-xs leading-relaxed text-[var(--foreground)]">
             This person will be signed out of every device as soon as you confirm.
           </p>
 

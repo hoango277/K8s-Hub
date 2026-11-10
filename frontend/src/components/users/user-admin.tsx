@@ -22,6 +22,7 @@ import { ResetPasswordDialog } from "@/components/users/reset-password-dialog";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { ChipGroup } from "@/components/ui/chip-group";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
@@ -166,37 +167,22 @@ export function UserAdmin() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search by name or email…"
-            className="h-9 w-full rounded-md border bg-[var(--background)] pl-9 pr-3 text-sm outline-none transition placeholder:text-[var(--muted-foreground)] focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+            className="h-9 w-full rounded-md border border-[var(--input)] bg-[var(--background)] pl-9 pr-3 text-sm outline-none transition placeholder:text-[var(--muted-foreground)] focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
           />
         </div>
 
-        <div role="radiogroup" aria-label="Filter by role" className="flex flex-wrap gap-1 rounded-lg border p-1">
-          {(
-            [
-              ["all", "All"],
-              ["admin", ROLES.admin.label],
-              ["engineer", ROLES.engineer.label],
-              ["user", ROLES.user.label],
-              ["locked", "Locked"],
-            ] as [Filter, string][]
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              role="radio"
-              aria-checked={filter === value}
-              onClick={() => setFilter(value)}
-              className={cn(
-                "h-7 rounded-md px-2.5 text-xs font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
-                filter === value
-                  ? "bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm"
-                  : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <ChipGroup<Filter>
+          label="Filter by role"
+          options={[
+            { value: "all", label: "All" },
+            { value: "admin", label: ROLES.admin.label },
+            { value: "engineer", label: ROLES.engineer.label },
+            { value: "user", label: ROLES.user.label },
+            { value: "locked", label: "Locked" },
+          ]}
+          value={filter}
+          onChange={setFilter}
+        />
       </div>
 
       {/* Table */}
@@ -375,7 +361,7 @@ export function UserAdmin() {
             className={cn(
               "k8s-fade-in pointer-events-auto max-w-sm rounded-lg border px-4 py-3 text-sm shadow-lg",
               toast.kind === "ok"
-                ? "border-emerald-500/30 bg-[var(--background)] text-emerald-700 dark:text-emerald-400"
+                ? "border-[var(--success)]/30 bg-[var(--background)] text-[var(--success)]"
                 : "border-[var(--destructive)]/40 bg-[var(--background)] text-[var(--destructive)]",
             )}
           >

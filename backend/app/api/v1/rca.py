@@ -29,19 +29,21 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import func, or_, select, true
+from sqlalchemy import func, select
 from sqlalchemy.orm import defer
 from sse_starlette.sse import EventSourceResponse
 
-from app.api.deps import CurrentUser, DbSession, has_role, require_role
+from app.api.deps import CurrentUser, DbSession, require_role
 from app.core.config import get_settings
 from app.db.models.rca import RcaHypothesis, RcaRun
 from app.db.models.user import User
 from app.db.session import get_sessionmaker
 from app.integrations.k8s import resources as res
 from app.integrations.k8s.client import K8sError
-from app.modules.rca import learning, pipeline, remediation, triggers
+from app.modules.rca import access, learning, pipeline, remediation, triggers
 from app.modules.rca import report as rca_report
+from app.modules.rca.model import EVENT_TYPES
+from app.modules.skills.matching import skills_for
 from app.modules.tools.guard import ToolInputError, allowed_namespaces, check_namespace
 from app.schemas.events import DoneEvent, ErrorEvent, EventStream, StepEvent
 from app.schemas.rca import (
@@ -53,6 +55,7 @@ from app.schemas.rca import (
     RcaRunPage,
     RcaRunSummary,
     ReportRequest,
+    SkillRef,
     WeightOut,
 )
 from app.services import approval_service as approvals
@@ -61,30 +64,37 @@ router = APIRouter()
 
 STREAM_POLL_SECONDS = 1.0
 STREAM_MAX_SECONDS = 600
-SYSTEM_TRIGGERS = ("alert", "scan")
+# Who sees which run lives in modules/rca/access.py: the chat applies the same rule.
+_visible = access.visible_to
 
 
-def _visible(user: User):
-    """SQL filter: runs this user may see."""
-    if has_role(user, ("engineer",)):
-        return true()
-    return or_(RcaRun.requested_by == user.id, RcaRun.trigger.in_(SYSTEM_TRIGGERS))
+def _hyp_out(h: RcaHypothesis) -> HypothesisOut:
+    out = HypothesisOut.model_validate(h)
+    chain = h.chain or [h.event_id]
+    out.skills = [SkillRef(name=s.name, description=s.description) for s in skills_for(chain)]
+    return out
 
 
 def _top_cause(run: RcaRun, top_event: str | None) -> tuple[str | None, str | None]:
+    etype, _, entity = (top_event or "").partition(":")
+    kind = EVENT_TYPES.get(etype)
     if run.report_status == "done" and run.report and run.report.get("summary"):
         cause = run.report["summary"]
     elif top_event:
-        etype, _, entity = top_event.partition(":")
-        cause = f"{etype} on {entity.replace('/-/', '/')}"
+        # "Container restarted on Pod langfuse/x", not "RestartSpike on Pod/langfuse/x".
+        kind_name, _, rest = entity.replace("/-/", "/").partition("/")
+        cause = f"{kind.title if kind else etype} on {kind_name} {rest}"
     else:
         cause = None
-    return cause, (top_event.partition(":")[0] if top_event else None)
+    return cause, (etype or None)
 
 
 def _summary(run: RcaRun, top_event: str | None) -> RcaRunSummary:
     cause, cause_type = _top_cause(run, top_event)
+    kind = EVENT_TYPES.get(cause_type or "")
     return RcaRunSummary(
+        top_cause_title=kind.title if kind else None,
+        top_cause_category=kind.category if kind else None,
         id=run.id, trigger=run.trigger, requested_by_email=run.requested_by_email,  # type: ignore[arg-type]
         namespace=run.namespace, target_kind=run.target_kind, target_name=run.target_name,  # type: ignore[arg-type]
         window_start=run.window_start, window_end=run.window_end, status=run.status,  # type: ignore[arg-type]
@@ -94,7 +104,7 @@ def _summary(run: RcaRun, top_event: str | None) -> RcaRunSummary:
 
 
 async def _get_visible(db: DbSession, run_id: uuid.UUID, user: User) -> RcaRun:
-    run = await db.scalar(select(RcaRun).where(RcaRun.id == run_id, _visible(user)))
+    run = await access.get_visible(db, run_id, user)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Diagnosis not found.")
     return run
@@ -119,7 +129,7 @@ def _detail(run: RcaRun, hyps: list[RcaHypothesis]) -> RcaRunOut:
         steps=run.steps or [],
         warnings=run.warnings or [],
         graph=run.graph,
-        hypotheses=[HypothesisOut.model_validate(h) for h in hyps],
+        hypotheses=[_hyp_out(h) for h in hyps],
         report=run.report,
         llm_trace_id=run.llm_trace_id,
         approval_id=run.approval_id,
@@ -343,7 +353,7 @@ async def give_feedback(
     hyp = await learning.record(run_id, rank, payload.correct, by=user.email)
     if hyp is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "This diagnosis has no cause at that rank.")
-    return HypothesisOut.model_validate(hyp)
+    return _hyp_out(hyp)
 
 
 @router.get("/weights", response_model=list[WeightOut])
@@ -352,7 +362,9 @@ async def list_weights(_user: Engineer) -> list[WeightOut]:
     return [WeightOut(**row) for row in await learning.table()]
 
 
-@router.post("/runs/{run_id}/fixes/{fix_id}/propose", response_model=ProposeFixOut)
+# `:path` because fix ids embed event ids, which contain "/" (rollback:Rollout:Workload/ns/x:c);
+# a plain segment never matches them, even percent-encoded.
+@router.post("/runs/{run_id}/fixes/{fix_id:path}/propose", response_model=ProposeFixOut)
 async def propose_fix(
     run_id: uuid.UUID, fix_id: str, db: DbSession, user: CurrentUser
 ) -> ProposeFixOut:

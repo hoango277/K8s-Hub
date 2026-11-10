@@ -6,7 +6,8 @@ import { Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export const inputClass = cn(
-  "h-9 w-full rounded-md border bg-[var(--background)] px-3 text-sm outline-none transition",
+  // --input, a firmer edge than the hairline --border: a field must read as "type here".
+  "h-9 w-full rounded-md border border-[var(--input)] bg-[var(--background)] px-3 text-sm outline-none transition",
   "placeholder:text-[var(--muted-foreground)]",
   "focus-visible:border-[var(--ring)] focus-visible:ring-2 focus-visible:ring-[var(--ring)]/40",
   "disabled:cursor-not-allowed disabled:opacity-50",

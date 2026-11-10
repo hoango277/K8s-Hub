@@ -99,9 +99,10 @@ export function SkillsPage() {
                     className={cn(
                       "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm outline-none transition",
                       "focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+                      // Same "you are here" as the main sidebar: accent text on a neutral tint.
                       active
-                        ? "bg-[var(--accent)] font-medium text-[var(--foreground)]"
-                        : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]/60 hover:text-[var(--foreground)]",
+                        ? "bg-[var(--accent)] font-semibold text-[var(--brand)]"
+                        : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
                     )}
                   >
                     <s.icon aria-hidden className="size-4 shrink-0" />

@@ -89,10 +89,14 @@ NO_TOOLS = (
 )
 
 
-def build_system_prompt(tools: list, skills: str | None = None) -> str:
+def build_system_prompt(tools: list, skills: str | None = None, context: str | None = None) -> str:
     """Combine the system prompt with the tools available now and, when any skill
     is enabled, the list of skills (name + description only — the model loads a
-    skill's full instructions with load_skill when it needs them)."""
+    skill's full instructions with load_skill when it needs them).
+
+    `context` says what the conversation is about (a diagnosis it was opened
+    from). It must be K8s-Hub's own text: anything read from the cluster goes
+    through a tool so it arrives marked untrusted."""
     if skills is None:
         from app.modules.skills.agent_tools import skills_prompt
 
@@ -108,6 +112,8 @@ def build_system_prompt(tools: list, skills: str | None = None) -> str:
         section = "\n".join(lines)
     if skills:
         section = f"{section}\n\n{skills}"
+    if context:
+        section = f"{section}\n\n{context}"
     return SYSTEM_PROMPT.format(tools=section)
 
 

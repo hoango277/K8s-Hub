@@ -13,6 +13,8 @@ interface Props {
   placeholder?: string;
   /** Slot for the provider and model pickers, inside the same frame as the input. */
   toolbar?: ReactNode;
+  /** A question prepared elsewhere ("Investigate in chat"): shown, focused, never sent by itself. */
+  initialText?: string;
 }
 
 const MAX_HEIGHT = 200;
@@ -31,9 +33,18 @@ export function Composer({
   disabled = false,
   placeholder = "Ask about your cluster, or describe what you need done…",
   toolbar,
+  initialText,
 }: Props) {
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initialText ?? "");
   const ref = useRef<HTMLTextAreaElement>(null);
+
+  // A prepared question: put the caret at its end so Enter sends it, or edit first.
+  useEffect(() => {
+    const el = ref.current;
+    if (!initialText || !el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [initialText]);
 
   // The textarea grows with its content up to a limit, then scrolls.
   useEffect(() => {
@@ -56,7 +67,7 @@ export function Composer({
       <div className="mx-auto max-w-3xl">
         <div
           className={cn(
-            "rounded-2xl border bg-[var(--background)] shadow-sm transition",
+            "rounded-2xl border border-[var(--input)] bg-[var(--background)] shadow-sm transition",
             "focus-within:border-[var(--ring)] focus-within:shadow-md",
           )}
         >
@@ -65,6 +76,8 @@ export function Composer({
             rows={1}
             value={text}
             disabled={disabled}
+            // The placeholder disappears once typing starts; the label doesn't.
+            aria-label="Message to the assistant"
             placeholder={placeholder}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {

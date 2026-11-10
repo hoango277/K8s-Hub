@@ -2,7 +2,19 @@
 
 import { useEffect, useRef } from "react";
 import Link from "next/link";
-import { ArrowRight, BookOpen, Bot, Cpu, Gauge, HeartPulse, ShieldCheck, Waypoints } from "lucide-react";
+import {
+  ArrowRight,
+  BookOpen,
+  Bot,
+  Cpu,
+  Gauge,
+  HeartPulse,
+  ListChecks,
+  SearchCheck,
+  ShieldCheck,
+  Waypoints,
+  Wrench,
+} from "lucide-react";
 
 import { MessageItem, thoughtsOf, toolCallsOf } from "@/components/chat/message-item";
 import type { LiveTurn } from "@/hooks/use-chat-stream";
@@ -14,6 +26,8 @@ interface Props {
   toolNames: string[];
   /** Clicking a suggestion sends it right away. Omit to hide suggestions. */
   onSuggestion?: (question: string) => void;
+  /** The conversation was opened from a diagnosis: suggest questions about it. */
+  aboutDiagnosis?: boolean;
 }
 
 // Only suggest questions the assistant CAN ANSWER RIGHT NOW. Each suggestion
@@ -31,9 +45,20 @@ const SUGGESTIONS: { icon: typeof Cpu; question: string; needs?: string }[] = [
   { icon: Cpu, question: "Which AI model is the system using?" },
 ];
 
-function suggestionsFor(toolNames: string[]) {
+// A conversation opened with "Ask in chat": the assistant reads the run with get_diagnosis.
+const DIAGNOSIS_SUGGESTIONS: { icon: typeof Cpu; question: string; needs?: string }[] = [
+  { icon: ListChecks, question: "Summarize this diagnosis: the likely root cause and how sure it is", needs: "get_diagnosis" },
+  { icon: SearchCheck, question: "What should I check first to confirm cause #1?", needs: "get_diagnosis" },
+  { icon: Waypoints, question: "Walk me through how cause #1 leads to the symptoms", needs: "get_diagnosis" },
+  { icon: Wrench, question: "Is there a fix I can propose for the root cause?", needs: "get_diagnosis" },
+];
+
+function suggestionsFor(toolNames: string[], aboutDiagnosis: boolean) {
   const available = new Set(toolNames);
-  return SUGGESTIONS.filter((s) => !s.needs || available.has(s.needs)).slice(0, 4);
+  const usable = (list: typeof SUGGESTIONS) => list.filter((s) => !s.needs || available.has(s.needs));
+  const diagnosis = aboutDiagnosis ? usable(DIAGNOSIS_SUGGESTIONS) : [];
+  // get_diagnosis switched off: fall back to the general ones rather than promise a lookup.
+  return (diagnosis.length ? diagnosis : usable(SUGGESTIONS)).slice(0, 4);
 }
 
 /**
@@ -59,7 +84,7 @@ function caption(m: Message): string | null {
   return parts.length ? parts.join(" · ") : null;
 }
 
-export function MessageList({ messages, live, toolNames, onSuggestion }: Props) {
+export function MessageList({ messages, live, toolNames, onSuggestion, aboutDiagnosis = false }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Always stick to the bottom when new text arrives. Content lengths are the
@@ -83,16 +108,19 @@ export function MessageList({ messages, live, toolNames, onSuggestion }: Props) 
             <span className="mx-auto flex size-12 items-center justify-center rounded-xl bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm">
               <Bot aria-hidden className="size-6" />
             </span>
-            <h2 className="mt-4 text-xl font-semibold tracking-tight">How can I help?</h2>
+            <h2 className="mt-4 text-xl font-semibold tracking-tight">
+              {aboutDiagnosis ? "Ask about this diagnosis" : "How can I help?"}
+            </h2>
             <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-[var(--muted-foreground)]">
-              Ask about cluster health, the cause of an incident, or describe what you want to
-              do. Every change to the cluster goes through approval.
+              {aboutDiagnosis
+                ? "The assistant reads the diagnosis first, then checks the cluster to confirm. Every change still goes through approval."
+                : "Ask about cluster health, the cause of an incident, or describe what you want to do. Every change to the cluster goes through approval."}
             </p>
           </div>
 
           {onSuggestion && (
             <ul className="mt-8 grid gap-2 sm:grid-cols-2">
-              {suggestionsFor(toolNames).map(({ icon: Icon, question }) => (
+              {suggestionsFor(toolNames, aboutDiagnosis).map(({ icon: Icon, question }) => (
                 <li key={question}>
                   <button
                     type="button"

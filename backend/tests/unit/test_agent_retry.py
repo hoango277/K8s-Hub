@@ -61,3 +61,45 @@ async def test_other_errors_are_not_retried(monkeypatch):
     with pytest.raises(RuntimeError, match="rate limit"):
         await _graph(monkeypatch, model).ainvoke({"messages": [HumanMessage("x")]})
     assert len(model.calls) == 1
+
+
+class ThinksOnly:
+    """Gemini 2.5 Flash on lab1: only a thought ("I've just loaded the skill"), then nothing."""
+
+    def __init__(self, empty_replies: int) -> None:
+        self.empty_replies = empty_replies
+        self.calls: list[list] = []
+
+    def bind_tools(self, _tools):
+        return self
+
+    async def ainvoke(self, messages, config=None):
+        self.calls.append(list(messages))
+        if len(self.calls) <= self.empty_replies:
+            return AIMessage(content=[{"type": "thinking", "thinking": "I've loaded the skill."}])
+        return AIMessage(content="Here is what I found.")
+
+
+async def test_an_empty_reply_is_asked_again_once(monkeypatch):
+    model = ThinksOnly(empty_replies=1)
+    out = await _graph(monkeypatch, model).ainvoke({"messages": [HumanMessage("use the skill")]})
+    assert out["messages"][-1].content == "Here is what I found."
+    assert len(model.calls) == 2
+    nudge = model.calls[1][-1]
+    assert isinstance(nudge, SystemMessage) and "reply was empty" in nudge.content
+    # The empty reply itself is not kept in the conversation.
+    assert not any(isinstance(m.content, list) for m in out["messages"])
+
+
+async def test_an_empty_reply_is_not_asked_again_twice(monkeypatch):
+    model = ThinksOnly(empty_replies=5)
+    await _graph(monkeypatch, model).ainvoke({"messages": [HumanMessage("x")]})
+    assert len(model.calls) == 2
+
+
+def test_text_in_parts_is_not_empty():
+    assert not agent._is_empty(AIMessage(content=[{"type": "text", "text": "ok"}]))
+    assert agent._is_empty(AIMessage(content="  "))
+    assert not agent._is_empty(
+        AIMessage(content="", tool_calls=[{"name": "load_skill", "args": {}, "id": "1"}])
+    )

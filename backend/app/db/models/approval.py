@@ -82,6 +82,21 @@ class Approval(Base):
     request_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     risk_flags: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
 
+    # The objects as they were just BEFORE the change ran (and their version right
+    # after), recorded at execution — not at proposal, the cluster may have moved
+    # on while the approval waited. What a revert restores
+    # (app/modules/nl_command/revert.py). Never holds a Secret: plans can't
+    # touch one. NULL for changes run before this existed, and for commands and
+    # MCP calls, which K8s-Hub can't snapshot.
+    before_state: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+    # This row is the revert of another change (a reverse proposal).
+    reverts_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("approvals.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
     )

@@ -130,10 +130,50 @@ def parse(files: dict[str, bytes], *, source: str, folder_name: str | None = Non
         )
     if len(description) > DESCRIPTION_MAX:
         raise SkillFormatError(f"The description is longer than {DESCRIPTION_MAX} characters.")
+    rca_events(meta)  # validates the optional metadata.rca-events
 
     return Skill(
         name=name, description=description, body=body, frontmatter=meta, files=files, source=source
     )
+
+
+# Key in the front matter's `metadata` map — the Agent Skills field where clients keep
+# their own properties, so a skill tagged here is still valid for any other agent.
+RCA_EVENTS_KEY = "rca-events"
+
+
+def rca_events(frontmatter: dict[str, Any]) -> list[str]:
+    """The RCA event types this skill helps investigate (metadata.rca-events).
+
+    Diagnoses suggest the skill for causes whose chain holds one of these types
+    (app/modules/skills/matching.py). Written as "CrashLoop, OOMKilled" (the spec
+    keeps metadata values strings) or as a YAML list. Every name must be a known
+    event type: a typo would otherwise never match, silently.
+    """
+    meta = frontmatter.get("metadata")
+    if meta is None:
+        return []
+    if not isinstance(meta, dict):
+        raise SkillFormatError("metadata must be a mapping (key: value).")
+    raw = meta.get(RCA_EVENTS_KEY)
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        names = [n for n in re.split(r"[\s,]+", raw) if n]
+    elif isinstance(raw, list) and all(isinstance(n, str) for n in raw):
+        names = [n.strip() for n in raw if n.strip()]
+    else:
+        raise SkillFormatError(f"metadata.{RCA_EVENTS_KEY} must be a list of RCA event types.")
+
+    from app.modules.rca.model import EVENT_TYPES  # lazy: skills load before RCA at startup
+
+    unknown = [n for n in names if n not in EVENT_TYPES]
+    if unknown:
+        raise SkillFormatError(
+            f"Unknown RCA event type(s) in metadata.{RCA_EVENTS_KEY}: {', '.join(unknown)}. "
+            f"Known types: {', '.join(sorted(EVENT_TYPES))}."
+        )
+    return list(dict.fromkeys(names))
 
 
 def render_skill_md(name: str, description: str, instructions: str) -> str:
@@ -145,12 +185,14 @@ def render_skill_md(name: str, description: str, instructions: str) -> str:
 
 
 __all__ = [
+    "RCA_EVENTS_KEY",
     "SKILL_FILE",
     "Skill",
     "SkillFormatError",
     "check_name",
     "check_path",
     "parse",
+    "rca_events",
     "render_skill_md",
     "split_frontmatter",
 ]

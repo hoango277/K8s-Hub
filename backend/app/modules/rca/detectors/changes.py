@@ -320,7 +320,8 @@ def _gitops_syncs(ctx: Context, found: Found) -> None:
             continue
         last = max(syncs, key=lambda h: h.get("deployedAt") or "")
         at = parse_time(last.get("deployedAt"))
-        revision = str(last.get("revision") or "?")[:12]
+        # Multi-source Applications record `revisions` (one per source) instead.
+        revision = str(last.get("revision") or (last.get("revisions") or ["?"])[0] or "?")[:12]
         for r in status.get("resources") or []:
             ns = r.get("namespace") or ""
             entity = _managed_entity(r.get("kind", ""), ns, r.get("name", ""))

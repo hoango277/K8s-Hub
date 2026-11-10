@@ -5,7 +5,10 @@ import { cn } from "@/lib/utils";
 /**
  * Small label for status and categories (role, active/locked...).
  *
- * Status colors (green/yellow/red) always come with TEXT, never color alone —
+ * Five tones, by meaning (docs/ke-hoach/he-mau-giao-dien.md): `neutral` for
+ * categories that mean nothing good or bad, `accent` for "in progress" and the
+ * few things that should stand out, `success` / `warning` / `danger` only for
+ * those meanings. Status colors always come with TEXT, never color alone —
  * people with red-green color blindness must still be able to tell "Locked"
  * from "Active".
  */
@@ -14,12 +17,13 @@ const badgeVariants = cva(
   {
     variants: {
       tone: {
-        neutral: "bg-[var(--accent)] text-[var(--accent-foreground)]",
-        success: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-400",
-        warning: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-        danger: "bg-[var(--destructive)]/12 text-[var(--destructive)]",
-        info: "bg-sky-500/12 text-sky-700 dark:text-sky-400",
-        violet: "bg-violet-500/12 text-violet-700 dark:text-violet-400",
+        neutral: "bg-[var(--muted)] text-[var(--secondary-foreground)] ring-1 ring-inset ring-[var(--border)]",
+        // Outlined, like groq.com's orange pill buttons: the accent differs from the
+        // filled status badges by shape too, not only by a hue close to crimson.
+        accent: "text-[var(--brand)] ring-1 ring-inset ring-[var(--brand)]/60",
+        success: "bg-[var(--success)]/12 text-[var(--success)]",
+        warning: "bg-[var(--warning)]/12 text-[var(--warning)]",
+        danger: "bg-[var(--destructive)]/10 text-[var(--destructive)]",
       },
     },
     defaultVariants: { tone: "neutral" },

@@ -92,7 +92,7 @@ export function SkillRunForm({ skill, script }: { skill: string; script: string 
           <div className="k8s-fade-in space-y-2" aria-live="polite">
             <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
               {result.ok ? (
-                <span className="flex items-center gap-1.5 font-medium text-emerald-700 dark:text-emerald-400">
+                <span className="flex items-center gap-1.5 font-medium text-[var(--success)]">
                   <CircleCheck aria-hidden className="size-4" /> Succeeded
                 </span>
               ) : (

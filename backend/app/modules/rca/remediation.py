@@ -86,11 +86,13 @@ def _fixes_for(ev: dict[str, Any]) -> list[Fix]:
                 {"kind": kind, "namespace": ns, "name": name, "replicas": int(target)},
             ))  # fmt: skip
     elif etype == "GitOpsSync":
+        revision = attrs.get("revision")
+        known = revision and revision != "?"
+        before = f"the revision before {revision}" if known else "its previous revision"
         out.append(Fix(f"advice:{eid}", eid, "advice",
                        f"Roll Argo CD application {attrs.get('application', '?')} back to "
-                       f"the revision before {attrs.get('revision', '?')} (History and "
-                       "rollback in Argo CD), or revert the commit — a manual change "
-                       "would be overwritten."))  # fmt: skip
+                       f"{before} (History and rollback in Argo CD), or revert the commit — "
+                       "a manual change would be overwritten."))  # fmt: skip
     elif etype == "HelmRelease":
         version = attrs.get("version") or 0
         out.append(Fix(f"advice:{eid}", eid, "advice",

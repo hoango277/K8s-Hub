@@ -46,7 +46,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             className={cn(
               "k8s-fade-in pointer-events-auto flex max-w-sm items-start gap-2 rounded-lg border bg-[var(--background)] py-3 pl-4 pr-2 text-sm shadow-lg",
               toast.kind === "ok"
-                ? "border-emerald-500/30 text-emerald-700 dark:text-emerald-400"
+                ? "border-[var(--success)]/30 text-[var(--success)]"
                 : "border-[var(--destructive)]/40 text-[var(--destructive)]",
             )}
           >

@@ -1,6 +1,8 @@
 ---
 name: diagnose-crashloop
 description: Find out why a pod keeps crashing or restarting — CrashLoopBackOff, OOMKilled, non-zero exit codes, failing liveness probes. Use when a user reports a pod restarting, an app that keeps crashing, or asks "why is X in CrashLoopBackOff".
+metadata:
+  rca-events: CrashLoop, RestartSpike, OOMKilled, ProbeFailed, ContainerConfigError
 ---
 
 # Diagnose a crash-looping pod

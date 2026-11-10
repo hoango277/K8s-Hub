@@ -75,6 +75,12 @@ export interface RcaGraph {
   dependencies?: RcaDependency[];
 }
 
+/** A skill suggested for a cause: its SKILL.md lists one of the chain's event types. */
+export interface RcaSkillRef {
+  name: string;
+  description: string;
+}
+
 export interface RcaHypothesis {
   rank: number;
   event_id: string;
@@ -85,6 +91,8 @@ export interface RcaHypothesis {
   verdict: Verdict | null;
   feedback?: "correct" | "wrong" | null;
   feedback_by_email?: string | null;
+  /** Enabled skills for this cause (metadata.rca-events), best first; at most two. */
+  skills?: RcaSkillRef[];
 }
 
 export interface RcaFix {
@@ -100,7 +108,8 @@ export interface RcaReport {
   summary?: string;
   explanation?: string;
   root_cause_rank?: number | null;
-  verdicts?: { rank: number; status: Verdict; reason: string; evidence_ids: string[] }[];
+  /** next_steps per cause since 11/2026; older reports only have the top-level list. */
+  verdicts?: { rank: number; status: Verdict; reason: string; evidence_ids: string[]; next_steps?: string[] }[];
   fix?: RcaFix | null;
   fix_candidates?: RcaFix[];
   next_steps?: string[];
@@ -131,6 +140,9 @@ export interface RcaRunSummary {
   finished_at: string | null;
   top_cause: string | null;
   top_cause_type: string | null;
+  /** Readable name and category of top_cause_type (backend model.EVENT_TYPES). */
+  top_cause_title?: string | null;
+  top_cause_category?: EventCategory | null;
 }
 
 export interface RcaRun extends RcaRunSummary {

@@ -2,55 +2,102 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Colour rules and the research behind them: docs/ke-hoach/he-mau-giao-dien.md.
+   Look taken from Groq: ONE orange accent, hairline borders, green/yellow/red
+   only when they mean success/attention/danger, always with a word or an icon.
+   Groq keeps its errors pink-red so they never read as the orange brand; the
+   same here: danger = crimson, attention = mustard, success = olive.
+   No blue as the main tone (tried and rejected on 10/11/2026).
+
+   Neutrals follow console.groq.com (warm "stone" greys, near-black text on
+   white), NOT groq.com's beige paper: on the paper canvas with ink-brown text and
+   a thin font the user still found everything hard to read (10/11/2026).
+   Contrast: body text ≥ 16:1, secondary text ≥ 6.9:1 on --card and --canvas,
+   light and dark — well past the 4.5:1 minimum on purpose. */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.141 0.005 285.823);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.141 0.005 285.823);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.141 0.005 285.823);
-  --primary: oklch(0.21 0.006 285.885);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.967 0.001 286.375);
-  --secondary-foreground: oklch(0.21 0.006 285.885);
-  --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
-  --accent: oklch(0.967 0.001 286.375);
-  --accent-foreground: oklch(0.21 0.006 285.885);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
-  /* Status colors for text/backgrounds that must read as "good" / "careful"
-     (diff additions, approval states). Pair them with words, never color alone. */
-  --success: oklch(0.527 0.154 150.069);
-  --warning: oklch(0.555 0.163 48.998);
-  --border: oklch(0.92 0.004 286.32);
-  --input: oklch(0.92 0.004 286.32);
-  --ring: oklch(0.705 0.015 286.067);
+  /* Inputs, outline buttons, popovers, the page outside the app. */
+  --background: #ffffff;
+  /* Near-black, the console's body text (stone-950). */
+  --foreground: #0c0a09;
+  /* Content area, sidebar and header (the console's header grey). Cards are white
+     with a hairline, so they stand off the canvas without shadows. */
+  --canvas: #fafaf9;
+  --card: #ffffff;
+  --card-foreground: #0c0a09;
+  --popover: #ffffff;
+  --popover-foreground: #0c0a09;
+  /* Accent, solid: primary buttons, active chips and switches, the logo. The most
+     vivid Groq-orange that still carries white text at 4.8:1. */
+  --primary: #d63601;
+  --primary-foreground: #ffffff;
+  /* Accent for text, icons, stripes and light tints: Groq orange-dark, 5.6:1 on white. */
+  --brand: #c23101;
+  --secondary: #f5f5f4;
+  --secondary-foreground: #1c1917;
+  --muted: #f5f5f4;
+  /* Secondary text: stone-600, 7.6:1 on white (the old olive-grey was 5:1 on paper). */
+  --muted-foreground: #57534e;
+  /* Hover and "selected" fills, visible on --canvas as well as on white. */
+  --accent: #efeeec;
+  --accent-foreground: #0c0a09;
+  /* Crimson, like Groq's error colour, so "danger" never looks like the brand. */
+  --destructive: #c7083a;
+  --destructive-foreground: #ffffff;
+  /* Status colours for text/backgrounds that must read as "good" / "careful"
+     (diff additions, approval states). `*-foreground` is the text on their solid fill. */
+  --success: #475c05; /* Groq olive, 7.5:1 on white */
+  --success-foreground: #ffffff;
+  --warning: #8a5c00; /* mustard: attention, kept apart from the orange accent */
+  --warning-foreground: #ffffff;
+  /* Hairlines between blocks (the console's stone-200)… */
+  --border: #e7e5e4;
+  /* …and a firmer edge for things you type in or click: inputs, selects, outline buttons. */
+  --input: #d6d3d1;
+  /* Focus ring: the vivid Groq orange. */
+  --ring: #f43e01;
   --radius: 0.625rem;
 }
 
 .dark {
-  --background: oklch(0.141 0.005 285.823);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.21 0.006 285.885);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.21 0.006 285.885);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.92 0.004 286.32);
-  --primary-foreground: oklch(0.21 0.006 285.885);
-  --secondary: oklch(0.274 0.006 286.033);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.274 0.006 286.033);
-  --muted-foreground: oklch(0.705 0.015 286.067);
-  --accent: oklch(0.274 0.006 286.033);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: oklch(0.985 0 0);
-  --success: oklch(0.765 0.177 163.223);
-  --warning: oklch(0.828 0.189 84.429);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.552 0.016 285.938);
+  --background: #1c1917;
+  --foreground: #fafaf9;
+  --canvas: #0c0a09;
+  --card: #1c1917;
+  --card-foreground: #fafaf9;
+  --popover: #292524;
+  --popover-foreground: #fafaf9;
+  /* Vivid orange with near-black text (5.2:1). */
+  --primary: #f43e01;
+  --primary-foreground: #0c0a09;
+  --brand: #ff7a45;
+  --secondary: #292524;
+  --secondary-foreground: #fafaf9;
+  --muted: #292524;
+  /* stone-400: 6.9:1 on --card, 7.8:1 on --canvas. */
+  --muted-foreground: #a8a29e;
+  --accent: #292524;
+  --accent-foreground: #fafaf9;
+  --destructive: #ff5c7c;
+  --destructive-foreground: #0c0a09;
+  --success: #9ccc4c;
+  --success-foreground: #0c0a09;
+  --warning: #f6ab45;
+  --warning-foreground: #0c0a09;
+  --border: rgb(250 250 249 / 12%);
+  --input: rgb(250 250 249 / 22%);
+  --ring: #ff7a45;
+}
+
+/* Group label in the console's style: Space Grotesk, uppercase ("REASONING",
+   "TEXT TO SPEECH"). For eyebrows above a block and group titles — not for
+   sentences. Semibold at 12px: the earlier 11px monospace was too faint to scan. */
+@utility eyebrow {
+  font-family: var(--font-display);
+  font-size: 12px;
+  line-height: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 @theme inline {
@@ -70,14 +117,22 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-canvas: var(--canvas);
+  --color-brand: var(--brand);
   --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
   --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
+  /* Fonts from next/font (src/app/layout.tsx), with system fallbacks while they load. */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-display: var(--font-space-grotesk), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "Cascadia Code", Consolas, monospace;
 }
 
 @layer base {
@@ -87,6 +142,14 @@
   body {
     background-color: var(--background);
     color: var(--foreground);
+    font-family: var(--font-sans);
+  }
+  /* Headings in the display face, as on console.groq.com. A `font-*` utility on the
+     element still wins (utilities sit above this layer). */
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
   }
 }
 

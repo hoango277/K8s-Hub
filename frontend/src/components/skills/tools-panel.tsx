@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Boxes,
@@ -321,6 +321,45 @@ export function ToolsPanel({ canEdit, description }: { canEdit: boolean; descrip
   );
 }
 
+/**
+ * Tool descriptions are written for the model ("Use first when…") and run to a
+ * paragraph; a person scanning the list needs the first two lines.
+ */
+function ClampedText({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  // Measured, not guessed from the length: whether two lines are enough depends on
+  // the column width. ResizeObserver also fires once right after observe().
+  const [cut, setCut] = useState(false);
+  const ref = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => setCut(el.scrollHeight > el.clientHeight + 1));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [text]);
+  return (
+    <div className="mt-1">
+      <p
+        ref={ref}
+        className={cn("text-sm leading-relaxed text-[var(--muted-foreground)]", !open && "line-clamp-2")}
+      >
+        {text}
+      </p>
+      {(cut || open) && (
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+          className="mt-0.5 min-h-6 rounded-sm text-xs font-medium text-[var(--foreground)] underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+        >
+          {open ? "Show less" : "Show more"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function StatusBadge({ tool }: { tool: Tool }) {
   if (tool.in_chat) return <Badge tone="success">In chat</Badge>;
   if (!tool.enabled) return <Badge tone="neutral">Disabled</Badge>;
@@ -353,9 +392,7 @@ function ToolRow({
           <p className="text-sm font-medium">{tool.title}</p>
           <code className="break-all text-xs text-[var(--muted-foreground)]">{tool.name}</code>
         </div>
-        <p className="mt-1 text-sm leading-relaxed text-[var(--muted-foreground)]">
-          {tool.custom ? tool.custom.description : tool.description}
-        </p>
+        <ClampedText text={tool.custom ? tool.custom.description : tool.description} />
         {tool.custom && tool.custom.read_only_prefixes.length > 0 && (
           <p className="mt-1.5 text-xs leading-relaxed text-[var(--muted-foreground)]">
             Runs at once:{" "}
@@ -374,12 +411,12 @@ function ToolRow({
                 Needs approval
               </Badge>
             ) : (
-              <Badge tone="info">Runs directly</Badge>
+              <Badge tone="neutral">Runs directly</Badge>
             )
           ) : (
             <DangerBadge danger={tool.danger} />
           )}
-          <Badge tone={tool.custom ? "info" : "neutral"}>{sourceLabel(tool)}</Badge>
+          <Badge tone="neutral">{sourceLabel(tool)}</Badge>
           <StatusBadge tool={tool} />
         </div>
         {tool.mcp && (

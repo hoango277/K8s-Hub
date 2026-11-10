@@ -33,8 +33,9 @@ function StatusIcon({ status }: { status: ToolCallView["status"] }) {
       <span
         aria-hidden
         className={cn(
+          // In progress = accent, not amber: amber means "needs attention".
           "k8s-spin size-3 shrink-0 rounded-full border-[1.5px] border-current",
-          "border-t-transparent text-amber-500",
+          "border-t-transparent text-[var(--brand)]",
         )}
       />
     );
@@ -45,8 +46,10 @@ function StatusIcon({ status }: { status: ToolCallView["status"] }) {
       aria-hidden
       className={cn(
         "flex size-3 shrink-0 items-center justify-center rounded-full text-[8px]",
-        "font-bold text-white",
-        status === "ok" ? "bg-emerald-500" : "bg-[var(--destructive)]",
+        "font-bold",
+        status === "ok"
+          ? "bg-[var(--success)] text-[var(--success-foreground)]"
+          : "bg-[var(--destructive)] text-[var(--destructive-foreground)]",
       )}
     >
       {status === "ok" ? "✓" : "!"}
@@ -69,9 +72,9 @@ export function ToolCallDetails({ call }: { call: ToolCallView }) {
   return (
     <div
       className={cn(
-        "k8s-fade-in overflow-hidden rounded-lg border text-sm transition-colors",
-        call.status === "error" && "border-[var(--destructive)]/40",
-        call.status === "running" && "border-amber-500/40 bg-amber-500/5",
+        "k8s-fade-in overflow-hidden rounded-lg border bg-[var(--card)] text-sm transition-colors",
+        call.status === "error" && "border-[var(--destructive)]/40 bg-[var(--destructive)]/5",
+        call.status === "running" && "border-[var(--brand)]/30 bg-[var(--brand)]/5",
       )}
     >
       <button

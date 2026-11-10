@@ -54,6 +54,13 @@ class RcaStep(BaseModel):
     status: Literal["running", "done", "error"]
 
 
+class SkillRef(BaseModel):
+    """A skill suggested for a cause (metadata.rca-events in its SKILL.md)."""
+
+    name: str
+    description: str
+
+
 class HypothesisOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -67,6 +74,10 @@ class HypothesisOut(BaseModel):
         default=None, description="An engineer's judgement of this cause"
     )
     feedback_by_email: str | None = None
+    skills: list[SkillRef] = Field(
+        default_factory=list,
+        description="Enabled skills for the event types of this cause's chain, best first",
+    )
 
 
 class FeedbackIn(BaseModel):
@@ -99,6 +110,12 @@ class RcaRunSummary(BaseModel):
     finished_at: datetime | None
     top_cause: str | None = Field(description="Summary of the rank-1 hypothesis, for lists")
     top_cause_type: str | None
+    top_cause_title: str | None = Field(
+        default=None, description="Readable name of the rank-1 event type"
+    )
+    top_cause_category: str | None = Field(
+        default=None, description="symptom, state, resource, change or dependency"
+    )
 
 
 class RcaRunOut(RcaRunSummary):
@@ -135,4 +152,5 @@ __all__ = [
     "RcaRunSummary",
     "RcaStep",
     "ReportRequest",
+    "SkillRef",
 ]

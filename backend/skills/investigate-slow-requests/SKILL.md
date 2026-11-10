@@ -1,6 +1,8 @@
 ---
 name: investigate-slow-requests
 description: Find where time goes when requests to an app on the cluster are slow or failing with 5xx — using traces first, then metrics and logs to confirm. Use when a user reports latency, timeouts, or HTTP 500s from a service.
+metadata:
+  rca-events: LatencySpike, ErrorRateSpike, DownstreamErrors
 ---
 
 # Investigate slow or failing requests
