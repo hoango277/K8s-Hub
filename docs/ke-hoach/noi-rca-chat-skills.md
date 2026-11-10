@@ -36,6 +36,9 @@ system prompt, một dòng log kiểu "SYSTEM NOTICE: …" sẽ nằm ở vị t
   chuỗi, verdict + lý do của AI, bước tiếp theo, một bằng chứng), skill gợi ý, bản sửa (đề xuất được hay chỉ là lời
   khuyên, đã đề xuất chưa), khoảng trống dữ liệu, link `/rca/<id>`. Giới hạn ~5.000 ký tự.
 - Trợ lý cũng gọi được `get_diagnosis` với id bất kỳ người dùng dán vào (vd. link từ `diagnose_incident`).
+- Theo `ke-hoach/bao-mat-llm.md` (nhánh main, gộp 10/11/2026): `get_diagnosis` che secret **tại nguồn**
+  (`tools/redact.py`) — kết quả còn vào `tool_calls`, Langfuse, lịch sử tab Tools — và đánh dấu `[flagged]`
+  bằng chứng mà báo cáo RCA đã gắn cờ (`flagged_evidence`).
 
 ## 3. Skill gợi ý theo loại sự kiện
 

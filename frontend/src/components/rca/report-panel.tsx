@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, ListChecks, RefreshCw, Sparkles } from "lucide-react";
+import { Bot, ListChecks, RefreshCw, ShieldAlert, Sparkles } from "lucide-react";
 
 import { ApprovalCard } from "@/components/chat/approval-card";
 import { Fold, Steps } from "@/components/rca/shared";
@@ -68,6 +68,27 @@ export function ReportPanel({ run }: { run: RcaRun }) {
 
   return (
     <Box highlight>
+      {/* Above the summary on purpose: whoever reads the conclusion must see first that
+          some of its evidence may have been written to steer the AI. */}
+      {(report.flagged_evidence?.length ?? 0) > 0 && (
+        <div
+          role="note"
+          aria-label="Possible prompt injection"
+          className="mb-3 flex gap-2 rounded-md border border-[var(--destructive)]/50 bg-[var(--destructive)]/10 px-3 py-2 text-xs"
+        >
+          <ShieldAlert aria-hidden className="mt-0.5 size-4 shrink-0 text-[var(--destructive)]" />
+          <div className="space-y-1">
+            <p className="font-medium text-[var(--destructive)]">Possible prompt injection</p>
+            <p className="leading-relaxed">
+              Evidence{" "}
+              <span className="font-mono">{report.flagged_evidence!.map((f) => f.id).join(", ")}</span> contains text
+              addressed to the AI. It came from cluster data, so whoever controls that workload wrote it. Check that the
+              verdicts below don&apos;t rest on it.
+            </p>
+          </div>
+        </div>
+      )}
+
       <p className="eyebrow flex items-center gap-1.5 text-[var(--brand)]">
         <Sparkles aria-hidden className="size-4" /> AI summary
       </p>

@@ -27,6 +27,7 @@ from app.modules.tools.guard import (
     check_name,
     check_namespace,
 )
+from app.modules.tools.redact import redact_object
 from app.modules.tools.schema import Category, Danger, ToolSpec
 
 MAX_ROWS = 100
@@ -286,7 +287,11 @@ async def describe_resource(kind: str, name: str, namespace: str = "") -> str:
     except (ToolInputError, k8s.K8sError) as exc:
         return str(exc)
 
-    body = yaml.safe_dump(_trim_values(res.clean(obj)), sort_keys=False, allow_unicode=True)
+    # Redacted by structure before it becomes YAML: in YAML an env var's name and
+    # value sit on different lines, and no text pattern could pair them again.
+    body = yaml.safe_dump(
+        _trim_values(redact_object(res.clean(obj))), sort_keys=False, allow_unicode=True
+    )
     if len(body) > MAX_DESCRIBE_CHARS:
         body = body[:MAX_DESCRIBE_CHARS] + "\n… (cut; ask for a specific field if needed)"
     lines = [f"{rkind.kind} {ns + '/' if ns else ''}{name}:", body.rstrip()]

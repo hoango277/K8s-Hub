@@ -168,6 +168,20 @@ def test_describe_run_gives_causes_steps_evidence_skills_and_the_link():
     assert text.rstrip().splitlines()[-2] == f"Full graph and evidence: /rca/{RUN_ID}"
 
 
+def test_describe_run_redacts_secrets_and_marks_flagged_quotes():
+    """The quotes come from logs: a printed password must not reach the model, and a
+    quote the report step flagged as addressed to the AI says so (rca/report.py)."""
+    leaky = run()
+    leaky.graph["events"][0]["evidence"] = [
+        {"id": "ev#1", "source": "log", "text": "connect postgres://app:hunter2@pg-rw.database:5432"}
+    ]
+    leaky.report["flagged_evidence"] = [{"id": "ev#1", "source": "log", "signals": ["addresses_ai"]}]
+    text = rca_tools.describe_run(leaky, [hyp()])
+    assert "hunter2" not in text
+    assert "postgres://app:[REDACTED]@pg-rw.database:5432" in text  # the host stays visible
+    assert "[log] [flagged: addresses_ai]" in text
+
+
 def test_describe_run_while_running_failed_or_huge():
     assert "still running" in rca_tools.describe_run(run(status="running"), [])
     assert "It failed: boom" in rca_tools.describe_run(run(status="failed", error="boom"), [])

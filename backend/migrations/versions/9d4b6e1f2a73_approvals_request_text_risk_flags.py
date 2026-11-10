@@ -4,9 +4,9 @@ The user's question in the turn that produced the proposal, and the tool
 outputs of that turn flagged as possible prompt injection. Both nullable:
 older rows and proposals made outside a chat turn have neither.
 
-Follows c5a19f3e7b22 (the approvals side). The history still has a second
-head, e6f1a9b47c20 (RCA tables), left as it is on purpose — run
-`alembic upgrade heads` (plural) until the team merges the two.
+Follows c5a19f3e7b22. When written, the history had a second head
+(e6f1a9b47c20, the first RCA tables); that migration was later replaced by
+b81f0c2d4e57, which follows this one, so the chain is linear again.
 
 Revision ID: 9d4b6e1f2a73
 Revises: c5a19f3e7b22

@@ -31,6 +31,7 @@ from app.db.session import get_sessionmaker
 from app.modules.rca import access, pipeline, remediation
 from app.modules.skills.matching import event_type, skills_for
 from app.modules.tools.guard import ToolInputError, check_namespace, clamp
+from app.modules.tools.redact import redact_text
 from app.modules.tools.schema import Category, Danger, ToolSpec
 from app.services.approval_service import actor_from_config
 
@@ -107,6 +108,8 @@ def describe_run(
     events = {e.get("id"): e for e in graph.get("events") or []}
     report = run.report if run.report_status == "done" and run.report else {}
     verdicts = {v.get("rank"): v for v in report.get("verdicts") or []}
+    # Quotes the report step found addressed to the AI (rca/report.py flagged_evidence).
+    flagged = {f.get("id"): f.get("signals") or [] for f in report.get("flagged_evidence") or []}
     if report.get("summary"):
         lines.append(f"AI summary: {report['summary']}")
     if report.get("root_cause_rank"):
@@ -130,7 +133,10 @@ def describe_run(
             lines.append("   next steps: " + "; ".join(verdict["next_steps"]))
         evidence = ev.get("evidence") or []
         if evidence:
-            lines.append(f"   evidence: [{evidence[0].get('source')}] {evidence[0].get('text')}")
+            first = evidence[0]
+            signals = flagged.get(first.get("id"))
+            mark = f" [flagged: {', '.join(signals)}]" if signals else ""
+            lines.append(f"   evidence: [{first.get('source')}]{mark} {first.get('text')}")
         skills = skills_for(h.chain or [h.event_id])
         if skills:
             names = ", ".join(s.name for s in skills)
@@ -156,7 +162,10 @@ def describe_run(
         "These are ranked candidates from causal rules, not proof: check the cause with the "
         "read tools before stating it as fact."
     )
-    text = "\n".join(lines)
+    # Redacted here, at the source (tools/redact.py): the evidence quotes logs, and older
+    # reports may repeat what a log printed. The chat guard redacts again, but this text
+    # also lands in tool_calls, Langfuse and the Tools tab's run history.
+    text = redact_text("\n".join(lines))
     if len(text) > MAX_DIAGNOSIS_CHARS:
         tail = f"\n… (cut — the rest is on /rca/{run.id})"
         text = text[: MAX_DIAGNOSIS_CHARS - len(tail)].rstrip() + tail
